@@ -15,6 +15,7 @@ Dockerized edge gateway with MQTT broker, tile server, and local dashboards. Par
 
 ## Prerequisites
 
+- **Hardware:** [Raspberry Pi 5](https://www.waveshare.com/raspberry-pi-5.htm?aff_id=Trailcurrent) — selected for its industry-standard form factor and well-documented ecosystem, with plenty of headroom for additional expansion in the future
 - **Docker Engine** (or Docker Desktop) with the `compose` plugin and `buildx`
 - **Git**
 
