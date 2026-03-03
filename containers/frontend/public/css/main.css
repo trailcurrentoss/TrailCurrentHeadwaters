@@ -79,13 +79,6 @@ body {
     display: none;
 }
 
-.clock {
-    font-size: 1.1rem;
-    font-weight: 500;
-    color: var(--text-secondary);
-    font-variant-numeric: tabular-nums;
-}
-
 /* Main content */
 .main-content {
     flex: 1;

@@ -679,7 +679,7 @@
         "type": "function",
         "z": "891127dbdba7381a",
         "name": "ParseDateTime",
-        "func": "let decoded = msg.payload.data.map(bitArray => \n    Number.parseInt(bitArray.join(''), 2)\n);\n    \nlet outboundMessage = {\n    year: (decoded[0] << 8) | decoded[1],\n    month: decoded[2],\n    day: decoded[3],\n    hour: decoded[4],\n    minute: decoded[5],\n    second: decoded[6]\n}\n\nmsg.payload = `${outboundMessage.month}/${outboundMessage.day}/${outboundMessage.year} ${outboundMessage.hour}:${outboundMessage.minute}:${outboundMessage.second}`;\n\nreturn msg;",
+        "func": "let decoded = msg.payload.data.map(bitArray => \n    Number.parseInt(bitArray.join(''), 2)\n);\n    \nmsg.payload = {\n    year: (decoded[0] << 8) | decoded[1],\n    month: decoded[2],\n    day: decoded[3],\n    hour: decoded[4],\n    minute: decoded[5],\n    second: decoded[6]\n};\n\nreturn msg;",
         "outputs": 1,
         "timeout": 0,
         "noerr": 0,
@@ -1324,6 +1324,488 @@
         "broker": "116a81d49537d25e",
         "x": 580,
         "y": 1680,
+        "wires": []
+    },
+    {
+        "id": "b1c2d3e4f5a60001",
+        "type": "comment",
+        "z": "891127dbdba7381a",
+        "name": "PWA Brightness Commands (local/lights/N/brightness -> CAN outbound)",
+        "info": "These nodes receive brightness set commands from the PWA backend\nand convert them to CAN bus messages sent to can/outbound.\n\nCAN ID 0x015, 2 bytes: [device_number, brightness_value (0-255)].\nSeparate from toggle (0x018) which only toggles on/off.",
+        "x": 290,
+        "y": 1720,
+        "wires": []
+    },
+    {
+        "id": "b1c2d3e4f5a60010",
+        "type": "mqtt in",
+        "z": "891127dbdba7381a",
+        "name": "Light1Brightness",
+        "topic": "local/lights/1/brightness",
+        "qos": "2",
+        "datatype": "auto-detect",
+        "broker": "116a81d49537d25e",
+        "nl": false,
+        "rap": true,
+        "rh": 0,
+        "inputs": 0,
+        "x": 150,
+        "y": 1760,
+        "wires": [
+            [
+                "b1c2d3e4f5a60011"
+            ]
+        ]
+    },
+    {
+        "id": "b1c2d3e4f5a60011",
+        "type": "function",
+        "z": "891127dbdba7381a",
+        "name": "Pdm01Device01Brightness",
+        "func": "const brightness = msg.payload.brightness || 0;\nconst bits = (b) => [b>>7&1, b>>6&1, b>>5&1, b>>4&1, b>>3&1, b>>2&1, b>>1&1, b&1];\nmsg.payload = {\n    \"identifier\": \"0x015\",\n    \"data_length_code\": 2,\n    \"data\": [\n        [0,0,0,0,0,0,0,0],\n        bits(brightness)\n    ],\n    \"extd\": false,\n    \"rtr\": false,\n    \"ss\": 0,\n    \"self\": 0\n};\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 380,
+        "y": 1760,
+        "wires": [
+            [
+                "b1c2d3e4f5a60012"
+            ]
+        ]
+    },
+    {
+        "id": "b1c2d3e4f5a60012",
+        "type": "mqtt out",
+        "z": "891127dbdba7381a",
+        "name": "CAN Outbound",
+        "topic": "can/outbound",
+        "qos": "",
+        "retain": "",
+        "respTopic": "",
+        "contentType": "",
+        "userProps": "",
+        "correl": "",
+        "expiry": "",
+        "broker": "116a81d49537d25e",
+        "x": 600,
+        "y": 1760,
+        "wires": []
+    },
+    {
+        "id": "b1c2d3e4f5a60020",
+        "type": "mqtt in",
+        "z": "891127dbdba7381a",
+        "name": "Light2Brightness",
+        "topic": "local/lights/2/brightness",
+        "qos": "2",
+        "datatype": "auto-detect",
+        "broker": "116a81d49537d25e",
+        "nl": false,
+        "rap": true,
+        "rh": 0,
+        "inputs": 0,
+        "x": 150,
+        "y": 1820,
+        "wires": [
+            [
+                "b1c2d3e4f5a60021"
+            ]
+        ]
+    },
+    {
+        "id": "b1c2d3e4f5a60021",
+        "type": "function",
+        "z": "891127dbdba7381a",
+        "name": "Pdm01Device02Brightness",
+        "func": "const brightness = msg.payload.brightness || 0;\nconst bits = (b) => [b>>7&1, b>>6&1, b>>5&1, b>>4&1, b>>3&1, b>>2&1, b>>1&1, b&1];\nmsg.payload = {\n    \"identifier\": \"0x015\",\n    \"data_length_code\": 2,\n    \"data\": [\n        [0,0,0,0,0,0,0,1],\n        bits(brightness)\n    ],\n    \"extd\": false,\n    \"rtr\": false,\n    \"ss\": 0,\n    \"self\": 0\n};\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 380,
+        "y": 1820,
+        "wires": [
+            [
+                "b1c2d3e4f5a60022"
+            ]
+        ]
+    },
+    {
+        "id": "b1c2d3e4f5a60022",
+        "type": "mqtt out",
+        "z": "891127dbdba7381a",
+        "name": "CAN Outbound",
+        "topic": "can/outbound",
+        "qos": "",
+        "retain": "",
+        "respTopic": "",
+        "contentType": "",
+        "userProps": "",
+        "correl": "",
+        "expiry": "",
+        "broker": "116a81d49537d25e",
+        "x": 600,
+        "y": 1820,
+        "wires": []
+    },
+    {
+        "id": "b1c2d3e4f5a60030",
+        "type": "mqtt in",
+        "z": "891127dbdba7381a",
+        "name": "Light3Brightness",
+        "topic": "local/lights/3/brightness",
+        "qos": "2",
+        "datatype": "auto-detect",
+        "broker": "116a81d49537d25e",
+        "nl": false,
+        "rap": true,
+        "rh": 0,
+        "inputs": 0,
+        "x": 150,
+        "y": 1880,
+        "wires": [
+            [
+                "b1c2d3e4f5a60031"
+            ]
+        ]
+    },
+    {
+        "id": "b1c2d3e4f5a60031",
+        "type": "function",
+        "z": "891127dbdba7381a",
+        "name": "Pdm01Device03Brightness",
+        "func": "const brightness = msg.payload.brightness || 0;\nconst bits = (b) => [b>>7&1, b>>6&1, b>>5&1, b>>4&1, b>>3&1, b>>2&1, b>>1&1, b&1];\nmsg.payload = {\n    \"identifier\": \"0x015\",\n    \"data_length_code\": 2,\n    \"data\": [\n        [0,0,0,0,0,0,1,0],\n        bits(brightness)\n    ],\n    \"extd\": false,\n    \"rtr\": false,\n    \"ss\": 0,\n    \"self\": 0\n};\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 380,
+        "y": 1880,
+        "wires": [
+            [
+                "b1c2d3e4f5a60032"
+            ]
+        ]
+    },
+    {
+        "id": "b1c2d3e4f5a60032",
+        "type": "mqtt out",
+        "z": "891127dbdba7381a",
+        "name": "CAN Outbound",
+        "topic": "can/outbound",
+        "qos": "",
+        "retain": "",
+        "respTopic": "",
+        "contentType": "",
+        "userProps": "",
+        "correl": "",
+        "expiry": "",
+        "broker": "116a81d49537d25e",
+        "x": 600,
+        "y": 1880,
+        "wires": []
+    },
+    {
+        "id": "b1c2d3e4f5a60040",
+        "type": "mqtt in",
+        "z": "891127dbdba7381a",
+        "name": "Light4Brightness",
+        "topic": "local/lights/4/brightness",
+        "qos": "2",
+        "datatype": "auto-detect",
+        "broker": "116a81d49537d25e",
+        "nl": false,
+        "rap": true,
+        "rh": 0,
+        "inputs": 0,
+        "x": 150,
+        "y": 1940,
+        "wires": [
+            [
+                "b1c2d3e4f5a60041"
+            ]
+        ]
+    },
+    {
+        "id": "b1c2d3e4f5a60041",
+        "type": "function",
+        "z": "891127dbdba7381a",
+        "name": "Pdm01Device04Brightness",
+        "func": "const brightness = msg.payload.brightness || 0;\nconst bits = (b) => [b>>7&1, b>>6&1, b>>5&1, b>>4&1, b>>3&1, b>>2&1, b>>1&1, b&1];\nmsg.payload = {\n    \"identifier\": \"0x015\",\n    \"data_length_code\": 2,\n    \"data\": [\n        [0,0,0,0,0,0,1,1],\n        bits(brightness)\n    ],\n    \"extd\": false,\n    \"rtr\": false,\n    \"ss\": 0,\n    \"self\": 0\n};\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 380,
+        "y": 1940,
+        "wires": [
+            [
+                "b1c2d3e4f5a60042"
+            ]
+        ]
+    },
+    {
+        "id": "b1c2d3e4f5a60042",
+        "type": "mqtt out",
+        "z": "891127dbdba7381a",
+        "name": "CAN Outbound",
+        "topic": "can/outbound",
+        "qos": "",
+        "retain": "",
+        "respTopic": "",
+        "contentType": "",
+        "userProps": "",
+        "correl": "",
+        "expiry": "",
+        "broker": "116a81d49537d25e",
+        "x": 600,
+        "y": 1940,
+        "wires": []
+    },
+    {
+        "id": "b1c2d3e4f5a60050",
+        "type": "mqtt in",
+        "z": "891127dbdba7381a",
+        "name": "Light5Brightness",
+        "topic": "local/lights/5/brightness",
+        "qos": "2",
+        "datatype": "auto-detect",
+        "broker": "116a81d49537d25e",
+        "nl": false,
+        "rap": true,
+        "rh": 0,
+        "inputs": 0,
+        "x": 150,
+        "y": 2000,
+        "wires": [
+            [
+                "b1c2d3e4f5a60051"
+            ]
+        ]
+    },
+    {
+        "id": "b1c2d3e4f5a60051",
+        "type": "function",
+        "z": "891127dbdba7381a",
+        "name": "Pdm01Device05Brightness",
+        "func": "const brightness = msg.payload.brightness || 0;\nconst bits = (b) => [b>>7&1, b>>6&1, b>>5&1, b>>4&1, b>>3&1, b>>2&1, b>>1&1, b&1];\nmsg.payload = {\n    \"identifier\": \"0x015\",\n    \"data_length_code\": 2,\n    \"data\": [\n        [0,0,0,0,0,1,0,0],\n        bits(brightness)\n    ],\n    \"extd\": false,\n    \"rtr\": false,\n    \"ss\": 0,\n    \"self\": 0\n};\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 380,
+        "y": 2000,
+        "wires": [
+            [
+                "b1c2d3e4f5a60052"
+            ]
+        ]
+    },
+    {
+        "id": "b1c2d3e4f5a60052",
+        "type": "mqtt out",
+        "z": "891127dbdba7381a",
+        "name": "CAN Outbound",
+        "topic": "can/outbound",
+        "qos": "",
+        "retain": "",
+        "respTopic": "",
+        "contentType": "",
+        "userProps": "",
+        "correl": "",
+        "expiry": "",
+        "broker": "116a81d49537d25e",
+        "x": 600,
+        "y": 2000,
+        "wires": []
+    },
+    {
+        "id": "b1c2d3e4f5a60060",
+        "type": "mqtt in",
+        "z": "891127dbdba7381a",
+        "name": "Light6Brightness",
+        "topic": "local/lights/6/brightness",
+        "qos": "2",
+        "datatype": "auto-detect",
+        "broker": "116a81d49537d25e",
+        "nl": false,
+        "rap": true,
+        "rh": 0,
+        "inputs": 0,
+        "x": 150,
+        "y": 2060,
+        "wires": [
+            [
+                "b1c2d3e4f5a60061"
+            ]
+        ]
+    },
+    {
+        "id": "b1c2d3e4f5a60061",
+        "type": "function",
+        "z": "891127dbdba7381a",
+        "name": "Pdm01Device06Brightness",
+        "func": "const brightness = msg.payload.brightness || 0;\nconst bits = (b) => [b>>7&1, b>>6&1, b>>5&1, b>>4&1, b>>3&1, b>>2&1, b>>1&1, b&1];\nmsg.payload = {\n    \"identifier\": \"0x015\",\n    \"data_length_code\": 2,\n    \"data\": [\n        [0,0,0,0,0,1,0,1],\n        bits(brightness)\n    ],\n    \"extd\": false,\n    \"rtr\": false,\n    \"ss\": 0,\n    \"self\": 0\n};\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 380,
+        "y": 2060,
+        "wires": [
+            [
+                "b1c2d3e4f5a60062"
+            ]
+        ]
+    },
+    {
+        "id": "b1c2d3e4f5a60062",
+        "type": "mqtt out",
+        "z": "891127dbdba7381a",
+        "name": "CAN Outbound",
+        "topic": "can/outbound",
+        "qos": "",
+        "retain": "",
+        "respTopic": "",
+        "contentType": "",
+        "userProps": "",
+        "correl": "",
+        "expiry": "",
+        "broker": "116a81d49537d25e",
+        "x": 600,
+        "y": 2060,
+        "wires": []
+    },
+    {
+        "id": "b1c2d3e4f5a60070",
+        "type": "mqtt in",
+        "z": "891127dbdba7381a",
+        "name": "Light7Brightness",
+        "topic": "local/lights/7/brightness",
+        "qos": "2",
+        "datatype": "auto-detect",
+        "broker": "116a81d49537d25e",
+        "nl": false,
+        "rap": true,
+        "rh": 0,
+        "inputs": 0,
+        "x": 150,
+        "y": 2120,
+        "wires": [
+            [
+                "b1c2d3e4f5a60071"
+            ]
+        ]
+    },
+    {
+        "id": "b1c2d3e4f5a60071",
+        "type": "function",
+        "z": "891127dbdba7381a",
+        "name": "Pdm01Device07Brightness",
+        "func": "const brightness = msg.payload.brightness || 0;\nconst bits = (b) => [b>>7&1, b>>6&1, b>>5&1, b>>4&1, b>>3&1, b>>2&1, b>>1&1, b&1];\nmsg.payload = {\n    \"identifier\": \"0x015\",\n    \"data_length_code\": 2,\n    \"data\": [\n        [0,0,0,0,0,1,1,0],\n        bits(brightness)\n    ],\n    \"extd\": false,\n    \"rtr\": false,\n    \"ss\": 0,\n    \"self\": 0\n};\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 380,
+        "y": 2120,
+        "wires": [
+            [
+                "b1c2d3e4f5a60072"
+            ]
+        ]
+    },
+    {
+        "id": "b1c2d3e4f5a60072",
+        "type": "mqtt out",
+        "z": "891127dbdba7381a",
+        "name": "CAN Outbound",
+        "topic": "can/outbound",
+        "qos": "",
+        "retain": "",
+        "respTopic": "",
+        "contentType": "",
+        "userProps": "",
+        "correl": "",
+        "expiry": "",
+        "broker": "116a81d49537d25e",
+        "x": 600,
+        "y": 2120,
+        "wires": []
+    },
+    {
+        "id": "b1c2d3e4f5a60080",
+        "type": "mqtt in",
+        "z": "891127dbdba7381a",
+        "name": "Light8Brightness",
+        "topic": "local/lights/8/brightness",
+        "qos": "2",
+        "datatype": "auto-detect",
+        "broker": "116a81d49537d25e",
+        "nl": false,
+        "rap": true,
+        "rh": 0,
+        "inputs": 0,
+        "x": 150,
+        "y": 2180,
+        "wires": [
+            [
+                "b1c2d3e4f5a60081"
+            ]
+        ]
+    },
+    {
+        "id": "b1c2d3e4f5a60081",
+        "type": "function",
+        "z": "891127dbdba7381a",
+        "name": "Pdm01Device08Brightness",
+        "func": "const brightness = msg.payload.brightness || 0;\nconst bits = (b) => [b>>7&1, b>>6&1, b>>5&1, b>>4&1, b>>3&1, b>>2&1, b>>1&1, b&1];\nmsg.payload = {\n    \"identifier\": \"0x015\",\n    \"data_length_code\": 2,\n    \"data\": [\n        [0,0,0,0,0,1,1,1],\n        bits(brightness)\n    ],\n    \"extd\": false,\n    \"rtr\": false,\n    \"ss\": 0,\n    \"self\": 0\n};\nreturn msg;",
+        "outputs": 1,
+        "timeout": 0,
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 380,
+        "y": 2180,
+        "wires": [
+            [
+                "b1c2d3e4f5a60082"
+            ]
+        ]
+    },
+    {
+        "id": "b1c2d3e4f5a60082",
+        "type": "mqtt out",
+        "z": "891127dbdba7381a",
+        "name": "CAN Outbound",
+        "topic": "can/outbound",
+        "qos": "",
+        "retain": "",
+        "respTopic": "",
+        "contentType": "",
+        "userProps": "",
+        "correl": "",
+        "expiry": "",
+        "broker": "116a81d49537d25e",
+        "x": 600,
+        "y": 2180,
         "wires": []
     },
     {

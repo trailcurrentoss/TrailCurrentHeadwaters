@@ -13,6 +13,7 @@ const MQTT_GPS = 'gps';
 
 // MQTT Message Types
 const MSG_COMMAND = 'command';
+const MSG_BRIGHTNESS = 'brightness';
 const MSG_STATUS = 'status';
 
 
@@ -28,6 +29,7 @@ const TOPICS = {
     GPS_LAT_LON: `${MQTT_ROOT}/${MQTT_GPS}/latlon`,
     GPS_ALT: `${MQTT_ROOT}/${MQTT_GPS}/alt`,
     GPS_GNSS_DETAILS: `${MQTT_ROOT}/${MQTT_GPS}/details`,
+    GPS_TIME: `${MQTT_ROOT}/${MQTT_GPS}/time`,
     CLOUD_CONFIG_CHANGED: 'local/config/cloud_updated'
 };
 
@@ -157,6 +159,15 @@ class MqttService {
                 console.log('Subscribed to GPS details topic');
             }
         });
+
+        // Subscribe to GPS time topic
+        this.client.subscribe(TOPICS.GPS_TIME, (err) => {
+            if (err) {
+                console.error('Failed to subscribe to GPS time:', err);
+            } else {
+                console.log('Subscribed to GPS time topic');
+            }
+        });
     }
 
     handleMessage(topic, message) {
@@ -188,6 +199,8 @@ class MqttService {
                 this.handleGpsAlt(payload);
             } else if (parts[1] === MQTT_GPS && parts[2] === 'details') {
                 this.handleGpsDetails(payload);
+            } else if (parts[1] === MQTT_GPS && parts[2] === 'time') {
+                this.handleGpsTime(payload);
             } else if (parts[1] === MQTT_THERMOSTAT && parts[2] === MSG_STATUS) {
                 this.handleThermostatStatus(payload);
             }
@@ -319,6 +332,22 @@ class MqttService {
         }
     }
 
+    // Handle GPS time update from GNSS module
+    handleGpsTime(payload) {
+        console.log('Received GPS time:', payload);
+
+        if (this.broadcast) {
+            this.broadcast('gps_time', {
+                year: payload.year,
+                month: payload.month,
+                day: payload.day,
+                hour: payload.hour,
+                minute: payload.minute,
+                second: payload.second
+            });
+        }
+    }
+
     // Handle GPS details update from GPS module
     handleGpsDetails(payload) {
         console.log('Received GPS details:', payload);
@@ -369,21 +398,27 @@ class MqttService {
     }    
 
 
-    // Publish light command
+    // Publish light command — routes to separate MQTT topics for toggle vs brightness
+    // so Node-RED can send them to different CAN bus messages
     publishLightCommand(lightId, state, brightness = null) {
         if (!this.connected) {
             console.warn('MQTT not connected, cannot publish light command');
             return false;
         }
 
-        const topic = `${MQTT_ROOT}/${MQTT_LIGHTS}/${lightId}/${MSG_COMMAND}`;
-        const payload = { state };
         if (brightness !== null) {
-            payload.brightness = brightness;
+            // Brightness set: separate topic → CAN ID 0x015
+            const topic = `${MQTT_ROOT}/${MQTT_LIGHTS}/${lightId}/${MSG_BRIGHTNESS}`;
+            const payload = { brightness };
+            console.log(`Publishing light brightness to ${topic}:`, payload);
+            this.client.publish(topic, JSON.stringify(payload), { qos: 1 });
+        } else {
+            // Toggle: existing topic → CAN ID 0x018
+            const topic = `${MQTT_ROOT}/${MQTT_LIGHTS}/${lightId}/${MSG_COMMAND}`;
+            const payload = { state };
+            console.log(`Publishing light command to ${topic}:`, payload);
+            this.client.publish(topic, JSON.stringify(payload), { qos: 1 });
         }
-
-        console.log(`Publishing light command to ${topic}:`, payload);
-        this.client.publish(topic, JSON.stringify(payload), { qos: 1 });
         return true;
     }
 

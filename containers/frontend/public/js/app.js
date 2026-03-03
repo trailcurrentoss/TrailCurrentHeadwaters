@@ -15,9 +15,6 @@ import { configPage } from './pages/config.js';
 
 class App {
     constructor() {
-        this.clockInterval = null;
-        this.clockFormat = '12h';
-        this.timezone = 'America/New_York';
         this.isAuthenticated = false;
     }
 
@@ -112,9 +109,6 @@ class App {
         // Setup logout button
         this.setupLogoutButton();
 
-        // Start clock
-        this.startClock();
-
         // Connect WebSocket
         wsClient.connect();
         this.setupConnectionStatus();
@@ -131,15 +125,6 @@ class App {
             }
         });
 
-        // Listen for clock format changes
-        window.addEventListener('clockFormatChanged', (e) => {
-            this.clockFormat = e.detail.format;
-        });
-
-        // Listen for timezone changes
-        window.addEventListener('timezoneChanged', (e) => {
-            this.timezone = e.detail.timezone;
-        });
     }
 
     showLogin() {
@@ -155,14 +140,12 @@ class App {
 
         // Show full app structure with wizard page
         appEl.innerHTML = `
-            <!-- Header with clock -->
             <header class="app-header">
                 <div class="header-left">
                     <img src="/icons/logo-white.svg" alt="TrailCurrent" class="app-logo app-logo-dark">
                     <img src="/icons/logo-color.svg" alt="TrailCurrent" class="app-logo app-logo-light">
                 </div>
                 <div class="header-right">
-                    <span id="clock" class="clock"></span>
                     <button class="logout-btn" id="logout-btn" title="Sign out (${displayName})">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
@@ -185,9 +168,6 @@ class App {
         // Setup logout button
         this.setupLogoutButton();
 
-        // Start clock
-        this.startClock();
-
         // Set up wizard completion listener (one time only)
         const handleWizardCompleted = () => {
             window.removeEventListener('wizardCompleted', handleWizardCompleted);
@@ -209,14 +189,12 @@ class App {
         const displayName = user?.display_name || user?.username || 'User';
 
         appEl.innerHTML = `
-            <!-- Header with clock -->
             <header class="app-header">
                 <div class="header-left">
                     <img src="/icons/logo-white.svg" alt="TrailCurrent" class="app-logo app-logo-dark">
                     <img src="/icons/logo-color.svg" alt="TrailCurrent" class="app-logo app-logo-light">
                 </div>
                 <div class="header-right">
-                    <span id="clock" class="clock"></span>
                     <button class="logout-btn" id="logout-btn" title="Sign out (${displayName})">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
@@ -372,12 +350,6 @@ class App {
             console.error('Logout error:', error);
         }
 
-        // Stop clock
-        if (this.clockInterval) {
-            clearInterval(this.clockInterval);
-            this.clockInterval = null;
-        }
-
         // Disconnect WebSocket
         wsClient.disconnect();
 
@@ -397,8 +369,6 @@ class App {
     async loadSettings() {
         try {
             const settings = await API.getSettings();
-            this.clockFormat = settings.clock_format || '12h';
-            this.timezone = settings.timezone || 'America/New_York';
             document.documentElement.setAttribute('data-theme', settings.theme || 'dark');
         } catch (error) {
             console.error('Failed to load settings, using defaults:', error);
@@ -437,36 +407,6 @@ class App {
                 }
             });
         }
-    }
-
-    startClock() {
-        const updateClock = () => {
-            const clockEl = document.getElementById('clock');
-            if (!clockEl) return;
-
-            try {
-                const now = new Date();
-                const options = {
-                    hour: 'numeric',
-                    minute: '2-digit',
-                    hour12: this.clockFormat === '12h',
-                    timeZone: this.timezone
-                };
-                clockEl.textContent = now.toLocaleTimeString('en-US', options);
-            } catch (error) {
-                // Fallback for invalid timezone
-                const now = new Date();
-                const options = {
-                    hour: 'numeric',
-                    minute: '2-digit',
-                    hour12: this.clockFormat === '12h'
-                };
-                clockEl.textContent = now.toLocaleTimeString('en-US', options);
-            }
-        };
-
-        updateClock();
-        this.clockInterval = setInterval(updateClock, 1000);
     }
 
     setupConnectionStatus() {

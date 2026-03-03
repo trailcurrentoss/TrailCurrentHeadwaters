@@ -91,10 +91,13 @@ async function startServer() {
         // Initialize MQTT service
         mqttService.connect(db, broadcast);
 
-        // Inject starter flow into Node-RED if empty (fire-and-forget)
+        // Inject starter flow into Node-RED if empty (must complete before cloud workflow)
         const { injectStarterFlowIfEmpty, injectWithRetry } = require('./services/nodered-cloud-workflow');
-        injectStarterFlowIfEmpty().catch(err =>
-            console.error('[Startup] Starter flow injection failed:', err.message));
+        try {
+            await injectStarterFlowIfEmpty();
+        } catch (err) {
+            console.error('[Startup] Starter flow injection failed:', err.message);
+        }
 
         // Re-inject cloud workflow if cloud is enabled (picks up template changes on deploy)
         const sysConfig = await db.collection('system_config').findOne({ _id: 'main' });
