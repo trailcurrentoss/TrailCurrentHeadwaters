@@ -79,12 +79,18 @@ function setupWebSocket(server, db) {
                 newChargeType = 'float';
             }
 
+            // Simulate consumption (higher at night when solar is low)
+            const baseConsumption = isDayTime ? 80 : 150;
+            const consumptionVariation = Math.random() * 40 - 20;
+            const newConsumptionWatts = Math.max(0, Math.round(baseConsumption + consumptionVariation));
+
             await energyCollection.updateOne(
                 { _id: 'main' },
                 { $set: {
                     solar_watts: newSolarWatts,
                     battery_percent: newBatteryPercent,
                     charge_type: newChargeType,
+                    consumption_watts: newConsumptionWatts,
                     updated_at: new Date()
                 } }
             );
@@ -93,7 +99,8 @@ function setupWebSocket(server, db) {
                 ...energy,
                 solar_watts: newSolarWatts,
                 battery_percent: newBatteryPercent,
-                charge_type: newChargeType
+                charge_type: newChargeType,
+                consumption_watts: newConsumptionWatts
             });
         } catch (error) {
             console.error('Error updating energy simulation:', error);

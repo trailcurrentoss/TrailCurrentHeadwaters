@@ -314,9 +314,10 @@ Node-RED bridges CAN bus messages to local MQTT topics that the PWA consumes. Fl
 
 - **Inbound:** Subscribes to `can/inbound`, routes by CAN identifier, and publishes parsed data to `local/*` topics:
   - Light status (8 channels) → `local/lights/{1-8}/status`
+  - Energy (battery voltage, SOC, solar watts, charge status, power consumption, time remaining) → `local/energy/status`
   - Temperature & humidity → `local/airquality/temphumid`
   - GPS coordinates, altitude, details, time → `local/gps/*`
-- **Outbound:** Subscribes to `local/lights/{1-8}/command` (from PWA light toggles) and sends CAN messages to `can/outbound`
+- **Outbound:** Subscribes to `local/lights/{1-8}/command` and `local/lights/{1-8}/brightness` (from PWA light controls) and sends CAN messages to `can/outbound`
 - **Test controls:** Manual inject nodes for toggling lights, setting brightness, and all-on/all-off
 
 ### Automatic Loading (First Startup)

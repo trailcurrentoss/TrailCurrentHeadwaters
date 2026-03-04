@@ -86,6 +86,7 @@ async function seedDatabase() {
             battery_voltage: 13.2,
             charge_type: 'float',
             time_remaining_minutes: 2880, // 48 hours
+            consumption_watts: 0,
             updated_at: new Date()
         });
         console.log('Seeded energy');
@@ -97,6 +98,9 @@ async function seedDatabase() {
         }
         if (existingEnergy.battery_voltage === undefined) {
             updates.battery_voltage = 13.2;
+        }
+        if (existingEnergy.consumption_watts === undefined) {
+            updates.consumption_watts = 0;
         }
         if (Object.keys(updates).length > 0) {
             await energy.updateOne(

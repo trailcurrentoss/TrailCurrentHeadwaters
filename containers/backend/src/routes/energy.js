@@ -18,7 +18,7 @@ module.exports = (db) => {
     // PUT /api/energy (for simulation/testing)
     router.put('/', async (req, res) => {
         try {
-            const { solar_watts, battery_percent, battery_voltage, charge_type, time_remaining_minutes } = req.body;
+            const { solar_watts, battery_percent, battery_voltage, charge_type, time_remaining_minutes, consumption_watts } = req.body;
 
             const updates = {};
 
@@ -44,7 +44,7 @@ module.exports = (db) => {
             }
 
             if (charge_type !== undefined) {
-                if (!['float', 'bulk', 'absorption', 'equalize'].includes(charge_type)) {
+                if (!['off', 'float', 'bulk', 'absorption', 'equalize', 'fault'].includes(charge_type)) {
                     return res.status(400).json({ error: 'Invalid charge_type' });
                 }
                 updates.charge_type = charge_type;
@@ -55,6 +55,13 @@ module.exports = (db) => {
                     return res.status(400).json({ error: 'time_remaining_minutes must be non-negative' });
                 }
                 updates.time_remaining_minutes = time_remaining_minutes;
+            }
+
+            if (consumption_watts !== undefined) {
+                if (consumption_watts < 0 || consumption_watts > 5000) {
+                    return res.status(400).json({ error: 'consumption_watts must be between 0 and 5000' });
+                }
+                updates.consumption_watts = consumption_watts;
             }
 
             if (Object.keys(updates).length === 0) {
