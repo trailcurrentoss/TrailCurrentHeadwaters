@@ -15,10 +15,11 @@ set -e
 #   6. Installs can0 systemd service to auto-start on boot (500kbps)
 #   7. Adds user to the docker group
 #   8. Configures Pi 5 to auto-boot on power (no power button needed)
-#   9. Sets up the Python virtual environment for the CAN-to-MQTT bridge
-#  10. Installs the cantomqtt systemd service
-#  11. Creates the deployment directory structure
-#  12. Generates TLS/SSL certificates using the Pi's hostname
+#   9. Disables unused hardware for power savings (GPU, HDMI, BT, WiFi, USB, audio)
+#  10. Sets up the Python virtual environment for the CAN-to-MQTT bridge
+#  11. Installs the cantomqtt systemd service
+#  12. Creates the deployment directory structure
+#  13. Generates TLS/SSL certificates using the Pi's hostname
 #
 # Prerequisites:
 #   - Raspberry Pi OS Lite 64-bit flashed via Pi Imager
@@ -267,10 +268,88 @@ else
 fi
 
 # -------------------------------------------
-# Step 9: Set up Python virtual environment
+# Step 9: Power savings — disable unused hardware
 # -------------------------------------------
 echo ""
-echo "Step 9: Setting up Python virtual environment..."
+echo "Step 9: Disabling unused hardware for power savings..."
+
+# This is a headless system using only Ethernet and SPI (CAN bus).
+# Disable everything else to reduce power draw (~250-450 mW savings).
+POWER_OVERLAYS=(
+    "dtoverlay=disable-bt"
+    "dtoverlay=disable-wifi"
+)
+POWER_PARAMS=(
+    "dtparam=audio=off"
+    "dtparam=act_led_trigger=none"
+    "dtparam=act_led_activelow=off"
+    "gpu_mem=16"
+)
+
+for overlay in "${POWER_OVERLAYS[@]}"; do
+    if grep -q "^${overlay}$" "$BOOT_CONFIG"; then
+        echo "  Already set: $overlay"
+    else
+        echo "$overlay" >> "$BOOT_CONFIG"
+        echo "  Added: $overlay"
+    fi
+done
+
+for param in "${POWER_PARAMS[@]}"; do
+    key="${param%%=*}"
+    if grep -q "^${key}=" "$BOOT_CONFIG"; then
+        # Replace existing line
+        sed -i "s|^${key}=.*|${param}|" "$BOOT_CONFIG"
+        echo "  Updated: $param"
+    else
+        echo "$param" >> "$BOOT_CONFIG"
+        echo "  Added: $param"
+    fi
+done
+
+# Pi 5: disable both HDMI ports via overlays
+if [ -f /proc/device-tree/model ] && grep -q "Raspberry Pi 5" /proc/device-tree/model; then
+    for hdmi in "dtoverlay=disable-hdmi0" "dtoverlay=disable-hdmi1"; do
+        if grep -q "^${hdmi}$" "$BOOT_CONFIG"; then
+            echo "  Already set: $hdmi"
+        else
+            echo "$hdmi" >> "$BOOT_CONFIG"
+            echo "  Added: $hdmi"
+        fi
+    done
+fi
+
+# Disable USB hub at boot via a one-shot systemd service.
+# On Pi 4 the hub is on bus 1-1; on Pi 5 it may differ.
+USB_SERVICE="/etc/systemd/system/disable-usb.service"
+if [ -f "$USB_SERVICE" ]; then
+    echo "  disable-usb.service already exists"
+else
+    cat > "$USB_SERVICE" << 'EOF'
+[Unit]
+Description=Disable USB hub to save power
+After=multi-user.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/bash -c 'for port in /sys/bus/usb/devices/[0-9]-[0-9]; do [ -e "$port/driver" ] && echo "$(basename $port)" > /sys/bus/usb/drivers/usb/unbind || true; done'
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    systemctl daemon-reload
+    systemctl enable disable-usb.service
+    echo "  Created and enabled disable-usb.service"
+fi
+
+echo "  Power savings configured (reboot required)"
+
+# -------------------------------------------
+# Step 10: Set up Python virtual environment
+# -------------------------------------------
+echo ""
+echo "Step 10: Setting up Python virtual environment..."
 
 LOCAL_CODE_DIR="$USER_HOME/local_code"
 VENV_PATH="$LOCAL_CODE_DIR/cantomqtt"
@@ -298,10 +377,10 @@ else
 fi
 
 # -------------------------------------------
-# Step 10: Install cantomqtt systemd service
+# Step 11: Install cantomqtt systemd service
 # -------------------------------------------
 echo ""
-echo "Step 10: Installing cantomqtt systemd service..."
+echo "Step 11: Installing cantomqtt systemd service..."
 
 SERVICE_SRC="$SCRIPT_DIR/../local_code/can-to-mqtt.service"
 SERVICE_DEST="/etc/systemd/system/cantomqtt.service"
@@ -320,10 +399,10 @@ else
 fi
 
 # -------------------------------------------
-# Step 11: Create deployment directory structure
+# Step 12: Create deployment directory structure
 # -------------------------------------------
 echo ""
-echo "Step 11: Creating deployment directory structure..."
+echo "Step 12: Creating deployment directory structure..."
 
 # Run as the actual user so all files are owned correctly from the start
 DEPLOY_DIR="$USER_HOME"
@@ -334,10 +413,10 @@ sudo -u "$CURRENT_USER" mkdir -p "$DEPLOY_DIR/data/node-red"
 echo "  Created $DEPLOY_DIR with data subdirectories"
 
 # -------------------------------------------
-# Step 12: Generate TLS/SSL certificates
+# Step 13: Generate TLS/SSL certificates
 # -------------------------------------------
 echo ""
-echo "Step 12: Generating TLS/SSL certificates..."
+echo "Step 13: Generating TLS/SSL certificates..."
 
 KEYS_DIR="$DEPLOY_DIR/data/keys"
 TLS_HOSTNAME="$(hostname).local"
@@ -408,6 +487,7 @@ echo "  - CAN overlay: mcp2515-can0 (${MCP2515_OSCILLATOR}Hz crystal, GPIO${MCP2
 echo "  - CAN service: can0.service (auto-starts can0 at ${CAN_BITRATE} bps)"
 echo "  - User: $CURRENT_USER added to docker group"
 echo "  - Boot: auto-boot on power (Pi 5 EEPROM configured)"
+echo "  - Power: disabled GPU/HDMI/Bluetooth/WiFi/USB/audio"
 echo "  - Python venv: $VENV_PATH"
 echo "  - Service: cantomqtt.service (enabled, starts after deployment)"
 echo "  - TLS certs: $(hostname).local (valid 10 years)"
