@@ -284,7 +284,7 @@ class MqttService {
         this.broadcast('temphumid', payload);
     }
 
-    // Handle air quality status update from sensor
+    // Handle air quality status update from sensor (SGP30: TVOC + eCO2)
     async handleAirQualityStatus(payload) {
         console.log('Received air quality status:', payload);
 
@@ -292,19 +292,20 @@ class MqttService {
             try {
                 const updates = { updated_at: new Date() };
 
-                if (payload.iaq_index !== undefined) {
-                    updates.iaq_index = payload.iaq_index;
+                if (payload.tvoc_ppb !== undefined) {
+                    updates.tvoc_ppb = payload.tvoc_ppb;
                 }
 
-                if (payload.co2_ppm !== undefined) {
-                    updates.co2_ppm = payload.co2_ppm;
+                if (payload.eco2_ppm !== undefined) {
+                    updates.eco2_ppm = payload.eco2_ppm;
                 }
 
                 if (Object.keys(updates).length > 1) {
                     const airquality = this.db.collection('airquality');
                     await airquality.updateOne(
                         { _id: 'main' },
-                        { $set: updates }
+                        { $set: updates },
+                        { upsert: true }
                     );
 
                     // Get updated air quality data and broadcast via WebSocket

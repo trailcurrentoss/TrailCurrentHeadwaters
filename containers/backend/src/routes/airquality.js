@@ -18,22 +18,22 @@ module.exports = (db) => {
     // PUT /api/airquality (for simulation/testing)
     router.put('/', async (req, res) => {
         try {
-            const { iaq_index, co2_ppm } = req.body;
+            const { tvoc_ppb, eco2_ppm } = req.body;
 
             const updates = {};
 
-            if (iaq_index !== undefined) {
-                if (iaq_index < 0 || iaq_index > 500) {
-                    return res.status(400).json({ error: 'iaq_index must be between 0 and 500' });
+            if (tvoc_ppb !== undefined) {
+                if (tvoc_ppb < 0 || tvoc_ppb > 60000) {
+                    return res.status(400).json({ error: 'tvoc_ppb must be between 0 and 60000' });
                 }
-                updates.iaq_index = iaq_index;
+                updates.tvoc_ppb = tvoc_ppb;
             }
 
-            if (co2_ppm !== undefined) {
-                if (co2_ppm < 0 || co2_ppm > 10000) {
-                    return res.status(400).json({ error: 'co2_ppm must be between 0 and 10000' });
+            if (eco2_ppm !== undefined) {
+                if (eco2_ppm < 0 || eco2_ppm > 60000) {
+                    return res.status(400).json({ error: 'eco2_ppm must be between 0 and 60000' });
                 }
-                updates.co2_ppm = co2_ppm;
+                updates.eco2_ppm = eco2_ppm;
             }
 
             if (Object.keys(updates).length === 0) {

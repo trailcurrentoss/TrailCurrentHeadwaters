@@ -205,8 +205,8 @@ async function seedDatabase() {
     if (!existingAirQuality) {
         await airquality.insertOne({
             _id: 'main',
-            iaq_index: 85,
-            co2_ppm: 650,
+            tvoc_ppb: 50,
+            eco2_ppm: 450,
             updated_at: new Date()
         });
         console.log('Seeded air quality');

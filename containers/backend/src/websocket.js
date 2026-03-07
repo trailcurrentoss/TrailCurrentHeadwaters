@@ -190,44 +190,6 @@ function setupWebSocket(server, db) {
         }
     }, 10000);
 
-    // Simulate air quality data updates
-    setInterval(async () => {
-        if (clients.size === 0) return;
-
-        try {
-            const airqualityCollection = db.collection('airquality');
-            const airquality = await airqualityCollection.findOne({ _id: 'main' });
-            if (!airquality) return;
-
-            // IAQ index varies slightly (65-120 range typically)
-            const iaqChange = (Math.random() - 0.5) * 5;
-            let newIaqIndex = Math.max(25, Math.min(175, airquality.iaq_index + iaqChange));
-            newIaqIndex = Math.round(newIaqIndex);
-
-            // CO2 varies based on "occupancy" simulation
-            const co2Change = (Math.random() - 0.5) * 30;
-            let newCo2Ppm = Math.max(400, Math.min(1500, airquality.co2_ppm + co2Change));
-            newCo2Ppm = Math.round(newCo2Ppm);
-
-            await airqualityCollection.updateOne(
-                { _id: 'main' },
-                { $set: {
-                    iaq_index: newIaqIndex,
-                    co2_ppm: newCo2Ppm,
-                    updated_at: new Date()
-                } }
-            );
-
-            broadcast('airquality', {
-                ...airquality,
-                iaq_index: newIaqIndex,
-                co2_ppm: newCo2Ppm
-            });
-        } catch (error) {
-            console.error('Error updating air quality simulation:', error);
-        }
-    }, 15000);
-
     return { broadcast };
 }
 

@@ -218,8 +218,20 @@ async function removeWithRetry(retries = 3) {
 }
 
 /**
- * Inject the starter flow into Node-RED if it has no user flows.
- * Called on backend startup to seed Node-RED on first boot.
+ * Extract the version number from a starter flow tab's info field.
+ * Expects "Version: N" as the first line of the info string.
+ */
+function getFlowVersion(flowTab) {
+    if (!flowTab || !flowTab.info) return 0;
+    const match = flowTab.info.match(/^Version:\s*(\d+)/);
+    return match ? parseInt(match[1], 10) : 0;
+}
+
+/**
+ * Inject or update the starter flow in Node-RED.
+ * On first boot, injects the full starter flow.
+ * On subsequent boots, compares version numbers and replaces if the
+ * template is newer (preserving other flows like the cloud workflow).
  */
 async function injectStarterFlowIfEmpty(retries = 5) {
     for (let attempt = 1; attempt <= retries; attempt++) {
@@ -229,17 +241,39 @@ async function injectStarterFlowIfEmpty(retries = 5) {
 
             const currentFlows = await request('GET', '/flows', null, authHeader);
 
+            // Load the starter flow template
+            const starterFlow = JSON.parse(fs.readFileSync(STARTER_FLOW_PATH, 'utf8'));
+            const templateTab = starterFlow.find(node => node.id === STARTER_TAB_ID);
+            const templateVersion = getFlowVersion(templateTab);
+
             // Check if the starter flow tab is already present
-            const hasStarterTab = currentFlows.some(node => node.id === STARTER_TAB_ID);
-            if (hasStarterTab) {
-                console.log('[Starter Flow] Starter flow tab already present, skipping injection');
+            const existingTab = currentFlows.find(node => node.id === STARTER_TAB_ID);
+
+            if (existingTab) {
+                const existingVersion = getFlowVersion(existingTab);
+                if (existingVersion >= templateVersion) {
+                    console.log(`[Starter Flow] Up to date (version ${existingVersion})`);
+                    return true;
+                }
+                console.log(`[Starter Flow] Updating from version ${existingVersion} to ${templateVersion}`);
+
+                // Remove old starter flow nodes, keep everything else (cloud workflow, etc.)
+                const starterNodeIds = new Set(starterFlow.map(n => n.id));
+                const filtered = currentFlows.filter(node =>
+                    node.z !== STARTER_TAB_ID && !starterNodeIds.has(node.id)
+                );
+                const merged = [...filtered, ...starterFlow];
+
+                await request('POST', '/flows', merged, {
+                    ...authHeader,
+                    'Node-RED-Deployment-Type': 'full',
+                });
+
+                console.log(`[Starter Flow] Successfully updated to version ${templateVersion} (${starterFlow.length} nodes)`);
                 return true;
             }
 
-            // Load the starter flow template
-            const starterFlow = JSON.parse(fs.readFileSync(STARTER_FLOW_PATH, 'utf8'));
-
-            // Merge with existing flows (preserve cloud workflow or other tabs)
+            // First boot — inject fresh
             const merged = [...currentFlows, ...starterFlow];
 
             await request('POST', '/flows', merged, {
@@ -247,7 +281,7 @@ async function injectStarterFlowIfEmpty(retries = 5) {
                 'Node-RED-Deployment-Type': 'full',
             });
 
-            console.log(`[Starter Flow] Successfully injected starter flow (${starterFlow.length} nodes)`);
+            console.log(`[Starter Flow] Successfully injected version ${templateVersion} (${starterFlow.length} nodes)`);
             return true;
         } catch (error) {
             console.error(`[Starter Flow] Attempt ${attempt}/${retries} failed:`, error.message);

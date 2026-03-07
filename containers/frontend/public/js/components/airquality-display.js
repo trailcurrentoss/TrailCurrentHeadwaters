@@ -5,8 +5,8 @@ export class AirQualityDisplay {
     constructor(containerId) {
         this.container = document.getElementById(containerId);
         this.data = {
-            iaq_index: null,
-            co2_ppm: null
+            tvoc_ppb: null,
+            eco2_ppm: null
         };
         this.wsHandler = null;
         this.unsubStaleAir = null;
@@ -23,8 +23,8 @@ export class AirQualityDisplay {
     render() {
         const tempDisplay = this.dataTempAndHumidity.tempInF != null ? Math.round(this.dataTempAndHumidity.tempInF) : '-';
         const humidityDisplay = this.dataTempAndHumidity.humidity != null ? Math.round(this.dataTempAndHumidity.humidity) : '-';
-        const iaqDisplay = this.data.iaq_index != null ? Math.round(this.data.iaq_index) : '-';
-        const co2Display = this.data.co2_ppm != null ? Math.round(this.data.co2_ppm) : '-';
+        const tvocDisplay = this.data.tvoc_ppb != null ? Math.round(this.data.tvoc_ppb) : '-';
+        const eco2Display = this.data.eco2_ppm != null ? Math.round(this.data.eco2_ppm) : '-';
         return `
             <div class="airquality-container">
                 <!-- Temperature -->
@@ -48,67 +48,68 @@ export class AirQualityDisplay {
                         <span class="airquality-label">Humidity</span>
                     </div>
                 </div>
-                <!-- IAQ Index -->
-                <div class="card airquality-card ${this.getIaqClass()}">
+                <!-- TVOC -->
+                <div class="card airquality-card ${this.getTvocClass()}">
                     <svg class="airquality-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M9.59 4.59A2 2 0 1 1 11 8H2m10.59 11.41A2 2 0 1 0 14 16H2m15.73-8.27A2.5 2.5 0 1 1 19.5 12H2"/>
                     </svg>
                     <div class="airquality-info">
-                        <span class="airquality-value" id="iaq-value">${iaqDisplay}</span>
-                        <span class="airquality-label">IAQ Index</span>
-                        <span class="airquality-badge ${this.getIaqClass()}" id="iaq-badge" ${this.data.iaq_index == null ? 'style="display:none"' : ''}>${this.getIaqLabel()}</span>
+                        <span class="airquality-value" id="tvoc-value">${tvocDisplay}<span class="airquality-unit">ppb</span></span>
+                        <span class="airquality-label">TVOC</span>
+                        <span class="airquality-badge ${this.getTvocClass()}" id="tvoc-badge" ${this.data.tvoc_ppb == null ? 'style="display:none"' : ''}>${this.getTvocLabel()}</span>
                     </div>
                 </div>
 
-                <!-- CO2 -->
-                <div class="card airquality-card ${this.getCo2Class()}">
+                <!-- eCO2 -->
+                <div class="card airquality-card ${this.getEco2Class()}">
                     <svg class="airquality-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/>
                     </svg>
                     <div class="airquality-info">
-                        <span class="airquality-value" id="co2-value">${co2Display}<span class="airquality-unit">ppm</span></span>
-                        <span class="airquality-label">CO₂</span>
-                        <span class="airquality-badge ${this.getCo2Class()}" id="co2-badge" ${this.data.co2_ppm == null ? 'style="display:none"' : ''}>${this.getCo2Label()}</span>
+                        <span class="airquality-value" id="eco2-value">${eco2Display}<span class="airquality-unit">ppm</span></span>
+                        <span class="airquality-label">eCO₂</span>
+                        <span class="airquality-badge ${this.getEco2Class()}" id="eco2-badge" ${this.data.eco2_ppm == null ? 'style="display:none"' : ''}>${this.getEco2Label()}</span>
                     </div>
                 </div>
             </div>
         `;
     }
 
-    getIaqClass() {
-        const iaq = this.data.iaq_index;
-        if (iaq == null) return '';
-        if (iaq <= 50) return 'good';
-        if (iaq <= 100) return 'moderate';
-        if (iaq <= 150) return 'sensitive';
+    getTvocClass() {
+        const tvoc = this.data.tvoc_ppb;
+        if (tvoc == null) return '';
+        if (tvoc < 65) return 'good';
+        if (tvoc < 220) return 'moderate';
+        if (tvoc < 660) return 'sensitive';
         return 'unhealthy';
     }
 
-    getIaqLabel() {
-        const iaq = this.data.iaq_index;
-        if (iaq == null) return '';
-        if (iaq <= 50) return 'Good';
-        if (iaq <= 100) return 'Moderate';
-        if (iaq <= 150) return 'Sensitive';
+    getTvocLabel() {
+        const tvoc = this.data.tvoc_ppb;
+        if (tvoc == null) return '';
+        if (tvoc < 65) return 'Excellent';
+        if (tvoc < 220) return 'Good';
+        if (tvoc < 660) return 'Moderate';
+        if (tvoc < 2200) return 'Poor';
         return 'Unhealthy';
     }
 
-    getCo2Class() {
-        const co2 = this.data.co2_ppm;
-        if (co2 == null) return '';
-        if (co2 < 800) return 'good';
-        if (co2 < 1000) return 'moderate';
-        if (co2 < 2000) return 'sensitive';
+    getEco2Class() {
+        const eco2 = this.data.eco2_ppm;
+        if (eco2 == null) return '';
+        if (eco2 < 400) return 'good';
+        if (eco2 < 1000) return 'good';
+        if (eco2 < 2000) return 'sensitive';
         return 'unhealthy';
     }
 
-    getCo2Label() {
-        const co2 = this.data.co2_ppm;
-        if (co2 == null) return '';
-        if (co2 < 800) return 'Good';
-        if (co2 < 1000) return 'Moderate';
-        if (co2 < 2000) return 'Poor';
-        return 'Unhealthy';
+    getEco2Label() {
+        const eco2 = this.data.eco2_ppm;
+        if (eco2 == null) return '';
+        if (eco2 < 400) return 'Low';
+        if (eco2 < 1000) return 'Normal';
+        if (eco2 < 2000) return 'High';
+        return 'Alarm';
     }
 
     init(data, dataTempAndHumidity) {
@@ -131,7 +132,7 @@ export class AirQualityDisplay {
         wsClient.on('temphumid',this.wsTempAndHumidityHandler);
 
         this.unsubStaleAir = wsClient.onStale('airquality', () => {
-            this.data = { iaq_index: null, co2_ppm: null };
+            this.data = { tvoc_ppb: null, eco2_ppm: null };
             this.updateDisplay();
         });
         this.unsubStaleTempHumid = wsClient.onStale('temphumid', () => {
@@ -158,40 +159,42 @@ export class AirQualityDisplay {
     }
 
     updateDisplay() {
-        const iaqValue = document.getElementById('iaq-value');
-        const iaqBadge = document.getElementById('iaq-badge');
-        const co2Value = document.getElementById('co2-value');
-        const co2Badge = document.getElementById('co2-badge');
+        const tvocValue = document.getElementById('tvoc-value');
+        const tvocBadge = document.getElementById('tvoc-badge');
+        const eco2Value = document.getElementById('eco2-value');
+        const eco2Badge = document.getElementById('eco2-badge');
 
-        if (iaqValue) {
-            iaqValue.textContent = this.data.iaq_index != null ? Math.round(this.data.iaq_index) : '-';
+        if (tvocValue) {
+            tvocValue.innerHTML = this.data.tvoc_ppb != null
+                ? `${Math.round(this.data.tvoc_ppb)}<span class="airquality-unit">ppb</span>`
+                : `-<span class="airquality-unit">ppb</span>`;
         }
-        if (iaqBadge) {
-            iaqBadge.textContent = this.getIaqLabel();
-            iaqBadge.className = `airquality-badge ${this.getIaqClass()}`;
-            iaqBadge.style.display = this.data.iaq_index != null ? '' : 'none';
+        if (tvocBadge) {
+            tvocBadge.textContent = this.getTvocLabel();
+            tvocBadge.className = `airquality-badge ${this.getTvocClass()}`;
+            tvocBadge.style.display = this.data.tvoc_ppb != null ? '' : 'none';
         }
 
-        if (co2Value) {
-            co2Value.innerHTML = this.data.co2_ppm != null
-                ? `${Math.round(this.data.co2_ppm)}<span class="airquality-unit">ppm</span>`
+        if (eco2Value) {
+            eco2Value.innerHTML = this.data.eco2_ppm != null
+                ? `${Math.round(this.data.eco2_ppm)}<span class="airquality-unit">ppm</span>`
                 : `-<span class="airquality-unit">ppm</span>`;
         }
-        if (co2Badge) {
-            co2Badge.textContent = this.getCo2Label();
-            co2Badge.className = `airquality-badge ${this.getCo2Class()}`;
-            co2Badge.style.display = this.data.co2_ppm != null ? '' : 'none';
+        if (eco2Badge) {
+            eco2Badge.textContent = this.getEco2Label();
+            eco2Badge.className = `airquality-badge ${this.getEco2Class()}`;
+            eco2Badge.style.display = this.data.eco2_ppm != null ? '' : 'none';
         }
-        // Update card classes for IAQ
-        const iaqCard = document.querySelector('.airquality-card:first-child');
-        if (iaqCard) {
-            iaqCard.className = `card airquality-card ${this.getIaqClass()}`;
+        // Update card classes for TVOC
+        const tvocCard = document.querySelector('.airquality-card:nth-child(3)');
+        if (tvocCard) {
+            tvocCard.className = `card airquality-card ${this.getTvocClass()}`;
         }
 
-        // Update card classes for CO2
-        const co2Card = document.querySelector('.airquality-card:nth-child(2)');
-        if (co2Card) {
-            co2Card.className = `card airquality-card ${this.getCo2Class()}`;
+        // Update card classes for eCO2
+        const eco2Card = document.querySelector('.airquality-card:nth-child(4)');
+        if (eco2Card) {
+            eco2Card.className = `card airquality-card ${this.getEco2Class()}`;
         }
     }
 

@@ -4,7 +4,7 @@
         "type": "tab",
         "label": "CAN Bus Bridge",
         "disabled": false,
-        "info": "Bridges CAN bus messages to local MQTT topics for the TrailCurrent PWA.\n\nINBOUND: Subscribes to can/inbound, routes by CAN identifier, parses data,\nand publishes to local/* topics (lights, air quality, GPS).\n\nOUTBOUND: Subscribes to local/lights/*/command from the PWA and sends\nCAN toggle/brightness messages to can/outbound.\n\nSETUP:\n1. Double-click any MQTT node, then click the pencil icon next to 'Local MQTT Broker'\n2. Go to the Security tab and enter your MQTT username and password (from .env file)\n3. Click Update, then click Deploy (red button, top right)",
+        "info": "Version: 2\n\nBridges CAN bus messages to local MQTT topics for the TrailCurrent PWA.\n\nINBOUND: Subscribes to can/inbound, routes by CAN identifier, parses data,\nand publishes to local/* topics (lights, air quality, GPS).\n\nOUTBOUND: Subscribes to local/lights/*/command from the PWA and sends\nCAN toggle/brightness messages to can/outbound.\n\nSETUP:\n1. Double-click any MQTT node, then click the pencil icon next to 'Local MQTT Broker'\n2. Go to the Security tab and enter your MQTT username and password (from .env file)\n3. Click Update, then click Deploy (red button, top right)",
         "env": []
     },
     {
@@ -670,9 +670,9 @@
         "id": "5c28db6b4f958261",
         "type": "function",
         "z": "starter_flow_tab_01",
-        "name": "ParseTempAndHumidity",
-        "func": "let decoded = msg.payload.data.map(bitArray => \n    Number.parseInt(bitArray.join(''), 2)\n);\nlet humdity = (decoded[2] << 8) | decoded[3];\nlet outboundMessage = {\n    tempInC: decoded[0],\n    tempInF: decoded[1],\n    humidity: parseFloat(humdity/100)\n}\n\nmsg.payload = outboundMessage;\n\nreturn msg;",
-        "outputs": 1,
+        "name": "ParseAirQuality",
+        "func": "let decoded = msg.payload.data.map(bitArray => \n    Number.parseInt(bitArray.join(''), 2)\n);\nlet humidity = (decoded[2] << 8) | decoded[3];\nlet tvoc = (decoded[4] << 8) | decoded[5];\nlet eco2 = (decoded[6] << 8) | decoded[7];\n\nlet tempHumidMsg = {\n    payload: {\n        tempInC: decoded[0],\n        tempInF: decoded[1],\n        humidity: parseFloat(humidity/100)\n    }\n};\n\nlet airQualityMsg = {\n    payload: {\n        tvoc_ppb: tvoc,\n        eco2_ppm: eco2\n    }\n};\n\nreturn [tempHumidMsg, airQualityMsg];",
+        "outputs": 2,
         "timeout": 0,
         "noerr": 0,
         "initialize": "",
@@ -683,6 +683,9 @@
         "wires": [
             [
                 "881c4fc97d7d24ca"
+            ],
+            [
+                "aq_status_mqtt_out"
             ]
         ]
     },
@@ -781,7 +784,25 @@
         "expiry": "",
         "broker": "116a81d49537d25e",
         "x": 1360,
-        "y": 700,
+        "y": 680,
+        "wires": []
+    },
+    {
+        "id": "aq_status_mqtt_out",
+        "type": "mqtt out",
+        "z": "starter_flow_tab_01",
+        "name": "Air Quality",
+        "topic": "local/airquality/status",
+        "qos": "",
+        "retain": "",
+        "respTopic": "",
+        "contentType": "",
+        "userProps": "",
+        "correl": "",
+        "expiry": "",
+        "broker": "116a81d49537d25e",
+        "x": 1360,
+        "y": 730,
         "wires": []
     },
     {
