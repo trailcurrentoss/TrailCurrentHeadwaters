@@ -117,7 +117,7 @@ Connect power to the Pi so that it boots.
 On your development machine connected to the same network as the Pi, open a terminal and navigate to the directory where you cloned this repository. Then transfer the setup script to the Pi:
 
 ```bash
-cd <path-to-your-clone>/TrailCurrentInVehicleCompute
+cd <path-to-your-clone>/TrailCurrentHeadwaters
 scp rpi_one_time/setup-pi.sh <username>@<pi-ip-address>:~/
 ```
 

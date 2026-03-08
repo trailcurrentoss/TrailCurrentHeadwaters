@@ -29,7 +29,7 @@ This gets your local development environment running with hot-reload and debuggi
 
 ```bash
 git clone <REPO_URL>
-cd TrailCurrentInVehicleCompute
+cd TrailCurrentHeadwaters
 git config core.hooksPath .githooks
 docker buildx use default
 cp .env.example .env
