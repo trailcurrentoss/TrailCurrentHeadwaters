@@ -933,14 +933,11 @@ export const configPage = {
                 <span class="pdm-channel-number">${ch.channel}</span>
                 <input type="text" class="form-input pdm-channel-name" value="${escapeHtml(ch.name)}" placeholder="Channel name">
                 <select class="form-input pdm-channel-icon">${iconOptions}</select>
-                ${isSwitchback ? `
-                <input type="hidden" class="pdm-channel-type" value="other">
-                ` : `
                 <select class="form-input pdm-channel-type">
                     <option value="light"${ch.type === 'light' ? ' selected' : ''}>Light</option>
+                    <option value="general"${ch.type === 'general' ? ' selected' : ''}>General</option>
                     <option value="other"${ch.type === 'other' ? ' selected' : ''}>Other</option>
                 </select>
-                `}
             </div>
         `).join('');
 

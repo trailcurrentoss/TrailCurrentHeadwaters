@@ -31,6 +31,7 @@ async function syncSwitchbackChannelsToLights(db, mqttService) {
 
     const lightsCollection = db.collection('lights');
     const validIds = new Set();
+    const allChannels = [];
 
     for (let sbIndex = 0; sbIndex < switchbacks.length; sbIndex++) {
         const sb = switchbacks[sbIndex];
@@ -39,6 +40,13 @@ async function syncSwitchbackChannelsToLights(db, mqttService) {
         for (const ch of channels) {
             const lightId = SWITCHBACK_ID_BASE + (sbIndex * CHANNELS_PER_MODULE) + ch.channel;
             validIds.add(lightId);
+            allChannels.push({
+                id: lightId,
+                name: ch.name,
+                icon: ch.icon || 'power-outlet',
+                type: ch.type || 'other',
+                relay_channel: ch.channel  // 1-based MQTT channel (local/relays/N/command)
+            });
 
             await lightsCollection.updateOne(
                 { _id: lightId },
@@ -46,7 +54,7 @@ async function syncSwitchbackChannelsToLights(db, mqttService) {
                     $set: {
                         name: ch.name,
                         icon: ch.icon || 'power-outlet',
-                        type: 'other',
+                        type: ch.type || 'other',
                         source: 'switchback',
                         relay_channel: ch.channel - 1, // CAN channel index is 0-based
                         updated_at: new Date()
@@ -66,6 +74,11 @@ async function syncSwitchbackChannelsToLights(db, mqttService) {
     } else {
         // No enabled switchbacks — remove all switchback entries
         await lightsCollection.deleteMany({ source: 'switchback' });
+    }
+
+    // Publish config to MQTT for local services (voice assistant, etc.)
+    if (mqttService && allChannels.length > 0) {
+        mqttService.publishRelayChannelConfig(allChannels);
     }
 
     console.log(`[Switchback Sync] Synced ${validIds.size} relay channels from ${switchbacks.length} module(s)`);

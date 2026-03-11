@@ -3444,6 +3444,12 @@ body {
     border-left: 3px solid var(--danger);
 }
 
+.wireless-form-group {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
 .wireless-save-btn {
     padding: 12px 24px;
     border: none;

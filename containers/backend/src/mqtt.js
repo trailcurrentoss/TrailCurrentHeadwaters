@@ -660,6 +660,20 @@ class MqttService {
         return true;
     }
 
+    // Publish Switchback relay channel configuration for local services
+    publishRelayChannelConfig(channels) {
+        if (!this.connected) {
+            console.warn('MQTT not connected, cannot publish relay channel config');
+            return false;
+        }
+
+        const topic = `${MQTT_ROOT}/config/relay_channels`;
+        const payload = { channels };
+        console.log(`Publishing relay channel config to ${topic} (${channels.length} channels)`);
+        this.client.publish(topic, JSON.stringify(payload), { qos: 1, retain: true });
+        return true;
+    }
+
     // Notify local services that cloud configuration has changed
     publishCloudConfigChanged() {
         if (!this.connected) {

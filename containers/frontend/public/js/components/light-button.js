@@ -11,7 +11,7 @@ export class LightButton {
     render() {
         const stateClass = this.light.state ? 'on' : '';
         const iconKey = this.light.icon || 'lightbulb';
-        const showBrightness = this.light.type !== 'other';
+        const showBrightness = this.light.type !== 'other' && this.light.source !== 'switchback';
         return `
             <div class="light-btn-wrapper">
                 <button class="light-btn ${stateClass}" data-light-id="${this.light.id}" aria-pressed="${this.light.state ? 'true' : 'false'}">
