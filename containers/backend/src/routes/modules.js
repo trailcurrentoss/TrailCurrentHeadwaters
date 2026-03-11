@@ -13,6 +13,7 @@ const MCU_MODULES = [
     'power_distribution_module',
     'seven_pin_trailer_monitor',
     'shunt_gateway',
+    'switchback_relay',
     'vehicle_leveler',
     'wall_mounted_display'
 ];

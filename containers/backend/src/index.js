@@ -116,6 +116,12 @@ async function startServer() {
         syncPdmChannelsToLights(db, mqttService).catch(err =>
             console.error('[Startup] PDM channel sync failed:', err.message));
 
+        // Sync Switchback relay configs to lights collection, then cache names for MQTT hot path
+        const { syncSwitchbackChannelsToLights } = require('./services/switchback-channel-sync');
+        syncSwitchbackChannelsToLights(db, mqttService)
+            .then(() => mqttService.refreshRelayNameCache())
+            .catch(err => console.error('[Startup] Switchback channel sync failed:', err.message));
+
         // Start server
         server.listen(PORT, '0.0.0.0', () => {
             console.log(`TrailCurrent API server running on port ${PORT}`);

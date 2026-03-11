@@ -3,6 +3,7 @@ const router = express.Router();
 const { encrypt, decrypt } = require('../utils/crypto.js');
 const { injectWithRetry, removeWithRetry } = require('../services/nodered-cloud-workflow.js');
 const { syncPdmChannelsToLights } = require('../services/pdm-channel-sync.js');
+const { syncSwitchbackChannelsToLights } = require('../services/switchback-channel-sync.js');
 
 module.exports = (db) => {
     const systemConfig = db.collection('system_config');
@@ -264,6 +265,8 @@ module.exports = (db) => {
                 const mqttService = require('../mqtt');
                 try {
                     await syncPdmChannelsToLights(db, mqttService);
+                    await syncSwitchbackChannelsToLights(db, mqttService);
+                    await mqttService.refreshRelayNameCache();
                     // Broadcast updated light names to all WebSocket clients immediately
                     const broadcast = req.app.get('broadcast');
                     if (broadcast) {
@@ -271,7 +274,7 @@ module.exports = (db) => {
                         broadcast('lights_config', allLights.map(l => ({ id: l._id, name: l.name })));
                     }
                 } catch (error) {
-                    console.error('[System Config] Error syncing PDM channels:', error);
+                    console.error('[System Config] Error syncing device channels:', error);
                 }
             }
 

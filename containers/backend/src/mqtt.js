@@ -10,6 +10,7 @@ const MQTT_THERMOSTAT = 'thermostat';
 const MQTT_ENERGY = 'energy';
 const MQTT_AIRQUALITY = 'airquality';
 const MQTT_GPS = 'gps';
+const MQTT_RELAYS = 'relays';
 
 // MQTT Message Types
 const MSG_COMMAND = 'command';
@@ -30,6 +31,7 @@ const TOPICS = {
     GPS_ALT: `${MQTT_ROOT}/${MQTT_GPS}/alt`,
     GPS_GNSS_DETAILS: `${MQTT_ROOT}/${MQTT_GPS}/details`,
     GPS_TIME: `${MQTT_ROOT}/${MQTT_GPS}/time`,
+    RELAY_STATUS: `${MQTT_ROOT}/${MQTT_RELAYS}/+/${MSG_STATUS}`,
     CLOUD_CONFIG_CHANGED: 'local/config/cloud_updated'
 };
 
@@ -39,6 +41,7 @@ class MqttService {
         this.db = null;
         this.broadcast = null;
         this.connected = false;
+        this.relayNameCache = {};  // lightId → name, refreshed on sync
     }
 
     connect(db, broadcast) {
@@ -103,6 +106,15 @@ class MqttService {
                 console.error('Failed to subscribe to light status:', err);
             } else {
                 console.log('Subscribed to light status topics');
+            }
+        });
+
+        // Subscribe to relay status topics (for Switchback relay module)
+        this.client.subscribe(TOPICS.RELAY_STATUS, (err) => {
+            if (err) {
+                console.error('Failed to subscribe to relay status:', err);
+            } else {
+                console.log('Subscribed to relay status topics');
             }
         });
 
@@ -178,7 +190,14 @@ class MqttService {
             const parts = topic.split('/');
             if (parts[0] !== MQTT_ROOT) return;
 
-            if (parts[1] === MQTT_LIGHTS) {
+            if (parts[1] === MQTT_RELAYS) {
+                const relayId = parseInt(parts[2]);
+                const messageType = parts[3];
+
+                if (messageType === MSG_STATUS) {
+                    this.handleRelayStatus(relayId, payload);
+                }
+            } else if (parts[1] === MQTT_LIGHTS) {
                 const lightId = parseInt(parts[2]);
                 const messageType = parts[3];
 
@@ -226,6 +245,64 @@ class MqttService {
             }
             this.broadcast('light', lightData);
         }
+    }
+
+    // Handle relay status update from Switchback module
+    // Maps relay channel (1-6) to light ID (101-106) for unified WebSocket broadcast
+    // Uses in-memory name cache to avoid DB queries on the 33ms hot path
+    handleRelayStatus(relayId, payload) {
+        const SWITCHBACK_ID_BASE = 100;
+        const lightId = SWITCHBACK_ID_BASE + relayId;
+
+        if (this.broadcast) {
+            const relayData = { id: lightId, _id: lightId, state: payload.state };
+            if (this.relayNameCache[lightId]) {
+                relayData.name = this.relayNameCache[lightId];
+            }
+            this.broadcast('light', relayData);
+        }
+    }
+
+    // Refresh relay name cache from DB — called after switchback channel sync
+    async refreshRelayNameCache() {
+        try {
+            const relays = await this.db.collection('lights').find({ source: 'switchback' }).toArray();
+            this.relayNameCache = {};
+            for (const r of relays) {
+                this.relayNameCache[r._id] = r.name;
+            }
+            console.log(`[MQTT] Cached ${relays.length} relay names`);
+        } catch (err) {
+            console.error('[MQTT] Failed to refresh relay name cache:', err.message);
+        }
+    }
+
+    // Publish relay toggle command — routes to CAN ID 0x25 via Node-RED
+    publishRelayToggle(channel) {
+        if (!this.connected) {
+            console.warn('MQTT not connected, cannot publish relay toggle');
+            return false;
+        }
+
+        const topic = `${MQTT_ROOT}/${MQTT_RELAYS}/${channel + 1}/${MSG_COMMAND}`;
+        const payload = { action: 'toggle' };
+        console.log(`Publishing relay toggle to ${topic}:`, payload);
+        this.client.publish(topic, JSON.stringify(payload), { qos: 1 });
+        return true;
+    }
+
+    // Publish relay all on/off command — routes to CAN ID 0x25 [6, state] via Node-RED
+    publishRelayAllCommand(state) {
+        if (!this.connected) {
+            console.warn('MQTT not connected, cannot publish relay all command');
+            return false;
+        }
+
+        const topic = `${MQTT_ROOT}/${MQTT_RELAYS}/all/${MSG_COMMAND}`;
+        const payload = { state };
+        console.log(`Publishing relay all command to ${topic}:`, payload);
+        this.client.publish(topic, JSON.stringify(payload), { qos: 1 });
+        return true;
     }
 
     // Handle energy status update from battery monitor

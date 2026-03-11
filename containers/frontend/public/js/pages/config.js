@@ -552,11 +552,15 @@ export const configPage = {
         document.getElementById('module-name').value = module.name;
         document.getElementById('module-hostname').value = module.hostname || '';
 
-        // Handle PDM-specific channel config vs generic JSON
+        // Handle channel-based config (PDM / Switchback) vs generic JSON
         if (module.type === 'power_distribution_module') {
             const channels = module.config?.channels || this.getDefaultChannels();
             this.togglePdmChannelsUI('power_distribution_module');
-            this.renderChannelRows(channels);
+            this.renderChannelRows(channels, 'power_distribution_module');
+        } else if (module.type === 'switchback_relay') {
+            const channels = module.config?.channels || this.getSwitchbackDefaultChannels();
+            this.togglePdmChannelsUI('switchback_relay');
+            this.renderChannelRows(channels, 'switchback_relay');
         } else {
             this.togglePdmChannelsUI(module.type);
             document.getElementById('module-config').value = JSON.stringify(module.config || {}, null, 2);
@@ -646,7 +650,7 @@ export const configPage = {
         }
 
         let config = {};
-        if (type === 'power_distribution_module') {
+        if (type === 'power_distribution_module' || type === 'switchback_relay') {
             config = { channels: this.collectChannelData() };
         } else if (configText) {
             try {
@@ -879,14 +883,18 @@ export const configPage = {
     togglePdmChannelsUI(moduleType) {
         const jsonGroup = document.getElementById('json-config-group');
         const channelsConfig = document.getElementById('pdm-channels-config');
+        const showChannels = moduleType === 'power_distribution_module' || moduleType === 'switchback_relay';
 
-        if (moduleType === 'power_distribution_module') {
+        if (showChannels) {
             jsonGroup.style.display = 'none';
             channelsConfig.style.display = 'block';
             // Populate channel rows if empty
             const list = document.getElementById('pdm-channel-list');
             if (!list.children.length) {
-                this.renderChannelRows(this.getDefaultChannels());
+                const defaults = moduleType === 'switchback_relay'
+                    ? this.getSwitchbackDefaultChannels()
+                    : this.getDefaultChannels();
+                this.renderChannelRows(defaults, moduleType);
             }
         } else {
             jsonGroup.style.display = 'block';
@@ -904,21 +912,35 @@ export const configPage = {
         }));
     },
 
-    renderChannelRows(channels) {
+    getSwitchbackDefaultChannels() {
+        return Array.from({ length: 6 }, (_, i) => ({
+            channel: i + 1,
+            name: `Relay ${i + 1}`,
+            icon: 'power-outlet',
+            type: 'other'
+        }));
+    },
+
+    renderChannelRows(channels, moduleType) {
         const list = document.getElementById('pdm-channel-list');
         const iconOptions = ICON_LIST.map(ic =>
             `<option value="${ic.key}">${escapeHtml(ic.label)}</option>`
         ).join('');
+        const isSwitchback = moduleType === 'switchback_relay';
 
         list.innerHTML = channels.map(ch => `
             <div class="pdm-channel-row" data-channel="${ch.channel}">
                 <span class="pdm-channel-number">${ch.channel}</span>
                 <input type="text" class="form-input pdm-channel-name" value="${escapeHtml(ch.name)}" placeholder="Channel name">
                 <select class="form-input pdm-channel-icon">${iconOptions}</select>
+                ${isSwitchback ? `
+                <input type="hidden" class="pdm-channel-type" value="other">
+                ` : `
                 <select class="form-input pdm-channel-type">
                     <option value="light"${ch.type === 'light' ? ' selected' : ''}>Light</option>
                     <option value="other"${ch.type === 'other' ? ' selected' : ''}>Other</option>
                 </select>
+                `}
             </div>
         `).join('');
 
@@ -926,7 +948,7 @@ export const configPage = {
         list.querySelectorAll('.pdm-channel-row').forEach((row, i) => {
             const iconSelect = row.querySelector('.pdm-channel-icon');
             if (iconSelect && channels[i]) {
-                iconSelect.value = channels[i].icon || 'lightbulb';
+                iconSelect.value = channels[i].icon || (isSwitchback ? 'power-outlet' : 'lightbulb');
             }
         });
     },
