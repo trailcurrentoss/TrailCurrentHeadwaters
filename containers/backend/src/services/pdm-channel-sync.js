@@ -61,8 +61,12 @@ async function syncPdmChannelsToLights(db, mqttService) {
         }
     }
 
-    // Remove orphaned lights no longer covered by any PDM channel
-    await lightsCollection.deleteMany({ _id: { $nin: [...validIds] } });
+    // Remove orphaned PDM lights no longer covered by any PDM channel
+    // Only delete entries without a source field (PDM lights) — leave switchback entries alone
+    await lightsCollection.deleteMany({
+        _id: { $nin: [...validIds] },
+        source: { $exists: false }
+    });
 
     // Publish config to MQTT for cloud sync
     if (mqttService) {
