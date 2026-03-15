@@ -646,6 +646,36 @@ class MqttService {
         return true;
     }
 
+    /**
+     * Publish Plateau leveling configuration via CAN bus (CAN ID 0x20)
+     * Sends a single-frame message with subcommand 0x01 (set config)
+     * Only the Plateau module firmware listens on CAN ID 0x20
+     * @param {number} mounting - Mounting surface (0=floor, 1=left_wall, 2=right_wall)
+     * @param {number} vehicleLengthCm - Vehicle length in centimeters (uint16)
+     * @param {number} vehicleWidthCm - Vehicle width in centimeters (uint16)
+     * @returns {boolean} Success status
+     */
+    publishPlateauConfig(mounting, vehicleLengthCm, vehicleWidthCm) {
+        if (!this.connected) {
+            console.warn('MQTT not connected, cannot publish Plateau config');
+            return false;
+        }
+
+        console.log(`[Plateau Config] Sending config: mounting=${mounting}, length=${vehicleLengthCm}cm, width=${vehicleWidthCm}cm`);
+
+        const dataBytes = [
+            0x01,                                    // Subcommand: set leveling config
+            mounting & 0xFF,                         // Mounting surface
+            (vehicleLengthCm >> 8) & 0xFF,           // Vehicle length high byte
+            vehicleLengthCm & 0xFF,                  // Vehicle length low byte
+            (vehicleWidthCm >> 8) & 0xFF,            // Vehicle width high byte
+            vehicleWidthCm & 0xFF,                   // Vehicle width low byte
+            0x01                                     // Persist to NVS
+        ];
+
+        return this.publishCanMessage(0x20, dataBytes);
+    }
+
     // Publish PDM channel configuration for cloud sync
     publishPdmChannelConfig(channels) {
         if (!this.connected) {

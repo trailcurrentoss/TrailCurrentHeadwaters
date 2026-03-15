@@ -233,6 +233,24 @@ module.exports = (db) => {
                 }
             }
 
+            // Trigger Plateau config broadcast via CAN if a vehicle_leveler module is present
+            if (mcu_modules !== undefined) {
+                const leveler = mcu_modules.find(m => m.type === 'vehicle_leveler' && m.enabled !== false);
+                if (leveler && leveler.config) {
+                    const mqttService = require('../mqtt');
+                    try {
+                        const mounting = leveler.config.mounting !== undefined ? leveler.config.mounting : 0;
+                        const lengthCm = leveler.config.vehicle_length_cm !== undefined ? leveler.config.vehicle_length_cm : 500;
+                        const widthCm = leveler.config.vehicle_width_cm !== undefined ? leveler.config.vehicle_width_cm : 200;
+
+                        console.log('[System Config] Publishing Plateau config to CAN bus');
+                        mqttService.publishPlateauConfig(mounting, lengthCm, widthCm);
+                    } catch (error) {
+                        console.error('[System Config] Error publishing Plateau config:', error);
+                    }
+                }
+            }
+
             // Notify local services if cloud config changed
             if (cloud_enabled !== undefined || cloud_url !== undefined || cloud_mqtt_username !== undefined || cloud_mqtt_password !== undefined || cloud_api_key !== undefined) {
                 const mqttService = require('../mqtt');

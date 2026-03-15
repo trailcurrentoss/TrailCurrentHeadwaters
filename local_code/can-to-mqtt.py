@@ -8,9 +8,13 @@ import ssl
 import traceback
 import re
 import signal
+import threading
 
 MAX_RETRIES = 100
+MAX_SEND_FAILURES = 10
 shutdown_requested = False
+send_failure_count = 0
+send_failure_lock = threading.Lock()
 
 def handle_signal(signum, frame):
     global shutdown_requested
@@ -68,6 +72,7 @@ def on_subscribe(client, userdata, mid, reason_code_list, properties):
     print(f"Subscribed with message ID: {mid}")
 
 def on_message(client, userdata, msg):
+    global send_failure_count
     bus = userdata
     try:
         # Conver the MQTT data into JSON
@@ -114,8 +119,12 @@ def on_message(client, userdata, msg):
                 msgObject.error_state_indicator = False # Will need to be dyamic in the future
                 try:
                     bus.send(msgObject)
+                    with send_failure_lock:
+                        send_failure_count = 0
                 except Exception as e:
-                    print("Message not sent")
+                    with send_failure_lock:
+                        send_failure_count += 1
+                    print(f"CAN send failed ({send_failure_count}): {e}")
     except Exception as e:
         print(f"Error: {e}")
 
@@ -137,9 +146,12 @@ def int_to_bit_array(n):
         return [int(b) for b in format(n, 'b').zfill(8)]
 
 def main():
-    global shutdown_requested
+    global shutdown_requested, send_failure_count
     signal.signal(signal.SIGTERM, handle_signal)
     signal.signal(signal.SIGINT, handle_signal)
+
+    with send_failure_lock:
+        send_failure_count = 0
 
     bus = None
     client = None
@@ -188,6 +200,11 @@ def main():
                 }
                 json_payload = json.dumps(mqtt_message)
                 client.publish(MQTT_INBOUND_TOPIC, json_payload)
+
+            # Check if CAN send has been failing consistently
+            with send_failure_lock:
+                if send_failure_count >= MAX_SEND_FAILURES:
+                    raise RuntimeError(f"CAN bus send failed {send_failure_count} consecutive times, restarting")
         print("Shutdown complete")
     except Exception as e:
         print(f"Error: {e}")

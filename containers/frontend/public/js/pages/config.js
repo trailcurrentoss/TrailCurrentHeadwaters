@@ -130,6 +130,35 @@ export const configPage = {
                             </div>
                         </div>
 
+                        <div class="leveler-config" id="leveler-config" style="display: none;">
+                            <label class="form-label">Leveling Configuration</label>
+                            <p class="form-hint" style="margin-bottom: 12px;">Configure the IMU leveling sensor. Settings are sent to the module via CAN bus.</p>
+
+                            <div class="leveler-field-group">
+                                <label for="leveler-mounting" class="form-label">Mounting Surface</label>
+                                <select id="leveler-mounting" class="form-input">
+                                    <option value="0">Floor</option>
+                                    <option value="1">Left Wall</option>
+                                    <option value="2">Right Wall</option>
+                                </select>
+                                <p class="form-hint">Orientation of the IMU sensor in the vehicle</p>
+                            </div>
+
+                            <div class="leveler-field-group">
+                                <label for="leveler-vehicle-length" class="form-label">Vehicle Length (cm)</label>
+                                <input type="number" id="leveler-vehicle-length" class="form-input"
+                                       placeholder="e.g., 500" min="1" max="65535" value="500">
+                                <p class="form-hint">Total length of the vehicle in centimeters</p>
+                            </div>
+
+                            <div class="leveler-field-group">
+                                <label for="leveler-vehicle-width" class="form-label">Vehicle Width (cm)</label>
+                                <input type="number" id="leveler-vehicle-width" class="form-input"
+                                       placeholder="e.g., 200" min="1" max="65535" value="200">
+                                <p class="form-hint">Total width of the vehicle in centimeters</p>
+                            </div>
+                        </div>
+
                         <div id="form-message" class="form-message hidden"></div>
 
                         <div class="modal-actions">
@@ -552,7 +581,7 @@ export const configPage = {
         document.getElementById('module-name').value = module.name;
         document.getElementById('module-hostname').value = module.hostname || '';
 
-        // Handle channel-based config (PDM / Switchback) vs generic JSON
+        // Handle channel-based config (PDM / Switchback), leveler, or generic JSON
         if (module.type === 'power_distribution_module') {
             const channels = module.config?.channels || this.getDefaultChannels();
             this.togglePdmChannelsUI('power_distribution_module');
@@ -561,6 +590,9 @@ export const configPage = {
             const channels = module.config?.channels || this.getSwitchbackDefaultChannels();
             this.togglePdmChannelsUI('switchback_relay');
             this.renderChannelRows(channels, 'switchback_relay');
+        } else if (module.type === 'vehicle_leveler') {
+            this.togglePdmChannelsUI('vehicle_leveler');
+            this.populateLevelerFields(module.config || {});
         } else {
             this.togglePdmChannelsUI(module.type);
             document.getElementById('module-config').value = JSON.stringify(module.config || {}, null, 2);
@@ -652,6 +684,9 @@ export const configPage = {
         let config = {};
         if (type === 'power_distribution_module' || type === 'switchback_relay') {
             config = { channels: this.collectChannelData() };
+        } else if (type === 'vehicle_leveler') {
+            config = this.collectLevelerData();
+            if (!config) return; // validation failed
         } else if (configText) {
             try {
                 config = JSON.parse(configText);
@@ -897,9 +932,13 @@ export const configPage = {
                 this.renderChannelRows(defaults, moduleType);
             }
         } else {
-            jsonGroup.style.display = 'block';
+            jsonGroup.style.display = moduleType === 'vehicle_leveler' ? 'none' : 'block';
             channelsConfig.style.display = 'none';
         }
+
+        // Leveler config is independent of PDM channels
+        document.getElementById('leveler-config').style.display =
+            moduleType === 'vehicle_leveler' ? 'block' : 'none';
     },
 
     getDefaultChannels() {
@@ -948,6 +987,37 @@ export const configPage = {
                 iconSelect.value = channels[i].icon || (isSwitchback ? 'power-outlet' : 'lightbulb');
             }
         });
+    },
+
+    populateLevelerFields(config) {
+        const mounting = document.getElementById('leveler-mounting');
+        const length = document.getElementById('leveler-vehicle-length');
+        const width = document.getElementById('leveler-vehicle-width');
+
+        if (mounting) mounting.value = config.mounting !== undefined ? config.mounting : 0;
+        if (length) length.value = config.vehicle_length_cm !== undefined ? config.vehicle_length_cm : 500;
+        if (width) width.value = config.vehicle_width_cm !== undefined ? config.vehicle_width_cm : 200;
+    },
+
+    collectLevelerData() {
+        const mounting = parseInt(document.getElementById('leveler-mounting').value);
+        const vehicleLength = parseInt(document.getElementById('leveler-vehicle-length').value);
+        const vehicleWidth = parseInt(document.getElementById('leveler-vehicle-width').value);
+
+        if (isNaN(vehicleLength) || vehicleLength < 1 || vehicleLength > 65535) {
+            this.showMessage('Vehicle length must be between 1 and 65535 cm', 'error');
+            return null;
+        }
+        if (isNaN(vehicleWidth) || vehicleWidth < 1 || vehicleWidth > 65535) {
+            this.showMessage('Vehicle width must be between 1 and 65535 cm', 'error');
+            return null;
+        }
+
+        return {
+            mounting: mounting,
+            vehicle_length_cm: vehicleLength,
+            vehicle_width_cm: vehicleWidth
+        };
     },
 
     collectChannelData() {
