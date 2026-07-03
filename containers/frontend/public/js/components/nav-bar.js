@@ -78,7 +78,7 @@ export class NavBar {
             });
 
             // If an overflow item is active, show indicator on More button
-            const overflowPages = ['water', 'airquality', 'map', 'peregrine', 'config', 'deployments', 'playbill', 'settings'];
+            const overflowPages = ['water', 'airquality', 'map', 'peregrine', 'config', 'deployments', 'playbill', 'alarms', 'settings'];
             const isOverflowActive = overflowPages.includes(page);
             // Only show More as active if menu is open or if we're on small screen with overflow page
             if (isOverflowActive && window.innerWidth <= 480) {

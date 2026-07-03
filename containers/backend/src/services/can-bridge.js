@@ -67,6 +67,41 @@ const parsers = {
         }
     },
 
+    // ── Switchback digital-input broadcasts (0x012/0x013/0x014) ────
+    // CAN payload: byte 0 = DIN1..DIN8 bitmask (Picket-format), byte 1 reserved.
+    // Republished as local/spoor/<addr>/inputs for Spotter to consume.
+    '0x012': (data, mqtt) => {
+        const decoded = decodeBitArrays(data);
+        mqtt.publish('local/spoor/0/inputs',
+            JSON.stringify({ addr: 0, inputs: decoded[0] & 0xFF }));
+    },
+    '0x013': (data, mqtt) => {
+        const decoded = decodeBitArrays(data);
+        mqtt.publish('local/spoor/1/inputs',
+            JSON.stringify({ addr: 1, inputs: decoded[0] & 0xFF }));
+    },
+    '0x014': (data, mqtt) => {
+        const decoded = decodeBitArrays(data);
+        mqtt.publish('local/spoor/2/inputs',
+            JSON.stringify({ addr: 2, inputs: decoded[0] & 0xFF }));
+    },
+
+    // ── Picket reed-switch broadcasts (0x00A-0x011, addresses 0-7) ─
+    // CAN payload: byte 0 = RSW1..RSW8 bitmask, byte 1 low nibble =
+    // RSW9..RSW12 bitmask. Republished as local/picket/<addr>/inputs
+    // with a 12-bit `inputs` value (1 = door open / sensor active).
+    ...Object.fromEntries(
+        Array.from({ length: 8 }, (_, addr) => {
+            const canId = '0x' + (0x00A + addr).toString(16).padStart(3, '0');
+            return [canId, (data, mqtt) => {
+                const decoded = decodeBitArrays(data);
+                const inputs = (decoded[0] & 0xFF) | ((decoded[1] & 0x0F) << 8);
+                mqtt.publish(`local/picket/${addr}/inputs`,
+                    JSON.stringify({ addr, inputs }));
+            }];
+        })
+    ),
+
     // ── Air quality (0x01f) ────────────────────────────────────────
     '0x01f': (data, mqtt) => {
         const decoded = decodeBitArrays(data);

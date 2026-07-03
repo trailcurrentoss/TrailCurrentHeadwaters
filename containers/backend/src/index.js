@@ -27,6 +27,7 @@ const systemStatsRoutes = require('./routes/system-stats');
 const deploymentsRoutes = require('./routes/deployments');
 const playbillRoutes = require('./routes/playbill');
 const peregrineRoutes = require('./routes/peregrine');
+const alarmsRoutes = require('./routes/alarms');
 
 const app = express();
 const server = http.createServer(app);
@@ -78,6 +79,7 @@ async function startServer() {
         app.use('/api/deployments', deploymentsRoutes(db));
         app.use('/api/playbill', playbillRoutes());
         app.use('/api/peregrine', peregrineRoutes(db));
+        app.use('/api/alarms', alarmsRoutes(db));
 
         // Error handling middleware
         app.use((err, req, res, next) => {
@@ -114,6 +116,11 @@ async function startServer() {
         // Initialize CAN bridge (subscribes to can/inbound, routes to local/* topics)
         const canBridge = require('./services/can-bridge');
         canBridge.init(mqttService, db);
+
+        // Initialize Alarms service — subscribes to spoor/picket input topics
+        // and pushes live active-sensor set over WebSocket.
+        const alarmsService = require('./services/alarms-service');
+        alarmsService.init(mqttService, db);
 
         // Connect cloud bridge if cloud is enabled
         const cloudBridge = require('./services/cloud-bridge');

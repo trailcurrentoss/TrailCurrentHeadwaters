@@ -5558,3 +5558,293 @@ input[type="range"] {
     align-items: center;
     margin-top: 4px;
 }
+
+/* ============================================================
+   Alarms — header bell + popover, and the Alarms page list
+   ============================================================ */
+
+/* Header bell */
+.alarm-bell-wrapper {
+    position: relative;
+    display: flex;
+    align-items: center;
+}
+
+.alarm-bell-btn {
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    padding: 8px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    transition: color 0.2s ease, background 0.2s ease, opacity 0.2s ease;
+}
+
+.alarm-bell-btn svg {
+    width: 22px;
+    height: 22px;
+}
+
+.alarm-bell-btn:hover {
+    background: var(--bg-card-hover);
+}
+
+.alarm-bell-empty {
+    opacity: 0.4;
+}
+
+.alarm-bell-empty:hover {
+    opacity: 0.7;
+}
+
+.alarm-bell-active {
+    color: var(--danger);
+    opacity: 1;
+    animation: alarm-bell-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes alarm-bell-pulse {
+    0%, 100% { transform: scale(1); }
+    50%      { transform: scale(1.08); }
+}
+
+.alarm-bell-badge {
+    position: absolute;
+    top: 2px;
+    right: 2px;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
+    border-radius: 9px;
+    background: var(--danger);
+    color: #fff;
+    font-size: 0.7rem;
+    font-weight: 700;
+    line-height: 18px;
+    text-align: center;
+    box-shadow: 0 0 0 2px var(--header-bg);
+}
+
+.alarm-bell-popover {
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 0;
+    min-width: 240px;
+    max-width: 320px;
+    max-height: 60vh;
+    overflow-y: auto;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    box-shadow: 0 8px 24px var(--shadow-color);
+    z-index: 1000;
+}
+
+.alarm-bell-popover-header {
+    padding: 12px 16px;
+    font-size: 0.75rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-muted);
+    border-bottom: 1px solid var(--border-color);
+}
+
+.alarm-bell-popover-body {
+    padding: 8px 0;
+}
+
+.alarm-bell-empty-msg {
+    margin: 0;
+    padding: 12px 16px;
+    color: var(--text-muted);
+    font-size: 0.875rem;
+    text-align: center;
+}
+
+.alarm-bell-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.alarm-bell-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 16px;
+    color: var(--text-primary);
+    font-size: 0.9375rem;
+}
+
+.alarm-bell-item-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--danger);
+    flex-shrink: 0;
+    box-shadow: var(--glow-danger);
+}
+
+.alarm-bell-item-label {
+    word-break: break-word;
+}
+
+/* Alarms page */
+.page-alarms .alarms-intro {
+    color: var(--text-secondary);
+    font-size: 0.9375rem;
+    margin: 0 0 16px 0;
+}
+
+.alarms-loading,
+.alarms-empty {
+    color: var(--text-muted);
+    text-align: center;
+    padding: 24px 0;
+}
+
+.alarms-empty-hint {
+    font-size: 0.875rem;
+    margin-top: 4px;
+}
+
+.alarms-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    border-top: 1px solid var(--border-color);
+}
+
+.alarm-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.alarm-row-label {
+    color: var(--text-primary);
+    font-size: 0.9375rem;
+    flex: 1;
+    min-width: 0;
+    word-break: break-word;
+}
+
+.alarm-row-custom {
+    color: var(--text-secondary);
+    font-style: italic;
+}
+
+.alarm-row-actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-shrink: 0;
+}
+
+.alarm-rename-btn {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 6px;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: color 0.2s ease, background 0.2s ease;
+}
+
+.alarm-rename-btn:hover {
+    color: var(--primary);
+    background: var(--bg-card-hover);
+}
+
+.alarm-rename-btn svg {
+    width: 18px;
+    height: 18px;
+}
+
+/* Rename modal */
+.alarm-rename-modal {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 2000;
+    padding: 20px;
+}
+
+.alarm-rename-modal-content {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    padding: 24px;
+    width: 100%;
+    max-width: 400px;
+    box-shadow: 0 16px 48px var(--shadow-color);
+}
+
+.alarm-rename-modal-content h3 {
+    margin: 0 0 4px 0;
+    color: var(--text-primary);
+    font-size: 1.125rem;
+}
+
+.alarm-rename-subtitle {
+    margin: 0 0 16px 0;
+    color: var(--text-muted);
+    font-size: 0.8125rem;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.alarm-rename-modal-content .form-input {
+    width: 100%;
+    margin-bottom: 4px;
+}
+
+.alarm-rename-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 16px;
+}
+
+.alarm-rename-actions .btn-primary,
+.alarm-rename-actions .btn-secondary {
+    padding: 8px 16px;
+    border-radius: 8px;
+    border: none;
+    cursor: pointer;
+    font-size: 0.9375rem;
+    font-weight: 600;
+}
+
+.alarm-rename-actions .btn-primary {
+    background: var(--primary);
+    color: var(--btn-text);
+}
+
+.alarm-rename-actions .btn-primary:hover {
+    background: var(--primary-hover);
+}
+
+.alarm-rename-actions .btn-secondary {
+    background: transparent;
+    color: var(--text-secondary);
+    border: 1px solid var(--border-color);
+}
+
+.alarm-rename-actions .btn-secondary:hover {
+    background: var(--bg-card-hover);
+    color: var(--text-primary);
+}

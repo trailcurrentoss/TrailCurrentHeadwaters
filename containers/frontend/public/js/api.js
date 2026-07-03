@@ -290,6 +290,22 @@ class API {
         });
     }
 
+    // Alarms
+    static async getAlarmsConfig() {
+        return this.request('/alarms/config');
+    }
+
+    static async updateAlarmsConfig(sensors) {
+        return this.request('/alarms/config', {
+            method: 'PUT',
+            body: JSON.stringify({ sensors })
+        });
+    }
+
+    static async getActiveAlarms() {
+        return this.request('/alarms/active');
+    }
+
     // Health check
     static async healthCheck() {
         return this.request('/health');

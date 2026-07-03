@@ -15,6 +15,8 @@ import { configPage } from './pages/config.js';
 import { deploymentsPage } from './pages/deployments.js';
 import { playbillPage } from './pages/playbill.js';
 import { peregrinePage } from './pages/peregrine.js';
+import { alarmsPage } from './pages/alarms.js';
+import { AlarmBell } from './components/alarm-bell.js';
 
 class App {
     constructor() {
@@ -118,6 +120,7 @@ class App {
             .register('deployments', deploymentsPage)
             .register('playbill', playbillPage)
             .register('peregrine', peregrinePage)
+            .register('alarms', alarmsPage)
             .register('settings', settingsPage);
 
         // Initialize navigation
@@ -126,6 +129,14 @@ class App {
 
         // Setup logout button
         this.setupLogoutButton();
+
+        // Mount the alarm bell into the header right-side cluster.
+        const headerRight = document.querySelector('.app-header .header-right');
+        if (headerRight) {
+            if (this.alarmBell) this.alarmBell.destroy();
+            this.alarmBell = new AlarmBell();
+            this.alarmBell.mount(headerRight);
+        }
 
         // Connect WebSocket
         wsClient.connect();
@@ -313,6 +324,13 @@ class App {
                     </svg>
                     <span>Deploy</span>
                 </button>
+                <button class="nav-btn nav-overflow-item" data-page="alarms">
+                    <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
+                        <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
+                    </svg>
+                    <span>Alarms</span>
+                </button>
                 <button class="nav-btn nav-overflow-item" data-page="settings">
                     <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <circle cx="12" cy="12" r="3"></circle>
@@ -389,6 +407,13 @@ class App {
                             </svg>
                             <span>Deploy</span>
                         </button>
+                        <button class="nav-overflow-btn" data-page="alarms">
+                            <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
+                                <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
+                            </svg>
+                            <span>Alarms</span>
+                        </button>
                         <button class="nav-overflow-btn" data-page="settings">
                             <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <circle cx="12" cy="12" r="3"></circle>
@@ -423,6 +448,12 @@ class App {
 
         // Disconnect WebSocket
         wsClient.disconnect();
+
+        // Tear down the alarm bell so it doesn't double-mount on next login.
+        if (this.alarmBell) {
+            this.alarmBell.destroy();
+            this.alarmBell = null;
+        }
 
         // Reset router
         router.reset();
