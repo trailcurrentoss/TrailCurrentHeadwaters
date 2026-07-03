@@ -4,6 +4,37 @@ This guide covers everything needed to go from bare Compute Module 5 boards to
 running TrailCurrent Headwaters units. It is designed for mass flashing — follow
 the steps in order with no gaps.
 
+## Carrier Board Variants
+
+Two supported carrier boards, two image variants. Pick one — the flashing
+procedure and application stack are identical from Step 2 onward.
+
+| Variant | Carrier | CAN wiring | Build script | Image name |
+|---------|---------|-----------|--------------|------------|
+| Base | Any CM5 IO board + Waveshare **RS485 CAN HAT (B)** | MCP2515, SPI0/CE0, 16 MHz xtal, INT=**GPIO25** | `build.sh` | `trailcurrent-cm5-base.img` |
+| Wireless-Base | Waveshare **CM5-IO-Wireless-Base** (all-in-one) | Onboard isolated MCP2515, SPI0/CE0, 16 MHz xtal, INT=**GPIO17** | `build-wireless.sh` | `trailcurrent-cm5-wireless-base.img` |
+
+The **Wireless-Base** variant targets the Waveshare CM5-IO-Wireless-Base
+carrier board, which folds several parts of the stack onto one PCB:
+
+- Onboard **isolated CAN** with 120 Ω terminator jumper (no HAT, no CAN wiring
+  harness beyond the screw terminal)
+- **7 – 36 V DC** input (vehicle-native — no external buck converter needed)
+- **NVMe M.2 M-Key** slot (same as before)
+- **Waveshare-provided enclosure** available for this carrier — no 3D print
+  required
+- Also carries M.2 B-Key + miniPCIe (4G / 5G / LoRa) and 2× isolated RS485.
+  **These are deliberately unused in the current image** — the wireless-base
+  variant is only about swapping the CAN wiring today. Router / cellular
+  work-out is future.
+
+The only functional difference between the two images is the MCP2515 interrupt
+GPIO (25 vs 17) and the overlay syntax used to declare it. Both use the same
+MCP2515 controller, the same 16 MHz crystal, the same SPI0/CE0 chip select,
+and the same 500 kbit/s bit timing. Everything else — Docker images, first-boot
+provisioning, TLS, mDNS, deployment watcher, tileserver, active-cooler
+thermal ramp — is identical.
+
 ## Hardware Requirements
 
 ### Compute Module
@@ -36,14 +67,20 @@ an industrial-grade NVMe rated to 85 C (e.g., Transcend MTE552T, ATP N600Ri).
 
 ### Other Components
 
-- CM5 carrier board (IO Board or custom) with:
+- CM5 carrier board — one of:
+  - **Base variant:** any CM5 IO board (Raspberry Pi CM5 IO Board, Waveshare
+    CM5-IO-Base-A/B, etc.) plus the **Waveshare RS485 CAN HAT (B)**
+    (MCP2515, SPI0/CE0, 16 MHz crystal, GPIO25 interrupt)
+  - **Wireless-Base variant:** **Waveshare CM5-IO-Wireless-Base** — CAN,
+    NVMe slot, 7–36 V DC input, and optional matching enclosure all on
+    one board
+  Whichever carrier is chosen, it must have:
   - USB-C port for flashing
   - EMMC_DISABLE jumper (sometimes labelled "nRPIBOOT" or "Disable eMMC Boot")
     — only needed for CM5 with eMMC; CM5 Lite enters USB boot automatically
   - NVMe M.2 slot (M-key or B+M-key)
   - Dedicated FAN connector (PWM-capable, for active cooler)
 - Waveshare CM5 Active Cooler (recommended for enclosed deployments)
-- Waveshare RS485 CAN HAT (B) (MCP2515, SPI0/CE0, 16 MHz crystal, GPIO25 interrupt)
 - Ethernet connection
 - A Linux computer for building and flashing (Debian/Ubuntu, arm64 or x86_64)
 
@@ -168,10 +205,15 @@ and generates encryption keys).
 
 ```bash
 cd CM5/image
+
+# Base variant (CM5 IO board + Waveshare RS485 CAN HAT (B), INT=GPIO25)
 sudo ./build.sh myuser mypassword
+
+# Wireless-Base variant (Waveshare CM5-IO-Wireless-Base, INT=GPIO17)
+sudo ./build-wireless.sh myuser mypassword
 ```
 
-Arguments:
+Arguments (same for both scripts):
 - First argument: login username (default: `trailcurrent`)
 - Second argument: login password (default: `trailcurrent`)
 
@@ -190,7 +232,11 @@ The script will:
 3. Install build dependencies (first run only)
 4. Build the image (baking in all deployment artifacts)
 
-Output: `CM5/rpi-image-gen/work/image-trailcurrent-cm5-base/trailcurrent-cm5-base.img`
+Output (base variant):
+`CM5/rpi-image-gen/work/image-trailcurrent-cm5-base/trailcurrent-cm5-base.img`
+
+Output (wireless-base variant):
+`CM5/rpi-image-gen/work/image-trailcurrent-cm5-wireless-base/trailcurrent-cm5-wireless-base.img`
 
 > **Image size:** The output image is ~28 GB due to the baked-in map
 > tiles. Flashing to NVMe via `dd` takes longer than a minimal image
@@ -209,8 +255,22 @@ Repeat these steps for each CM5 board. The order matters — do not skip steps.
 ### Step 1: Prepare the Hardware
 
 1. Install the NVMe SSD into the carrier board's M.2 slot
-2. **CM5 with eMMC:** Fit the **EMMC_DISABLE** jumper on the carrier board
-   **CM5 Lite:** No jumper needed — skip this step
+2. **Force the CM5 into USB boot / rpiboot mode.** The mechanism differs by
+   carrier:
+
+   | Carrier | Action |
+   |---------|--------|
+   | **Wireless-Base** (any CM5) | Set the **BOOT** slide switch on the carrier to **ON**. This forces USB rpiboot mode regardless of what is on the NVMe or eMMC. |
+   | Base carrier + **CM5 with eMMC** | Fit the **EMMC_DISABLE** jumper on the carrier board. |
+   | Base carrier + **CM5 Lite** | No action needed — Lite has no eMMC and enters USB boot automatically when the NVMe is blank. |
+
+   > **Wireless-Base BOOT switch meaning:**
+   > - **ON** = USB image-loading mode (rpiboot works, CM5 does not touch the NVMe)
+   > - **OFF** = normal boot from NVMe (production runtime)
+   >
+   > If the switch is left OFF and the NVMe contains any bootable image, the
+   > CM5 will boot from the NVMe and never enumerate as a USB device — the
+   > green STAT LED will light and `lsusb` will show nothing.
 3. Connect the carrier board's USB-C to your computer
 4. Apply power to the carrier board
 5. Verify the CM5 is detected:
@@ -303,22 +363,40 @@ lsblk
 Unmount any auto-mounted partitions, then write the image:
 
 **NOTE!!!** This can take a really long time depending on NVME speed. Wait for it to complete and exit back to shell. Otherwise you will corrupt the NVME and have to start over **IMPORTANT**
+
+Pick the image that matches the carrier board you built for:
+
 ```bash
 # Change to the root of the repository before these commands
 sudo umount /dev/sdX* 2>/dev/null
-#cd to root of project
+
+# Base variant (CM5 IO board + Waveshare RS485 CAN HAT (B), INT=GPIO25)
 sudo dd if=CM5/rpi-image-gen/work/image-trailcurrent-cm5-base/trailcurrent-cm5-base.img \
+    of=/dev/sdX bs=4M status=progress conv=fsync
+
+# -- or --
+
+# Wireless-Base variant (Waveshare CM5-IO-Wireless-Base, INT=GPIO17)
+sudo dd if=CM5/rpi-image-gen/work/image-trailcurrent-cm5-wireless-base/trailcurrent-cm5-wireless-base.img \
     of=/dev/sdX bs=4M status=progress conv=fsync
 ```
 
 Replace `/dev/sdX` with the NVMe device.
+
+> **Flashing the wrong image on the wrong carrier will boot, but `can0` will
+> never come up** — the MCP2515 interrupt line is wired to GPIO25 on the CAN
+> HAT (B) and GPIO17 on the CM5-IO-Wireless-Base, and only the interrupt in
+> the flashed device tree will fire.
 
 > **Always use `conv=fsync`.** Without it, `dd` may return before data is
 > physically written, resulting in a corrupted image.
 
 ### Step 5: Prepare for First Boot
 
-1. **CM5 with eMMC:** Remove the EMMC_DISABLE jumper
+1. Return the CM5 to normal-boot mode (reverse of Step 1):
+   - **Wireless-Base carrier:** Flip the **BOOT** slide switch to **OFF**.
+   - **Base carrier + CM5 with eMMC:** Remove the EMMC_DISABLE jumper.
+   - **Base carrier + CM5 Lite:** No action needed.
 2. Disconnect the USB cable
 3. Connect Ethernet
 4. Power cycle the carrier board
@@ -438,7 +516,9 @@ procedure above if anything is unclear.
 One-time (build host):
   1. ./build-and-save-images.sh                              # Build ARM64 Docker images
   2. Place map.mbtiles in data/tileserver/                   # Obtain map tiles
-  3. cd CM5/image && sudo ./build.sh myuser mypassword       # Build CM5 image
+  3. cd CM5/image && sudo ./build.sh myuser mypassword       # Base variant (RS485 CAN HAT B, GPIO25)
+     # -- or --
+     cd CM5/image && sudo ./build-wireless.sh myuser mypassword  # Wireless-Base variant (onboard CAN, GPIO17)
 
 For each board:
   1. Install NVMe, fit EMMC_DISABLE jumper (if eMMC), connect USB, power on
@@ -491,8 +571,8 @@ These are copied into the chosen user's home directory during the image build:
 
 | Setting | Value | Purpose |
 |---------|-------|---------|
-| `dtparam=spi=on` | enabled | Required for MCP2515 CAN controller |
-| `dtoverlay=mcp2515-can0` | 16MHz/GPIO25/2MHz SPI | CAN bus hardware |
+| `dtparam=spi=on` **or** `dtoverlay=spi0-1cs,cs0_pin=8` | enabled | Base variant enables SPI via `dtparam=spi=on`; wireless-base variant uses `spi0-1cs,cs0_pin=8` per Waveshare's docs |
+| `dtoverlay=mcp2515-can0` (base) / `dtoverlay=mcp2515,spi0-0` (wireless-base) | 16 MHz xtal, GPIO25 INT (base) / GPIO17 INT (wireless-base), 1 MHz SPI | CAN bus hardware |
 | `dtoverlay=disable-bt` | disabled | Power savings |
 | `dtoverlay=disable-wifi` | disabled | Power savings (uses Ethernet) |
 | `dtoverlay=disable-hdmi0` | disabled | Power savings (headless) |
@@ -539,8 +619,12 @@ does not exist. It runs once — subsequent logins skip it.
 
 ### rpiboot doesn't detect the CM5
 
-- **CM5 with eMMC:** Verify the EMMC_DISABLE jumper is fitted
-- **CM5 Lite:** Should enter USB boot automatically — if not, check power
+- **Wireless-Base carrier:** Verify the **BOOT** slide switch is set to **ON**.
+  Symptom of the switch being OFF with a flashed NVMe: green STAT LED lights,
+  M.2 LED blinks at a steady heartbeat, but `lsusb` shows no BCM2712D0 Boot
+  device — the CM5 has booted from the NVMe instead of entering rpiboot mode.
+- **Base carrier + CM5 with eMMC:** Verify the EMMC_DISABLE jumper is fitted
+- **Base carrier + CM5 Lite:** Should enter USB boot automatically — if not, check power
 - Check USB connection: `lsusb | grep -i broadcom` should show `BCM2712D0 Boot`
 - Try a different USB cable or port
 - Power cycle the carrier board with USB already connected
@@ -566,7 +650,14 @@ does not exist. It runs once — subsequent logins skip it.
 
 ### CAN bus not working
 
-- Verify the CAN hat is connected and the SPI ribbon cable is seated
+- Confirm you flashed the image that matches your carrier board:
+  - `trailcurrent-cm5-base.img` for the RS485 CAN HAT (B) (INT=GPIO25)
+  - `trailcurrent-cm5-wireless-base.img` for the CM5-IO-Wireless-Base (INT=GPIO17)
+  Booting the wrong image on either carrier will make `can0` fail to
+  appear because the MCP2515 interrupt line will never fire.
+- Base variant: verify the CAN hat is connected and the SPI ribbon cable is seated
+- Wireless-Base variant: verify the CAN screw-terminal wiring and that the
+  120 Ω terminator jumper is fitted if this device is at an end of the bus
 - Check kernel messages: `dmesg | grep -i mcp2515`
 - Check the can0 service: `systemctl status can0`
 - The MCP2515 needs ~15 seconds after power-on to stabilize (the service
@@ -695,11 +786,14 @@ CM5/
 │       ├── boot.conf        <- Boot order settings (BOOT_ORDER=0xfe6)
 │       └── update-pieeprom.sh <- Builds EEPROM image from boot.conf
 ├── image/                    <- Image build system
-│   ├── build.sh             <- Build wrapper (checks prerequisites first)
+│   ├── build.sh             <- Base variant build wrapper (RS485 CAN HAT B, INT=GPIO25)
+│   ├── build-wireless.sh    <- Wireless-Base variant build wrapper (onboard CAN, INT=GPIO17)
 │   ├── config/
-│   │   └── trailcurrent-cm5-base.yaml   <- Build configuration
+│   │   ├── trailcurrent-cm5-base.yaml           <- Base variant build configuration
+│   │   └── trailcurrent-cm5-wireless-base.yaml  <- Wireless-Base variant build configuration
 │   └── layer/
-│       ├── trailcurrent-base.yaml       <- Custom layer (packages, services, baked artifacts)
+│       ├── trailcurrent-base.yaml           <- Base variant layer (packages, services, baked artifacts)
+│       ├── trailcurrent-base-wireless.yaml  <- Wireless-Base variant layer (identical minus CAN overlay)
 │       └── files/
 │           ├── trailcurrent-firstboot.sh    <- First-boot hardware setup
 │           ├── trailcurrent-load-images.sh  <- Docker image loader (first boot)

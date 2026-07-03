@@ -1,30 +1,27 @@
 #!/bin/bash
 set -e
 
-# TrailCurrent CM5 Base Image Builder
+# TrailCurrent CM5 Wireless-Base Image Builder
 #
-# Builds a custom Raspberry Pi OS image for the CM5 with all TrailCurrent
-# base system configuration baked in (power savings, CAN bus, Docker, etc.)
-# The image is flashed to the CM5's eMMC. On first boot, the NVMe drive
-# is automatically partitioned, formatted, and mounted for Docker and
-# application data storage.
+# Builds a custom Raspberry Pi OS image for the CM5 mounted on a
+# Waveshare CM5-IO-Wireless-Base carrier board. Identical to build.sh
+# except the MCP2515 CAN interrupt is wired to GPIO17 (matching the
+# onboard isolated CAN on the wireless base) instead of GPIO25 (used
+# by the RS485 CAN HAT (B) variant).
 #
 # Prerequisites:
 #   - Debian/Ubuntu build host (arm64 native or x86_64 with QEMU)
 #   - Run with sudo (rpi-image-gen requires root for chroot operations)
 #
 # Usage:
-#   sudo ./build.sh [username] [password]
+#   sudo ./build-wireless.sh [username] [password]
 #
 # Arguments:
 #   username  - Default login user (default: trailcurrent)
 #   password  - Default login password (default: trailcurrent)
 #
-# The password is hashed before being passed to rpi-image-gen, bypassing
-# its built-in password complexity rules.
-#
 # Output:
-#   ../rpi-image-gen/work/image-trailcurrent-cm5-base/trailcurrent-cm5-base.img
+#   ../rpi-image-gen/work/image-trailcurrent-cm5-wireless-base/trailcurrent-cm5-wireless-base.img
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 RPIIG_DIR="$SCRIPT_DIR/../rpi-image-gen"
@@ -117,20 +114,20 @@ if [ -d "$WORK_DIR" ]; then
     # completed .img untouched (only paths tied to THIS config are removed).
     yes | "$RPIIG_DIR"/rpi-image-gen clean \
         -S "$SCRIPT_DIR" \
-        -c trailcurrent-cm5-base.yaml || true
+        -c trailcurrent-cm5-wireless-base.yaml || true
 fi
 
 # Build the image
 cd "$RPIIG_DIR"
 ./rpi-image-gen build \
     -S "$SCRIPT_DIR" \
-    -c trailcurrent-cm5-base.yaml \
+    -c trailcurrent-cm5-wireless-base.yaml \
     -- \
     IGconf_device_user1="$TC_USER" \
     IGconf_device_user1passhash="$TC_PASSHASH" \
     IGconf_device_user1sudo=nopasswd
 
-IMG_PATH="$RPIIG_DIR/work/image-trailcurrent-cm5-base/trailcurrent-cm5-base.img"
+IMG_PATH="$RPIIG_DIR/work/image-trailcurrent-cm5-wireless-base/trailcurrent-cm5-wireless-base.img"
 
 echo ""
 echo "================================================"
@@ -139,13 +136,16 @@ echo "================================================"
 echo ""
 echo "Output: $IMG_PATH"
 echo ""
-echo "Flash to CM5 eMMC:"
-echo "  1. Fit the EMMC_DISABLE jumper on the carrier board"
-echo "  2. Connect the CM5 carrier USB-C to this computer"
+echo "Target hardware: CM5 on Waveshare CM5-IO-Wireless-Base carrier"
+echo "CAN: onboard isolated MCP2515, SPI0/CE0, 16 MHz xtal, INT=GPIO17"
+echo ""
+echo "Flash to CM5 NVMe:"
+echo "  1. Fit the EMMC_DISABLE jumper on the carrier board (CM5 with eMMC only)"
+echo "  2. Connect the carrier USB-C to this computer"
 echo "  3. Apply power to the carrier board"
 echo "  4. sudo ../usbboot/rpiboot -d mass-storage-gadget64"
-echo "  5. Wait for the eMMC to appear as /dev/sdX (check dmesg or lsblk)"
-echo "  6. sudo dd if=$IMG_PATH of=/dev/sdX bs=4M status=progress"
+echo "  5. Wait for the NVMe to appear as /dev/sdX (check dmesg or lsblk)"
+echo "  6. sudo dd if=$IMG_PATH of=/dev/sdX bs=4M status=progress conv=fsync"
 echo "  7. sync"
 echo "  8. Remove EMMC_DISABLE jumper, disconnect USB, power cycle"
 echo ""

@@ -1,10 +1,10 @@
 # METABEGIN
-# X-Env-Layer-Name: trailcurrent-base
+# X-Env-Layer-Name: trailcurrent-base-wireless
 # X-Env-Layer-Category: app
-# X-Env-Layer-Desc: TrailCurrent in-vehicle compute base system
+# X-Env-Layer-Desc: TrailCurrent in-vehicle compute base system, Waveshare CM5-IO-Wireless-Base carrier variant
 # X-Env-Layer-Version: 1.0.0
 # X-Env-Layer-Requires: bookworm-minbase,rpi-user-credentials,systemd-net-min
-# X-Env-Layer-Provides: trailcurrent-base
+# X-Env-Layer-Provides: trailcurrent-base-wireless
 # METAEND
 ---
 mmdebstrap:
@@ -65,12 +65,18 @@ mmdebstrap:
       EOF
 
     # ── config.txt: CAN bus + power savings ──────────────────────────
+    #
+    # Waveshare CM5-IO-Wireless-Base wiring (per their CAN tutorial):
+    #   MCP2515 on SPI0 / CE0 (GPIO8), 16 MHz crystal, INT on GPIO17.
+    # This differs from the RS485 CAN HAT (B) variant, which uses GPIO25
+    # for the interrupt. Everything else about the image is identical.
     - |
       cat >> "$1/boot/firmware/config.txt" << 'CFGEOF'
 
-      # ── CAN bus (MCP2515 on SPI0/CE0, 16MHz xtal, GPIO25 INT) ──
-      dtparam=spi=on
-      dtoverlay=mcp2515-can0,oscillator=16000000,interrupt=25,spimaxfrequency=1000000
+      # ── CAN bus (MCP2515 on SPI0/CE0, 16MHz xtal, GPIO17 INT) ──
+      # Waveshare CM5-IO-Wireless-Base onboard isolated CAN
+      dtoverlay=spi0-1cs,cs0_pin=8
+      dtoverlay=mcp2515,spi0-0,oscillator=16000000,interrupt=17,spimaxfrequency=1000000
 
       # ── Power savings: disable unused peripherals ──
       dtoverlay=disable-bt

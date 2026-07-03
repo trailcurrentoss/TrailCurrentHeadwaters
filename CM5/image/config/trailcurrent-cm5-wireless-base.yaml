@@ -1,0 +1,52 @@
+# TrailCurrent CM5 Wireless-Base Image Configuration
+#
+# Builds a headless Raspberry Pi OS Lite image for the Compute Module 5
+# on the Waveshare CM5-IO-Wireless-Base carrier, with all base system
+# dependencies pre-configured:
+#   - Docker CE + Compose plugin
+#   - CAN bus (onboard isolated MCP2515 on SPI0/CE0, INT on GPIO17)
+#   - Power optimizations (underclocked, unused peripherals disabled)
+#   - System packages for TrailCurrent runtime
+#   - First-boot service for per-device setup (partition expansion, EEPROM, TLS certs, venv)
+#
+# Difference from trailcurrent-cm5-base.yaml:
+#   Only the MCP2515 interrupt pin (GPIO17 instead of GPIO25) and the
+#   overlay syntax used by Waveshare's onboard isolated CAN. Everything
+#   else — services, packages, baked artifacts, first-boot behavior —
+#   is identical. The 4G/5G/LoRa/RS485/miniPCIe interfaces on the
+#   carrier are NOT configured here; they remain available on the
+#   hardware for future expansion.
+#
+# Storage layout:
+#   NVMe (/) -> Everything: OS, packages, Docker, app data
+#   Root partition is expanded to fill the NVMe on first boot.
+#
+# Supports both CM5 (with eMMC, ignored) and CM5 Lite (no eMMC).
+#
+# Does NOT include the application stack (containers, services, etc.)
+# Those are deployed separately via deploy.sh.
+
+include:
+  file: bookworm-minbase.yaml
+
+device:
+  layer: rpi-cm5
+  hostname: headwaters
+
+image:
+  name: trailcurrent-cm5-wireless-base
+  boot_part_size: 200%
+  # Image includes ~25GB map tiles + ~1GB Docker images. Keep the image
+  # compact (10% headroom) — first-boot expands root to fill the NVMe.
+  root_part_size: 110%
+
+layer:
+  base: trailcurrent-base-wireless
+  splash: rpi-splash-screen
+
+# Boot splash screen — replaces Raspberry Pi logo with TrailCurrent branding.
+# Generate the TGA file first:  cd CM5/image && ./generate-splash.sh
+splash:
+  image_path: splash/trailcurrent-splash.tga
+  skip_image_checks: n
+  update_cmdline: y
