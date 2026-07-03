@@ -313,6 +313,20 @@ if [ -f "local_code/discovery-mdns.service" ]; then
     fi
 fi
 
+# Install/restart OS settings proxy service (timezone etc. driven by PWA).
+# Uses passwordless sudo on the rig image; no polkit rule needed.
+if [ -f "local_code/os-settings.service" ]; then
+    sudo cp local_code/os-settings.service /etc/systemd/system/os-settings.service
+    sudo systemctl daemon-reload
+    if sudo systemctl is-enabled --quiet os-settings.service 2>/dev/null; then
+        sudo systemctl restart os-settings.service
+        echo "  os-settings.service updated and restarted"
+    else
+        sudo systemctl enable --now os-settings.service
+        echo "  os-settings.service installed and started"
+    fi
+fi
+
 # Install/restart Bearing-GNSS time sync service (and the chrony NTP daemon
 # it pairs with). Pre-baked CM5 images already have both - this branch
 # only fires the first time deploy.sh runs on an older image.

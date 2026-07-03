@@ -23,6 +23,7 @@ const otaRoutes = require('./routes/ota');
 const plateauRoutes = require('./routes/plateau');
 const smsRoutes = require('./routes/sms');
 const discoveryRoutes = require('./routes/discovery');
+const osRoutes = require('./routes/os');
 const systemStatsRoutes = require('./routes/system-stats');
 const deploymentsRoutes = require('./routes/deployments');
 const playbillRoutes = require('./routes/playbill');
@@ -75,6 +76,7 @@ async function startServer() {
         app.use('/api/plateau', plateauRoutes(db));
         app.use('/api/sms', smsRoutes(db));
         app.use('/api/discovery', discoveryRoutes(db));
+        app.use('/api/os', osRoutes());
         app.use('/api/system-stats', systemStatsRoutes());
         app.use('/api/deployments', deploymentsRoutes(db));
         app.use('/api/playbill', playbillRoutes());

@@ -64,6 +64,13 @@ const TOPICS = {
     // and the receiver semantics are different.
     DISCOVERY_CLAIM_REQUEST: 'discovery/claim/request',
     DISCOVERY_CLAIM_RESPONSE: 'discovery/claim/response',
+    // OS-level settings proxy (os-settings.py host daemon). Sibling of
+    // discovery/* — kept out of the local/ namespace because these
+    // topics cross the container/host boundary rather than describing
+    // in-rig runtime state.
+    OS_TIMEZONE_REQUEST:  'os/timezone/request',
+    OS_TIMEZONE_RESPONSE: 'os/timezone/response',
+    OS_TIMEZONE_CURRENT:  'os/timezone/current',   // retained
     SYSTEM_STATS: `${MQTT_ROOT}/system/stats`,
     DEPLOYMENT_AVAILABLE: `${MQTT_ROOT}/${MQTT_DEPLOYMENT}/available`,
     DEPLOYMENT_STATUS: `${MQTT_ROOT}/${MQTT_DEPLOYMENT}/${MSG_STATUS}`,
@@ -95,6 +102,9 @@ class MqttService {
         this.lightStateCache = {};  // lightId → last known state from CAN bus
         // Global SMS throttle — sliding window of recent send timestamps
         this.smsSentTimestamps = [];
+        // Last observed IANA TZ from retained os/timezone/current. Null
+        // until the host-side os-settings.py daemon has published.
+        this.currentTimezone = null;
     }
 
     connect(db, broadcast) {
@@ -334,6 +344,23 @@ class MqttService {
             }
         });
 
+        // Subscribe to OS-settings responses + retained current-timezone
+        // cache from os-settings.py.
+        this.client.subscribe(TOPICS.OS_TIMEZONE_RESPONSE, (err) => {
+            if (err) {
+                console.error('Failed to subscribe to OS timezone response:', err);
+            } else {
+                console.log('Subscribed to OS timezone response topic');
+            }
+        });
+        this.client.subscribe(TOPICS.OS_TIMEZONE_CURRENT, (err) => {
+            if (err) {
+                console.error('Failed to subscribe to OS timezone current:', err);
+            } else {
+                console.log('Subscribed to OS timezone current topic');
+            }
+        });
+
         // Subscribe to proximity events/status (bridged from Farwatch cloud)
         this.client.subscribe(TOPICS.PROXIMITY_EVENT, (err) => {
             if (err) {
@@ -390,6 +417,14 @@ class MqttService {
             }
             if (topic === TOPICS.DISCOVERY_CLAIM_RESPONSE) {
                 this.handleDiscoveryClaimResponse(payload);
+                return;
+            }
+            if (topic === TOPICS.OS_TIMEZONE_RESPONSE) {
+                this.handleOsTimezoneResponse(payload);
+                return;
+            }
+            if (topic === TOPICS.OS_TIMEZONE_CURRENT) {
+                this.handleOsTimezoneCurrent(payload);
                 return;
             }
 
@@ -1345,6 +1380,48 @@ class MqttService {
         }
         console.log(`[OTA] Publishing local/ota/trigger for wireless device ${hostname}`);
         this.client.publish(TOPICS.WIRELESS_OTA_TRIGGER, hostname, { qos: 0 });
+        return true;
+    }
+
+    // ── OS-level settings (via os-settings.py host daemon) ─────────────
+    //
+    // The daemon owns the retained os/timezone/current topic and keeps
+    // it in sync with the OS. We cache the last observed value so
+    // /api/os/timezone GET doesn't need a round trip. `currentTimezone`
+    // stays null until the daemon has published at least once — the
+    // route handler treats null as "unknown" and can fall back if the
+    // caller is willing to wait for a request/response.
+    //
+    // Set requests use a reqId → pending-promise map so a slow set
+    // doesn't lose its response if another request lands in between.
+    handleOsTimezoneCurrent(payload) {
+        if (payload && typeof payload.tz === 'string') {
+            this.currentTimezone = payload.tz;
+        }
+    }
+
+    handleOsTimezoneResponse(payload) {
+        const { handleTimezoneResponse } = require('./routes/os');
+        if (typeof handleTimezoneResponse === 'function') {
+            handleTimezoneResponse(payload);
+        }
+    }
+
+    getCurrentTimezone() {
+        return this.currentTimezone || null;
+    }
+
+    publishOsTimezoneRequest(reqId, tz) {
+        if (!this.connected) {
+            console.warn('MQTT not connected, cannot publish timezone request');
+            return false;
+        }
+        console.log(`[OS] Requesting timezone set: ${tz} (reqId=${reqId})`);
+        this.client.publish(
+            TOPICS.OS_TIMEZONE_REQUEST,
+            JSON.stringify({ reqId, tz }),
+            { qos: 1 },
+        );
         return true;
     }
 

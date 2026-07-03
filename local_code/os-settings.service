@@ -1,0 +1,23 @@
+[Unit]
+Description=TrailCurrent OS Settings proxy (PWA-driven system config)
+After=docker.service
+Requires=docker.service
+# Only start if deployment has provided the code
+ConditionPathExists=/home/trailcurrent/local_code/os-settings.py
+
+[Service]
+Type=simple
+# Runs as the unprivileged trailcurrent user. Privileged commands
+# (currently `timedatectl set-timezone`) are shelled out with
+# `sudo -n` — the rig images already grant trailcurrent
+# passwordless sudo.
+User=trailcurrent
+WorkingDirectory=/home/trailcurrent/local_code
+EnvironmentFile=/home/trailcurrent/local_code/.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/trailcurrent/local_code/cantomqtt/bin/python /home/trailcurrent/local_code/os-settings.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

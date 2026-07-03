@@ -261,6 +261,18 @@ class API {
         });
     }
 
+    // OS-level settings (proxied to the host via os-settings.py)
+    static async getTimezone() {
+        return this.request('/os/timezone');
+    }
+
+    static async setTimezone(tz) {
+        return this.request('/os/timezone', {
+            method: 'POST',
+            body: JSON.stringify({ tz })
+        });
+    }
+
     // Modules
     static async getModules() {
         return this.request('/modules');

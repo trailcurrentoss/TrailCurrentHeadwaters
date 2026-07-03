@@ -4,6 +4,7 @@ import { API, wsClient } from '../api.js';
 let settings = null;
 let systemConfig = null;
 let peregrineConfig = null;
+let currentTimezone = null;
 
 function escapeHtmlSettings(s) {
     return String(s == null ? '' : s)
@@ -63,6 +64,26 @@ export const settingsPage = {
                         id="theme-toggle"
                         aria-pressed="${settings.theme === 'dark'}">
                 </button>
+            </div>
+
+            <!-- Time Zone -->
+            <div class="card settings-item-vertical">
+                <div class="settings-item-header">
+                    <span class="settings-label">Time Zone</span>
+                    <p class="settings-description">Sets the operating system time zone. Applied via <code>timedatectl</code> on the host.</p>
+                </div>
+                <div class="cloud-config-container">
+                    <div class="cloud-config-field">
+                        <label class="password-label" for="settings-timezone-select">IANA Time Zone</label>
+                        <select id="settings-timezone-select" class="password-input">
+                            <option value="">Loading…</option>
+                        </select>
+                    </div>
+                    <div id="timezone-message" class="password-message hidden"></div>
+                    <button class="password-submit-btn" id="save-timezone-btn" disabled>
+                        Apply Time Zone
+                    </button>
+                </div>
             </div>
 
             <!-- Cloud Configuration -->
@@ -339,25 +360,117 @@ export const settingsPage = {
 
     async init() {
         try {
-            const [data, sysConfig, peregrineCfg] = await Promise.all([
+            const [data, sysConfig, peregrineCfg, tzResp] = await Promise.all([
                 API.getSettings(),
                 API.getSystemConfig(),
                 API.getPeregrineConfig().catch(err => {
                     console.warn('Peregrine config load failed:', err);
+                    return null;
+                }),
+                API.getTimezone().catch(err => {
+                    console.warn('Timezone load failed:', err);
                     return null;
                 })
             ]);
             settings = data;
             systemConfig = sysConfig;
             peregrineConfig = peregrineCfg;
+            currentTimezone = (tzResp && tzResp.tz) || null;
 
             document.getElementById('settings-container').innerHTML = this.renderSettings();
             this.setupListeners();
             this.setupSystemStats();
             this.initPeregrineCard();
+            this.initTimezoneCard();
         } catch (error) {
             console.error('Failed to fetch settings:', error);
             document.getElementById('settings-container').innerHTML = '<p style="color: var(--danger);">Failed to load settings</p>';
+        }
+    },
+
+    initTimezoneCard() {
+        const select = document.getElementById('settings-timezone-select');
+        const saveBtn = document.getElementById('save-timezone-btn');
+        if (!select) return;
+
+        // Prefer the browser's native list (IANA-canonical, up-to-date with
+        // ICU tzdata) so we never render stale hardcoded names. Fall back
+        // to a small curated set on very old runtimes.
+        let zones = [];
+        try {
+            if (typeof Intl.supportedValuesOf === 'function') {
+                zones = Intl.supportedValuesOf('timeZone');
+            }
+        } catch (_) { /* fall through */ }
+        if (!zones.length) {
+            zones = [
+                'UTC',
+                'America/Los_Angeles', 'America/Denver', 'America/Chicago',
+                'America/New_York', 'America/Anchorage', 'America/Phoenix',
+                'America/Halifax', 'America/Toronto',
+                'Europe/London', 'Europe/Berlin', 'Europe/Paris',
+                'Asia/Tokyo', 'Asia/Shanghai', 'Australia/Sydney',
+            ];
+        }
+        zones = [...zones].sort();
+
+        // If the host hasn't reported yet, fall back to whatever the browser
+        // thinks the local zone is so the dropdown lands on something sane.
+        const browserTz = (() => {
+            try { return Intl.DateTimeFormat().resolvedOptions().timeZone; }
+            catch (_) { return null; }
+        })();
+        const selectedTz = currentTimezone || browserTz || 'UTC';
+
+        select.innerHTML = zones.map(z =>
+            `<option value="${z}" ${z === selectedTz ? 'selected' : ''}>${z}</option>`
+        ).join('');
+
+        // Enable the save button once we've populated. Disable again if
+        // the selection matches the current OS TZ — no point applying a
+        // no-op.
+        const refreshSaveState = () => {
+            if (!saveBtn) return;
+            saveBtn.disabled = (select.value === currentTimezone);
+        };
+        refreshSaveState();
+        select.addEventListener('change', refreshSaveState);
+    },
+
+    showTimezoneMsg(text, type) {
+        const msg = document.getElementById('timezone-message');
+        if (!msg) return;
+        msg.textContent = text;
+        msg.className = 'password-message ' + (type === 'error' ? 'error' : 'success');
+        msg.classList.remove('hidden');
+    },
+
+    async handleSaveTimezone() {
+        const select = document.getElementById('settings-timezone-select');
+        const saveBtn = document.getElementById('save-timezone-btn');
+        if (!select) return;
+        const tz = select.value;
+        if (!tz) return;
+
+        const originalLabel = saveBtn ? saveBtn.textContent : '';
+        if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'Applying…'; }
+
+        try {
+            const result = await API.setTimezone(tz);
+            currentTimezone = (result && result.tz) || tz;
+            // Re-select in case the OS normalized the name (e.g. an alias
+            // like "US/Pacific" → "America/Los_Angeles").
+            if ([...select.options].some(o => o.value === currentTimezone)) {
+                select.value = currentTimezone;
+            }
+            this.showTimezoneMsg(`Time zone set to ${currentTimezone}`, 'success');
+        } catch (err) {
+            this.showTimezoneMsg(err.message || 'Failed to set time zone', 'error');
+        } finally {
+            if (saveBtn) {
+                saveBtn.textContent = originalLabel || 'Apply Time Zone';
+                saveBtn.disabled = (select.value === currentTimezone);
+            }
         }
     },
 
@@ -516,6 +629,14 @@ export const settingsPage = {
         if (saveCloudBtn) {
             saveCloudBtn.addEventListener('click', async () => {
                 await this.handleSaveCloudConfig();
+            });
+        }
+
+        // Time zone: apply
+        const saveTzBtn = document.getElementById('save-timezone-btn');
+        if (saveTzBtn) {
+            saveTzBtn.addEventListener('click', async () => {
+                await this.handleSaveTimezone();
             });
         }
 
@@ -1113,6 +1234,8 @@ export const settingsPage = {
     cleanup() {
         settings = null;
         systemConfig = null;
+        peregrineConfig = null;
+        currentTimezone = null;
         if (this._statsWsHandler) {
             wsClient.off('system_stats', this._statsWsHandler);
             this._statsWsHandler = null;
