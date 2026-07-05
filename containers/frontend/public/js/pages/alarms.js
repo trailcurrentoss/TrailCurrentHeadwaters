@@ -2,6 +2,7 @@
 // Picket + Switchback modules with per-sensor arm toggle and rename.
 import { API } from '../api.js';
 import * as notifications from '../notifications.js';
+import { alarmBell } from '../components/alarm-bell.js';
 
 const LABEL_MAX = 24;
 const SENSORS_PER = { switchback: 8, picket: 12 };
@@ -14,6 +15,41 @@ let batterySaveTimer = null;
 let containerClickListener = null;
 let containerInputListener = null;
 let modalKeydownListener = null;
+let historyChangeHandler = null;
+
+function fmtHistTime(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return '';
+    return d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+}
+
+function renderHistoryPanel() {
+    const items = alarmBell.getHistory();
+    if (items.length === 0) {
+        return `
+            <span class="alarm-history-label">Recent activity</span>
+            <p class="alarm-history-empty">No alarm activity yet.</p>
+        `;
+    }
+    const rows = items.map(it => `
+        <div class="alarm-history-row">
+            <span class="alarm-history-dot alarm-history-dot-${it.cleared ? 'cleared' : 'fired'}"></span>
+            <span class="alarm-history-text">${escapeHtml(it.label || '(unnamed)')}</span>
+            <span class="alarm-history-time">${escapeHtml(fmtHistTime(it.time))}</span>
+            <span class="alarm-history-state">${it.cleared ? 'Cleared' : 'Fired'}</span>
+        </div>
+    `).join('');
+    return `
+        <span class="alarm-history-label">Recent activity</span>
+        <div class="alarm-history-rows">${rows}</div>
+    `;
+}
+
+function paintHistoryPanel() {
+    const el = document.getElementById('alarms-history-panel');
+    if (el) el.innerHTML = renderHistoryPanel();
+}
 
 function key(type, addr, sensor) { return `${type}:${addr}:${sensor}`; }
 
@@ -205,7 +241,7 @@ async function handlePushToggle() {
     notifications.startAlarmNotifier();
     const wl = await notifications.enableWakeLock();
     if (wl.ok) {
-        setPushStatus('Enabled. Screen will stay awake so alarms fire even when Headwaters has no internet.');
+        setPushStatus('Enabled. Screen will stay awake so alarms fire even when the vehicle has no internet.');
     } else if (wl.reason === 'unsupported') {
         setPushStatus('Enabled. Note: this browser does not support keeping the screen awake — alarms may stop if the display sleeps.');
     } else {
@@ -400,18 +436,23 @@ export const alarmsPage = {
         return `
             <section class="page-alarms">
                 <h1 class="section-title">Alarms</h1>
-                <div class="card">
-                    <p class="alarms-intro">
-                        Arm individual sensors to surface their state in the alarm bell.
-                        A sensor that auto-clears (e.g. a door re-closing) clears its alarm.
-                    </p>
-                    <div id="alarms-push-container"></div>
-                    <div id="alarms-battery-container">
-                        <p class="alarms-loading">Loading…</p>
+                <div class="alarms-layout">
+                    <div class="card">
+                        <p class="alarms-intro">
+                            Arm individual sensors to surface their state in the alarm bell.
+                            A sensor that auto-clears (e.g. a door re-closing) clears its alarm.
+                        </p>
+                        <div id="alarms-push-container"></div>
+                        <div id="alarms-battery-container">
+                            <p class="alarms-loading">Loading…</p>
+                        </div>
+                        <div id="alarms-list-container">
+                            <p class="alarms-loading">Loading…</p>
+                        </div>
                     </div>
-                    <div id="alarms-list-container">
-                        <p class="alarms-loading">Loading…</p>
-                    </div>
+                    <aside id="alarms-history-panel" class="alarm-history-panel">
+                        ${renderHistoryPanel()}
+                    </aside>
                 </div>
             </section>
         `;
@@ -448,6 +489,10 @@ export const alarmsPage = {
         containerInputListener = handleContainerInput;
         page.addEventListener('click', containerClickListener);
         page.addEventListener('input', containerInputListener);
+
+        // Live-repaint the history panel when alarms fire or clear.
+        historyChangeHandler = () => paintHistoryPanel();
+        alarmBell.addEventListener('change', historyChangeHandler);
     },
 
     cleanup() {
@@ -466,6 +511,10 @@ export const alarmsPage = {
         }
         containerClickListener = null;
         containerInputListener = null;
+        if (historyChangeHandler) {
+            alarmBell.removeEventListener('change', historyChangeHandler);
+            historyChangeHandler = null;
+        }
         closeRenameModal();
         sensors = {};
         battery = { enabled: false, threshold: 20 };

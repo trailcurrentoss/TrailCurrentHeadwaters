@@ -36,7 +36,7 @@ module.exports = (db) => {
     // PUT /api/settings
     router.put('/', async (req, res) => {
         try {
-            const { theme, timezone, clock_format } = req.body;
+            const { theme, timezone, clock_format, units_speed, units_temperature } = req.body;
 
             const updates = {};
 
@@ -59,6 +59,35 @@ module.exports = (db) => {
                     return res.status(400).json({ error: 'Clock format must be 12h or 24h' });
                 }
                 updates.clock_format = clock_format;
+            }
+
+            if (units_speed !== undefined) {
+                if (!['mph', 'kph'].includes(units_speed)) {
+                    return res.status(400).json({ error: 'units_speed must be mph or kph' });
+                }
+                updates.units_speed = units_speed;
+            }
+
+            if (units_temperature !== undefined) {
+                if (!['F', 'C'].includes(units_temperature)) {
+                    return res.status(400).json({ error: 'units_temperature must be F or C' });
+                }
+                updates.units_temperature = units_temperature;
+            }
+
+            if (req.body.units_length !== undefined) {
+                if (!['ft', 'm'].includes(req.body.units_length)) {
+                    return res.status(400).json({ error: 'units_length must be ft or m' });
+                }
+                updates.units_length = req.body.units_length;
+            }
+
+            if (req.body.trailer_axles !== undefined) {
+                const n = Number(req.body.trailer_axles);
+                if (![1, 2, 3].includes(n)) {
+                    return res.status(400).json({ error: 'trailer_axles must be 1, 2, or 3' });
+                }
+                updates.trailer_axles = n;
             }
 
             if (Object.keys(updates).length === 0) {

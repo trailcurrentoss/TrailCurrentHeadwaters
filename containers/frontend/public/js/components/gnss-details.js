@@ -1,5 +1,6 @@
 // Level indicator component
 import { wsClient } from '../api.js';
+import { units } from '../services/units.js';
 
 export class GnssDetails {
     constructor(containerId) {
@@ -52,11 +53,12 @@ export class GnssDetails {
     }
 
     formatElevation() {
-        const elevation = this.data.altitudeFeet;
-        if (elevation == null) {
-            return '-';
-        }
-        return `${elevation.toLocaleString()} ft`;
+        const feet = this.data.altitudeFeet;
+        if (feet == null) return '-';
+        const value = units.formatAltitude(feet);
+        const asNum = Number(value);
+        const withCommas = Number.isFinite(asNum) ? asNum.toLocaleString() : value;
+        return `${withCommas} ${units.altitudeLabel()}`;
     }
 
     formatSatellites() {
@@ -132,6 +134,10 @@ export class GnssDetails {
             this.gnssDetailsData = { numberOfSatellites: null, speedOverGround: null, courseOverGround: null, gnssMode: null };
             this.updateGnssDetailsDisplay();
         });
+
+        // Re-render on Settings-page unit toggle so ft ↔ m flips live.
+        this.unitsHandler = () => this.updateDisplay();
+        units.addEventListener('change', this.unitsHandler);
     }
 
     updateDisplay() {
@@ -167,5 +173,9 @@ export class GnssDetails {
         }
         if (this.unsubStaleAlt) this.unsubStaleAlt();
         if (this.unsubStaleGnss) this.unsubStaleGnss();
+        if (this.unitsHandler) {
+            units.removeEventListener('change', this.unitsHandler);
+            this.unitsHandler = null;
+        }
     }
 }

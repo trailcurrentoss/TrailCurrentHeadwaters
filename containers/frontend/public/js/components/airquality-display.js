@@ -1,5 +1,6 @@
 // Air quality display component
 import { wsClient } from '../api.js';
+import { units } from '../services/units.js';
 
 export class AirQualityDisplay {
     constructor(containerId) {
@@ -21,7 +22,8 @@ export class AirQualityDisplay {
     }
 
     render() {
-        const tempDisplay = this.dataTempAndHumidity.tempInF != null ? Math.round(this.dataTempAndHumidity.tempInF) : '-';
+        const tempDisplay = units.formatTemp(this.dataTempAndHumidity.tempInF);
+        const tempLabel = units.tempLabel();
         const humidityDisplay = this.dataTempAndHumidity.humidity != null ? Math.round(this.dataTempAndHumidity.humidity) : '-';
         const tvocDisplay = this.data.tvoc_ppb != null ? Math.round(this.data.tvoc_ppb) : '-';
         const eco2Display = this.data.eco2_ppm != null ? Math.round(this.data.eco2_ppm) : '-';
@@ -33,7 +35,7 @@ export class AirQualityDisplay {
                         <path d="M14 14.76V3.5a2.5 2.5 0 0 0-5 0v11.26a4.5 4.5 0 1 0 5 0z"/>
                     </svg>
                     <div class="airquality-info">
-                        <span class="airquality-value" id="temp-value">${tempDisplay}<span class="airquality-unit">°F</span></span>
+                        <span class="airquality-value" id="temp-value">${tempDisplay}<span class="airquality-unit">${tempLabel}</span></span>
                         <span class="airquality-label">Temperature</span>
                     </div>
                 </div>
@@ -139,6 +141,10 @@ export class AirQualityDisplay {
             this.dataTempAndHumidity = { tempInC: null, tempInF: null, humidity: null };
             this.updateTempAndHumidity();
         });
+
+        // Re-render when the user flips units in Settings.
+        this.unitsHandler = () => this.updateTempAndHumidity();
+        units.addEventListener('change', this.unitsHandler);
     }
 
     updateTempAndHumidity() {
@@ -146,9 +152,7 @@ export class AirQualityDisplay {
         const humidityValue = document.getElementById('humidity-value');
 
         if (tempValue) {
-            tempValue.innerHTML = this.dataTempAndHumidity.tempInF != null
-                ? `${Math.round(this.dataTempAndHumidity.tempInF)}<span class="airquality-unit">°F</span>`
-                : `-<span class="airquality-unit">°F</span>`;
+            tempValue.innerHTML = `${units.formatTemp(this.dataTempAndHumidity.tempInF)}<span class="airquality-unit">${units.tempLabel()}</span>`;
         }
 
         if (humidityValue) {
@@ -207,5 +211,9 @@ export class AirQualityDisplay {
         }
         if (this.unsubStaleAir) this.unsubStaleAir();
         if (this.unsubStaleTempHumid) this.unsubStaleTempHumid();
+        if (this.unitsHandler) {
+            units.removeEventListener('change', this.unitsHandler);
+            this.unitsHandler = null;
+        }
     }
 }

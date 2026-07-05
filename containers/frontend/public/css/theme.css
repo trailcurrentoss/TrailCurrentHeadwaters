@@ -1,4 +1,5 @@
 /* Nature-inspired color palette for TrailCurrent */
+/* Redesign v02 tokens are the primary system; legacy tokens remain as aliases */
 :root {
     /* Primary Colors */
     --primary: #52a441;
@@ -7,7 +8,7 @@
     --link: #83a79c;
 
     /* Status Colors */
-    --success: #74fe00;
+    --success: #52a441;
     --info: #48e6fe;
     --warning: #ffc107;
     --danger: #ff5453;
@@ -24,22 +25,44 @@
     --gray-700: #aaaaaa;
     --gray-800: #cacaca;
 
-    /* Subtle Backgrounds */
-    --primary-bg-subtle: #DCEDD9;
-    --success-bg-subtle: rgba(116, 254, 0, 0.1);
-    --info-bg-subtle: rgba(72, 230, 254, 0.1);
-    --warning-bg-subtle: rgba(255, 193, 7, 0.1);
-    --danger-bg-subtle: rgba(255, 84, 83, 0.1);
+    /* Redesign v02 role tokens (Material 3-inspired containers) */
+    --role-primary: #52A441;
+    --role-primary-container: #DCEDD9;
+    --role-on-primary-container: #3D7B31;
+
+    /* Redesign v02 subtle backgrounds */
+    --tc-warning-bg-subtle: rgba(255, 193, 7, 0.12);
+    --tc-danger-bg-subtle: rgba(255, 84, 83, 0.10);
+    --tc-info-bg-subtle: rgba(72, 230, 254, 0.12);
+    --tc-success-bg-subtle: rgba(82, 164, 65, 0.12);
+
+    /* Legacy aliases (keep existing pages working) */
+    --primary-bg-subtle: var(--role-primary-container);
+    --success-bg-subtle: var(--tc-success-bg-subtle);
+    --info-bg-subtle: var(--tc-info-bg-subtle);
+    --warning-bg-subtle: var(--tc-warning-bg-subtle);
+    --danger-bg-subtle: var(--tc-danger-bg-subtle);
 
     /* Button Text */
     --btn-text: #000000;
     --btn-text-dark: #ffffff;
 
-    /* Glow effects */
+    /* Glow effects (dark-theme defaults; overridden below for light) */
     --glow-primary: 0 0 20px rgba(82, 164, 65, 0.5);
-    --glow-success: 0 0 20px rgba(116, 254, 0, 0.5);
+    --glow-success: 0 0 20px rgba(82, 164, 65, 0.5);
     --glow-info: 0 0 20px rgba(72, 230, 254, 0.5);
     --glow-danger: 0 0 20px rgba(255, 84, 83, 0.5);
+
+    /* Redesign v02 shadow tokens */
+    --tc-shadow-card: 0 1px 3px rgba(0, 0, 0, 0.06), 0 6px 20px rgba(0, 0, 0, 0.04);
+    --tc-shadow-card-lifted: 0 8px 24px rgba(0, 0, 0, 0.12);
+
+    /* Water tanks */
+    --tc-black-water: #424242;
+
+    /* Map surface (Map page background stripes) */
+    --map-bg: #e9ede8;
+    --map-line: rgba(82, 164, 65, 0.10);
 }
 
 /* Dark theme (default) */
@@ -55,6 +78,22 @@
     --nav-bg: rgba(10, 10, 10, 0.95);
     --header-bg: rgba(0, 0, 0, 0.9);
     --shadow-color: rgba(0, 0, 0, 0.5);
+
+    /* Redesign v02: role tokens shift on dark */
+    --role-primary: #7BC96A;
+    --role-primary-container: #3D7B31;
+    --role-on-primary-container: #DCEDD9;
+
+    /* Dark cards get no soft ambient shadow */
+    --tc-shadow-card: none;
+    --tc-shadow-card-lifted: 0 8px 24px rgba(0, 0, 0, 0.5);
+
+    /* Softer water shade on dark */
+    --tc-black-water: #5a5a5a;
+
+    /* Darker map surface */
+    --map-bg: #0e120d;
+    --map-line: rgba(123, 201, 106, 0.10);
 }
 
 /* Light theme */
@@ -73,7 +112,7 @@
 
     /* Adjusted glows for light theme */
     --glow-primary: 0 0 15px rgba(82, 164, 65, 0.3);
-    --glow-success: 0 0 15px rgba(116, 254, 0, 0.3);
+    --glow-success: 0 0 15px rgba(82, 164, 65, 0.3);
     --glow-info: 0 0 15px rgba(72, 230, 254, 0.3);
     --glow-danger: 0 0 15px rgba(255, 84, 83, 0.3);
 }

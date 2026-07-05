@@ -1,4 +1,7 @@
-const CACHE_NAME = 'rv-cache-__GIT_SHA__';
+// Version suffix is bumped whenever the shell/nav topology changes so a
+// stale SW that failed to install can't hold clients back. In dev, this
+// literal string is the cache name; in prod, __GIT_SHA__ is replaced.
+const CACHE_NAME = 'rv-cache-__GIT_SHA__-shell-v4';
 const STATIC_ASSETS = [
     '/',
     '/index.html',
@@ -17,10 +20,26 @@ const STATIC_ASSETS = [
     '/js/components/plateau-status.js',
     '/js/components/light-button.js',
     '/js/components/map-display.js',
-    '/js/components/nav-bar.js',
+    '/js/components/pdm-icons.js',
     '/js/components/thermostat.js',
     '/js/components/water-tanks.js',
+    '/js/components/arc-gauge.js',
+    '/js/components/trailer-diagram.js',
+    '/js/pages/driving.js',
+    '/js/pages/storage.js',
+    '/js/services/reverse-geocode.js',
+    '/js/services/farwatch-client.js',
+    '/js/services/units.js',
+    '/js/services/trailer-config.js',
+    '/js/shell/app-shell.js',
+    '/js/shell/mode-controller.js',
+    '/js/shell/sidebar-nav.js',
+    '/js/shell/bottom-nav.js',
+    '/js/shell/nav-items.js',
+    '/js/shell/alert-host.js',
+    '/js/components/alarm-bell.js',
     '/js/pages/airquality.js',
+    '/js/pages/alarms.js',
     '/js/pages/energy.js',
     '/js/pages/home.js',
     '/js/pages/login.js',
@@ -47,13 +66,29 @@ const STATIC_ASSETS = [
 ];
 
 // Install event - cache static assets
+//
+// IMPORTANT: cache.addAll() internally uses fetch(), which by default consults
+// the browser's HTTP cache. Our nginx sets `Cache-Control: immutable, 1y` on
+// .js/.css/image assets because that's the correct pairing for content-hashed
+// URLs. Since Overlook's URLs are NOT content-hashed, the HTTP cache will
+// serve stale copies indefinitely — including to a fresh SW's precache. On
+// Android WebAPKs, whose Chrome tab lives for weeks, this manifests as an
+// app that never picks up new deploys even when the SW itself updates.
+//
+// The fix, recommended by Chrome's Workbox docs, is to bypass the HTTP cache
+// for the precache fill by giving each Request a `cache: 'reload'` init.
+// This changes ZERO HTTP headers on the server side, so Safari/Firefox
+// desktop behavior (which took forever to get right) is unaffected.
 self.addEventListener('install', (event) => {
     console.log('Service Worker: Installing...');
     event.waitUntil(
         caches.open(CACHE_NAME)
             .then((cache) => {
                 console.log('Service Worker: Caching static assets');
-                return cache.addAll(STATIC_ASSETS);
+                const freshRequests = STATIC_ASSETS.map(
+                    url => new Request(url, { cache: 'reload' })
+                );
+                return cache.addAll(freshRequests);
             })
             .then(() => {
                 console.log('Service Worker: Installed');

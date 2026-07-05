@@ -11,7 +11,12 @@
 
 import { API } from '../api.js';
 
+// Legacy single-history key (pre-conversations panel). Migrated on first
+// load if present.
 const HISTORY_KEY = 'peregrine-chat-history';
+// New multi-conversation storage. Each entry: { id, title, messages, updated_at }.
+const CONVERSATIONS_KEY = 'peregrine-conversations';
+const ACTIVE_CONV_KEY = 'peregrine-active-conversation';
 const CHAT_ENDPOINT = '/api/peregrine/chat';
 
 // Cache of the upstream URL (for display only). Loaded once per page
@@ -20,12 +25,109 @@ let upstreamUrl = '';
 
 let state = null;
 
+function _uuid() {
+    if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
+    return 'c-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
+}
+
+function loadConversations() {
+    // Try new storage first.
+    try {
+        const raw = localStorage.getItem(CONVERSATIONS_KEY);
+        if (raw) {
+            const arr = JSON.parse(raw);
+            if (Array.isArray(arr)) return arr;
+        }
+    } catch (_) {}
+    // One-time migration from the legacy single-history key.
+    try {
+        const legacy = localStorage.getItem(HISTORY_KEY);
+        if (legacy) {
+            const msgs = JSON.parse(legacy);
+            if (Array.isArray(msgs) && msgs.length) {
+                const conv = {
+                    id: _uuid(),
+                    title: deriveTitle(msgs),
+                    messages: msgs,
+                    updated_at: Date.now(),
+                };
+                saveConversations([conv]);
+                setActiveConversationId(conv.id);
+                return [conv];
+            }
+        }
+    } catch (_) {}
+    return [];
+}
+
+function saveConversations(convs) {
+    try { localStorage.setItem(CONVERSATIONS_KEY, JSON.stringify(convs)); }
+    catch (_) { /* quota */ }
+}
+
+function getActiveConversationId() {
+    try { return localStorage.getItem(ACTIVE_CONV_KEY) || null; }
+    catch (_) { return null; }
+}
+
+function setActiveConversationId(id) {
+    try {
+        if (id) localStorage.setItem(ACTIVE_CONV_KEY, id);
+        else localStorage.removeItem(ACTIVE_CONV_KEY);
+    } catch (_) {}
+}
+
+function deriveTitle(messages) {
+    const first = (messages || []).find(m => m.role === 'user');
+    if (!first || !first.content) return 'New conversation';
+    const t = first.content.trim().replace(/\s+/g, ' ');
+    return t.length > 42 ? t.slice(0, 42) + '…' : t;
+}
+
+// Legacy-shaped helpers so the rest of the file (send / stream / render)
+// keeps working with a single-history array. `activeHistory()` returns the
+// current conversation's message array; setting it back happens via
+// `commitActiveHistory()`.
+let conversations = [];
+let activeId = null;
+
+function activeHistory() {
+    const c = conversations.find(c => c.id === activeId);
+    return c ? c.messages : [];
+}
+
+function commitActiveHistory(messages) {
+    let conv = conversations.find(c => c.id === activeId);
+    if (!conv) {
+        conv = { id: _uuid(), title: deriveTitle(messages), messages, updated_at: Date.now() };
+        conversations.unshift(conv);
+        activeId = conv.id;
+        setActiveConversationId(activeId);
+    } else {
+        conv.messages = messages;
+        conv.updated_at = Date.now();
+        if (conv.title === 'New conversation' || !conv.title) conv.title = deriveTitle(messages);
+    }
+    // Keep newest first for the panel.
+    conversations.sort((a, b) => (b.updated_at || 0) - (a.updated_at || 0));
+    saveConversations(conversations);
+}
+
 function loadHistory() {
-    try { return JSON.parse(localStorage.getItem(HISTORY_KEY)) || []; }
-    catch (e) { return []; }
+    // Compatibility shim — returns the active conversation's messages.
+    if (!conversations.length) {
+        conversations = loadConversations();
+        activeId = getActiveConversationId();
+        // If active id was cleared or points at a deleted conv, drop it.
+        if (activeId && !conversations.find(c => c.id === activeId)) activeId = null;
+        setActiveConversationId(activeId);
+    }
+    return activeHistory();
 }
 
 function saveHistory(history) {
+    // Compatibility shim — commits the active conversation.
+    commitActiveHistory(history);
     try { localStorage.setItem(HISTORY_KEY, JSON.stringify(history)); }
     catch (e) { /* quota, ignore */ }
 }
@@ -255,6 +357,21 @@ export const peregrinePage = {
     render() {
         return `
             <section class="page-peregrine">
+              <aside class="peregrine-conv-panel" id="peregrine-conv-panel" aria-label="Saved conversations">
+                <div class="peregrine-conv-header">
+                    <span class="peregrine-conv-title">Conversations</span>
+                    <button class="peregrine-icon-btn" id="peregrine-new-conv-btn"
+                            title="New conversation" aria-label="New conversation">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                             stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                            <line x1="12" y1="5" x2="12" y2="19"></line>
+                            <line x1="5" y1="12" x2="19" y2="12"></line>
+                        </svg>
+                    </button>
+                </div>
+                <div class="peregrine-conv-list" id="peregrine-conv-list"></div>
+              </aside>
+              <div class="peregrine-chat">
                 <header class="peregrine-header">
                     <div class="peregrine-title">
                         <span class="peregrine-dot" aria-hidden="true"></span>
@@ -300,8 +417,35 @@ export const peregrinePage = {
                         </svg>
                     </button>
                 </form>
+              </div>
             </section>
         `;
+    },
+
+    _renderConvList() {
+        const listEl = document.getElementById('peregrine-conv-list');
+        if (!listEl) return;
+        if (!conversations.length) {
+            listEl.innerHTML = '<p class="peregrine-conv-empty">No saved conversations yet.</p>';
+            return;
+        }
+        listEl.innerHTML = conversations.map(c => `
+            <div class="peregrine-conv-item ${c.id === activeId ? 'active' : ''}" data-conv-id="${escapeAttr(c.id)}">
+                <button class="peregrine-conv-select" data-action="select" data-conv-id="${escapeAttr(c.id)}"
+                        title="${escapeAttr(c.title)}">
+                    <span class="peregrine-conv-item-title">${escapeHtml(c.title || 'New conversation')}</span>
+                    <span class="peregrine-conv-item-meta">${escapeHtml(new Date(c.updated_at || 0).toLocaleDateString())}</span>
+                </button>
+                <button class="peregrine-conv-delete" data-action="delete" data-conv-id="${escapeAttr(c.id)}"
+                        aria-label="Delete conversation" title="Delete">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                         stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <polyline points="3 6 5 6 21 6"></polyline>
+                        <path d="M19 6l-2 14a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L5 6"></path>
+                    </svg>
+                </button>
+            </div>
+        `).join('');
     },
 
     init() {
@@ -322,6 +466,53 @@ export const peregrinePage = {
         };
 
         renderHistory(log, history);
+        this._renderConvList();
+
+        // Conversations panel — click to switch, X to delete, + to new.
+        const convPanel = document.getElementById('peregrine-conv-panel');
+        const newConvBtn = document.getElementById('peregrine-new-conv-btn');
+
+        const startNewConversation = () => {
+            // Only make a fresh one if the current has content.
+            if (activeHistory().length === 0) return;
+            activeId = null;
+            setActiveConversationId(null);
+            history = [];
+            renderHistory(log, history);
+            this._renderConvList();
+            input.focus();
+        };
+
+        const onConvPanelClick = (e) => {
+            const btn = e.target.closest('[data-action]');
+            if (!btn) return;
+            const id = btn.dataset.convId;
+            if (!id) return;
+            if (btn.dataset.action === 'select') {
+                if (id === activeId) return;
+                activeId = id;
+                setActiveConversationId(id);
+                history = activeHistory();
+                renderHistory(log, history);
+                this._renderConvList();
+                input.focus();
+            } else if (btn.dataset.action === 'delete') {
+                e.stopPropagation();
+                const wasActive = id === activeId;
+                conversations = conversations.filter(c => c.id !== id);
+                saveConversations(conversations);
+                if (wasActive) {
+                    activeId = null;
+                    setActiveConversationId(null);
+                    history = [];
+                    renderHistory(log, history);
+                }
+                this._renderConvList();
+            }
+        };
+
+        if (convPanel) convPanel.addEventListener('click', onConvPanelClick);
+        if (newConvBtn) newConvBtn.addEventListener('click', startNewConversation);
 
         // Fetch upstream URL + CA status once. We only render the status
         // strip when there's something the user needs to act on (missing
@@ -390,6 +581,7 @@ export const peregrinePage = {
             history = [];
             saveHistory(history);
             renderHistory(log, history);
+            this._renderConvList();
             input.focus();
         };
         clearBtn.addEventListener('click', onClear);
@@ -409,6 +601,7 @@ export const peregrinePage = {
             history.push({ role: 'user', content: text });
             saveHistory(history);
             addBubble(log, 'user', text);
+            this._renderConvList();
             input.value = '';
             autoResize();
             sendBtn.disabled = true;
@@ -438,6 +631,8 @@ export const peregrinePage = {
                 inFlight = null;
                 sendBtn.disabled = false;
                 input.focus();
+                // Panel: title / order changes after a message.
+                this._renderConvList();
             }
         };
         form.addEventListener('submit', onSubmit);
@@ -451,6 +646,8 @@ export const peregrinePage = {
             [settingsBtn, 'click', onOpenSettings],
             [form, 'submit', onSubmit],
         );
+        if (convPanel) state.handlers.push([convPanel, 'click', onConvPanelClick]);
+        if (newConvBtn) state.handlers.push([newConvBtn, 'click', startNewConversation]);
 
         autoResize();
         // Don't autofocus on mobile (it pops the keyboard immediately).

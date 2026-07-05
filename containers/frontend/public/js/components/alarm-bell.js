@@ -1,159 +1,103 @@
-// Alarm bell — header indicator + popout listing currently active sensors.
-// Always visible; dimmed when count = 0, accent-coloured with badge when active.
-// State source: GET /api/alarms/active on mount, then WS `alarms_update` events.
+// AlarmBell — shared state source for currently-active alarms + a rolling
+// history buffer. Rendering is handled by AlertHost (js/shell/alert-host.js),
+// which subscribes to this store and paints the three v02 surfaces:
+//
+//   1. Persistent banner across the top of #main-content (wide screens)
+//   2. Persistent pill fixed to the top of the viewport (narrow screens)
+//   3. Sidebar-footer bell + count badge (always accurate)
+//
+// Data flow: GET /api/alarms/active on start() for the initial snapshot,
+// then WS `alarms_update` events drive updates. Emits `change` with
+// { active, history } after each update.
+
 import { API, wsClient } from '../api.js';
 
-const BELL_ICON_SVG = `
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-         stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
-        <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
-    </svg>
-`;
+const HISTORY_MAX = 50;
 
-function escapeHtml(s) {
-    return String(s)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
-}
-
-export class AlarmBell {
+export class AlarmBell extends EventTarget {
     constructor() {
+        super();
         this.active = [];
-        this.popoverOpen = false;
-        this.wrapperEl = null;
-        this.buttonEl = null;
-        this.badgeEl = null;
-        this.popoverEl = null;
-        this.docClickListener = null;
-        this.wsListener = null;
+        // Rolling history — most recent first. Each entry: { id, label, time }.
+        // Populated when alarms leave the active list (Phase 6 side panel uses this).
+        this.history = [];
+        this._wsListener = null;
+        this._started = false;
     }
 
-    mount(parentEl) {
-        if (!parentEl) return;
-        // Remove any previous instance so re-mounts (after login) don't stack.
-        const existing = parentEl.querySelector('.alarm-bell-wrapper');
-        if (existing) existing.remove();
+    async start() {
+        if (this._started) return;
+        this._started = true;
 
-        const wrapper = document.createElement('div');
-        wrapper.className = 'alarm-bell-wrapper';
-        wrapper.innerHTML = `
-            <button class="alarm-bell-btn alarm-bell-empty" type="button"
-                    aria-label="Active alarms" aria-haspopup="true" aria-expanded="false">
-                ${BELL_ICON_SVG}
-                <span class="alarm-bell-badge" hidden>0</span>
-            </button>
-            <div class="alarm-bell-popover" role="dialog" aria-label="Active alarms" hidden>
-                <div class="alarm-bell-popover-header">Active Alarms</div>
-                <div class="alarm-bell-popover-body">
-                    <p class="alarm-bell-empty-msg">No active alarms.</p>
-                </div>
-            </div>
-        `;
-        // Place the bell to the LEFT of the logout button so the logout
-        // affordance stays in its expected spot.
-        const logoutBtn = parentEl.querySelector('.logout-btn');
-        if (logoutBtn) parentEl.insertBefore(wrapper, logoutBtn);
-        else parentEl.appendChild(wrapper);
-
-        this.wrapperEl = wrapper;
-        this.buttonEl = wrapper.querySelector('.alarm-bell-btn');
-        this.badgeEl = wrapper.querySelector('.alarm-bell-badge');
-        this.popoverEl = wrapper.querySelector('.alarm-bell-popover');
-
-        this.buttonEl.addEventListener('click', (e) => {
-            e.stopPropagation();
-            this.togglePopover();
-        });
-
-        this.docClickListener = (e) => {
-            if (!this.popoverOpen) return;
-            if (this.wrapperEl.contains(e.target)) return;
-            this.closePopover();
+        this._wsListener = (data) => {
+            this._applyActive(data && data.active);
         };
-        document.addEventListener('click', this.docClickListener);
+        wsClient.on('alarms_update', this._wsListener);
 
-        this.wsListener = (data) => this.update(data && data.active);
-        wsClient.on('alarms_update', this.wsListener);
-
-        // Fetch initial snapshot — WS events take over from there.
-        API.getActiveAlarms()
-            .then(snap => this.update(snap && snap.active))
-            .catch(err => console.error('[AlarmBell] Failed to load active alarms:', err));
-    }
-
-    update(activeList) {
-        this.active = Array.isArray(activeList) ? activeList : [];
-        const count = this.active.length;
-        if (!this.buttonEl || !this.badgeEl) return;
-        if (count > 0) {
-            this.buttonEl.classList.remove('alarm-bell-empty');
-            this.buttonEl.classList.add('alarm-bell-active');
-            this.badgeEl.textContent = count > 99 ? '99+' : String(count);
-            this.badgeEl.hidden = false;
-        } else {
-            this.buttonEl.classList.add('alarm-bell-empty');
-            this.buttonEl.classList.remove('alarm-bell-active');
-            this.badgeEl.hidden = true;
+        try {
+            const snap = await API.getActiveAlarms();
+            this._applyActive(snap && snap.active);
+        } catch (err) {
+            console.error('[AlarmBell] Failed to load active alarms:', err);
         }
-        if (this.popoverOpen) this.renderPopoverBody();
     }
 
-    renderPopoverBody() {
-        if (!this.popoverEl) return;
-        const body = this.popoverEl.querySelector('.alarm-bell-popover-body');
-        if (!body) return;
-        if (this.active.length === 0) {
-            body.innerHTML = '<p class="alarm-bell-empty-msg">No active alarms.</p>';
-            return;
+    getActive() { return this.active; }
+    getHistory() { return this.history; }
+
+    // Alias for backward compatibility with existing app.js call sites.
+    destroy() { this.stop(); }
+
+    stop() {
+        if (this._wsListener) {
+            wsClient.off('alarms_update', this._wsListener);
+            this._wsListener = null;
         }
-        const items = this.active.map(a =>
-            `<li class="alarm-bell-item">
-                <span class="alarm-bell-item-dot"></span>
-                <span class="alarm-bell-item-label">${escapeHtml(a.label || '')}</span>
-            </li>`
-        ).join('');
-        body.innerHTML = `<ul class="alarm-bell-list">${items}</ul>`;
+        this._started = false;
     }
 
-    togglePopover() {
-        if (this.popoverOpen) this.closePopover();
-        else this.openPopover();
-    }
+    _applyActive(nextRaw) {
+        const next = Array.isArray(nextRaw) ? nextRaw : [];
+        const prevIds = new Set(this.active.map(a => a.id));
+        const nextIds = new Set(next.map(a => a.id));
 
-    openPopover() {
-        if (!this.popoverEl) return;
-        this.renderPopoverBody();
-        this.popoverEl.hidden = false;
-        this.popoverOpen = true;
-        this.buttonEl.setAttribute('aria-expanded', 'true');
-    }
-
-    closePopover() {
-        if (!this.popoverEl) return;
-        this.popoverEl.hidden = true;
-        this.popoverOpen = false;
-        this.buttonEl.setAttribute('aria-expanded', 'false');
-    }
-
-    destroy() {
-        if (this.docClickListener) {
-            document.removeEventListener('click', this.docClickListener);
-            this.docClickListener = null;
+        // Any alarm that was active but no longer is → push to history.
+        const cleared = this.active.filter(a => !nextIds.has(a.id));
+        if (cleared.length) {
+            const ts = new Date().toISOString();
+            for (const a of cleared) {
+                this.history.unshift({
+                    id: a.id,
+                    label: a.label || '',
+                    time: ts,
+                    cleared: true
+                });
+            }
+            if (this.history.length > HISTORY_MAX) this.history.length = HISTORY_MAX;
         }
-        if (this.wsListener) {
-            wsClient.off('alarms_update', this.wsListener);
-            this.wsListener = null;
+
+        // Fresh alarms → also push to history so the side-panel timeline shows
+        // both fire and clear events.
+        const fresh = next.filter(a => !prevIds.has(a.id));
+        if (fresh.length) {
+            const ts = new Date().toISOString();
+            for (const a of fresh) {
+                this.history.unshift({
+                    id: a.id,
+                    label: a.label || '',
+                    time: ts,
+                    cleared: false
+                });
+            }
+            if (this.history.length > HISTORY_MAX) this.history.length = HISTORY_MAX;
         }
-        if (this.wrapperEl) {
-            this.wrapperEl.remove();
-            this.wrapperEl = null;
-        }
-        this.buttonEl = null;
-        this.badgeEl = null;
-        this.popoverEl = null;
+
+        this.active = next;
+        this.dispatchEvent(new CustomEvent('change', {
+            detail: { active: this.active, history: this.history }
+        }));
     }
 }
+
+// Shared singleton — AppShell creates AlertHost pointing at this instance.
+export const alarmBell = new AlarmBell();

@@ -60,6 +60,7 @@ SERVICES=(
     "containers/backend|trailcurrent-in-vehicle-backend"
     "containers/mosquitto|trailcurrent-in-vehicle-mosquitto"
     "containers/tileserver|trailcurrent/trailcurrent-tile-server"
+    "containers/geocoder|trailcurrent-in-vehicle-geocoder"
 )
 
 # Build and save each service

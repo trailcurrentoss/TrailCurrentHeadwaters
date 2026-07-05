@@ -1,5 +1,6 @@
 // Map display component using MapLibre GL JS for vector tiles
 import { wsClient } from '../api.js';
+import { units } from '../services/units.js';
 
 export class MapDisplay {
     constructor(containerId) {
@@ -335,12 +336,7 @@ export class MapDisplay {
             const statusEl = infoEl.querySelector('.location-status');
             if (statusEl) {
                 let text = `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
-                if (speed != null) {
-                    const speedMph = speed * 0.0115078;
-                    text += ` <br /> ${speedMph.toFixed(0)} mph`;
-                } else {
-                    text += ` <br /> - mph`;
-                }
+                text += ` <br /> ${units.formatSpeed(speed)} ${units.speedLabel()}`;
                 statusEl.innerHTML = text;
                 statusEl.classList.remove('error');
             }

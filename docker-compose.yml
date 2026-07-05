@@ -45,6 +45,16 @@ services:
       - mosquitto
       - mongodb
       - tileserver
+      - geocoder
+  geocoder:
+    # Offline reverse-geocode service (GeoNames cities1000).
+    # Backend proxies /api/geocode/reverse to this container so the browser
+    # never talks to it directly. Fully offline once built.
+    image: trailcurrent-in-vehicle-geocoder:latest
+    build:
+      context: ./containers/geocoder
+      dockerfile: Dockerfile
+    restart: unless-stopped
   mongodb:
     image: mongo:7
     restart: unless-stopped

@@ -4,6 +4,7 @@ class Router {
         this.routes = new Map();
         this.currentPage = null;
         this.contentElement = null;
+        this._navListeners = new Set();
     }
 
     init(contentElement) {
@@ -14,6 +15,14 @@ class Router {
     reset() {
         this.contentElement = null;
         this.currentPage = null;
+    }
+
+    // Subscribe to navigation events. Fires with the target page name after
+    // the new page has rendered and the URL hash is updated. Used by
+    // AppShell to keep sidebar / bottom-nav active state in sync.
+    onNavigate(fn) {
+        this._navListeners.add(fn);
+        return () => this._navListeners.delete(fn);
     }
 
     register(name, pageModule) {
@@ -68,6 +77,11 @@ class Router {
 
         // Update URL hash
         window.location.hash = pageName;
+
+        // Notify subscribers (AppShell listens for this)
+        this._navListeners.forEach(fn => {
+            try { fn(pageName); } catch (err) { console.error('nav listener error:', err); }
+        });
     }
 
     updateNav(activePage) {

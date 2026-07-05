@@ -1,5 +1,7 @@
 // Settings page
 import { API, wsClient } from '../api.js';
+import { units } from '../services/units.js';
+import { trailerConfig } from '../services/trailer-config.js';
 
 let settings = null;
 let systemConfig = null;
@@ -64,6 +66,55 @@ export const settingsPage = {
                         id="theme-toggle"
                         aria-pressed="${settings.theme === 'dark'}">
                 </button>
+            </div>
+
+            <!-- Trailer -->
+            <div class="card settings-item-vertical">
+                <div class="settings-item-header">
+                    <span class="settings-label">Trailer</span>
+                    <p class="settings-description">Number of axles on your trailer. Determines the tire slots and pressure readouts in Driving mode.</p>
+                </div>
+                <div class="settings-units-container">
+                    <div class="settings-units-row">
+                        <span class="settings-units-label">Axles</span>
+                        <div class="settings-units-choices" id="trailer-axles-choices">
+                            <button class="settings-units-btn ${Number(settings.trailer_axles ?? 2) === 1 ? 'active' : ''}" data-trailer-axles="1">Single</button>
+                            <button class="settings-units-btn ${Number(settings.trailer_axles ?? 2) === 2 ? 'active' : ''}" data-trailer-axles="2">Tandem</button>
+                            <button class="settings-units-btn ${Number(settings.trailer_axles ?? 2) === 3 ? 'active' : ''}" data-trailer-axles="3">Triple</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Units -->
+            <div class="card settings-item-vertical">
+                <div class="settings-item-header">
+                    <span class="settings-label">Units</span>
+                    <p class="settings-description">Choose how speeds and temperatures are displayed throughout the app. Sensor data is stored unconverted; only the display changes.</p>
+                </div>
+                <div class="settings-units-container">
+                    <div class="settings-units-row">
+                        <span class="settings-units-label">Speed</span>
+                        <div class="settings-units-choices" id="units-speed-choices">
+                            <button class="settings-units-btn ${settings.units_speed === 'kph' ? '' : 'active'}" data-units-speed="mph">mph</button>
+                            <button class="settings-units-btn ${settings.units_speed === 'kph' ? 'active' : ''}" data-units-speed="kph">kph</button>
+                        </div>
+                    </div>
+                    <div class="settings-units-row">
+                        <span class="settings-units-label">Temperature</span>
+                        <div class="settings-units-choices" id="units-temp-choices">
+                            <button class="settings-units-btn ${settings.units_temperature === 'C' ? '' : 'active'}" data-units-temperature="F">°F</button>
+                            <button class="settings-units-btn ${settings.units_temperature === 'C' ? 'active' : ''}" data-units-temperature="C">°C</button>
+                        </div>
+                    </div>
+                    <div class="settings-units-row">
+                        <span class="settings-units-label">Elevation</span>
+                        <div class="settings-units-choices" id="units-length-choices">
+                            <button class="settings-units-btn ${settings.units_length === 'm' ? '' : 'active'}" data-units-length="ft">ft</button>
+                            <button class="settings-units-btn ${settings.units_length === 'm' ? 'active' : ''}" data-units-length="m">m</button>
+                        </div>
+                    </div>
+                </div>
             </div>
 
             <!-- Time Zone -->
@@ -569,6 +620,57 @@ export const settingsPage = {
             });
         }
 
+        // Units — speed + temperature. Each container has two buttons; the
+        // clicked one becomes active and the pref is persisted immediately.
+        // Map settings backend key → units-service field name for direct
+        // updates. This keeps the change-event firing on every click, even
+        // when primeFromSettings would no-op because localStorage already
+        // matched the new value.
+        const KEY_TO_PREF = { units_speed: 'speed', units_temperature: 'temperature', units_length: 'length' };
+        const setupUnitsGroup = (containerId, dataAttr, key) => {
+            const container = document.getElementById(containerId);
+            if (!container) return;
+            container.addEventListener('click', async (e) => {
+                const btn = e.target.closest(`.settings-units-btn[${dataAttr}]`);
+                if (!btn) return;
+                const value = btn.getAttribute(dataAttr);
+                if (!value) return;
+                container.querySelectorAll('.settings-units-btn').forEach(b =>
+                    b.classList.toggle('active', b === btn));
+                // Optimistically update the units service so labels flip
+                // instantly — before the API round-trip lands.
+                const prefKey = KEY_TO_PREF[key];
+                if (prefKey) units.updatePrefs({ [prefKey]: value });
+                try {
+                    settings = await API.setSettings({ [key]: value });
+                } catch (error) {
+                    console.error(`Failed to save ${key}:`, error);
+                }
+            });
+        };
+        setupUnitsGroup('units-speed-choices',  'data-units-speed',       'units_speed');
+        setupUnitsGroup('units-temp-choices',   'data-units-temperature', 'units_temperature');
+        setupUnitsGroup('units-length-choices', 'data-units-length',      'units_length');
+
+        // Trailer axles — same segmented control, but payload is numeric.
+        const axlesContainer = document.getElementById('trailer-axles-choices');
+        if (axlesContainer) {
+            axlesContainer.addEventListener('click', async (e) => {
+                const btn = e.target.closest('.settings-units-btn[data-trailer-axles]');
+                if (!btn) return;
+                const value = Number(btn.getAttribute('data-trailer-axles'));
+                if (![1, 2, 3].includes(value)) return;
+                axlesContainer.querySelectorAll('.settings-units-btn').forEach(b =>
+                    b.classList.toggle('active', b === btn));
+                try {
+                    settings = await API.setSettings({ trailer_axles: value });
+                    trailerConfig.primeFromSettings(settings);
+                } catch (error) {
+                    console.error('Failed to save trailer_axles:', error);
+                }
+            });
+        }
+
         // Cloud enabled toggle
         const cloudEnabledToggle = document.getElementById('cloud-enabled-toggle');
         if (cloudEnabledToggle) {
@@ -716,24 +818,52 @@ export const settingsPage = {
                 `;
 
                 try {
-                    // Tell the waiting (new) SW to activate. controller is the
-                    // currently-active old SW — messaging it is a no-op.
+                    // Force Chrome to check for a new SW right now (it otherwise
+                    // waits ~24h on WebAPKs). If one is waiting, ask it to skip.
                     if ('serviceWorker' in navigator) {
                         const registrations = await navigator.serviceWorker.getRegistrations();
                         for (const reg of registrations) {
+                            try { await reg.update(); } catch (_) {}
                             if (reg.waiting) {
                                 reg.waiting.postMessage({ type: 'SKIP_WAITING' });
                             }
                         }
                     }
 
-                    // Clear all caches
+                    // Clear all Cache-API caches (SW precache).
                     if ('caches' in window) {
                         const cacheNames = await caches.keys();
                         await Promise.all(cacheNames.map(name => caches.delete(name)));
                     }
 
-                    // Unregister all service workers
+                    // CRITICAL for Android WebAPKs: nginx serves .js/.css with
+                    // `Cache-Control: immutable`, so the browser's HTTP cache
+                    // won't revalidate them on reload. Unregistering the SW
+                    // removes it from the fetch path; the reload then hits
+                    // HTTP cache directly and gets STALE assets. On iOS and
+                    // desktop Firefox/Safari this rarely bites because HTTP-
+                    // cache eviction pressure is high enough that entries fall
+                    // out on their own, but Android WebAPKs live for weeks
+                    // in one Chrome process and the cache never gets pressured.
+                    //
+                    // Fix: force-fetch every currently-loaded JS/CSS with
+                    // `cache: 'reload'` — MDN spec is that this updates the
+                    // HTTP cache with the fresh response. When location.href
+                    // navigates below, the browser hits HTTP cache and gets
+                    // the fresh copies we just wrote. Zero server-side
+                    // changes; Safari/Firefox behavior identical.
+                    // Ref: https://developer.chrome.com/docs/workbox/caching-strategies-overview
+                    try {
+                        const critical = new Set(['/manifest.json', '/service-worker.js']);
+                        for (const s of document.querySelectorAll('script[src]')) critical.add(s.src);
+                        for (const l of document.querySelectorAll('link[rel="stylesheet"]')) critical.add(l.href);
+                        await Promise.all([...critical].map(url =>
+                            fetch(url, { cache: 'reload' }).catch(() => {})
+                        ));
+                    } catch (_) {}
+
+                    // Unregister all service workers so the fresh SW registers
+                    // clean on next load (rather than trying to update in-place).
                     if ('serviceWorker' in navigator) {
                         const registrations = await navigator.serviceWorker.getRegistrations();
                         await Promise.all(registrations.map(r => r.unregister()));

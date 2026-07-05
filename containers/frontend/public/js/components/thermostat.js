@@ -1,5 +1,6 @@
 // Thermostat component
 import { API, wsClient } from '../api.js';
+import { units } from '../services/units.js';
 
 export class Thermostat {
     constructor(containerId) {
@@ -21,16 +22,17 @@ export class Thermostat {
     }
 
     render() {
-        const currentTempDisplay = this.dataTempAndHumidity.tempInF != null ? Math.round(this.dataTempAndHumidity.tempInF) : '-';
-        const targetTempDisplay = this.data.target_temp != null ? this.data.target_temp : '-';
+        const currentTempDisplay = units.formatTemp(this.dataTempAndHumidity.tempInF);
+        const targetTempDisplay = units.formatTemp(this.data.target_temp);
         const modeDisplay = this.data.mode || '-';
+        const label = units.tempLabel();
         return `
             <div class="thermostat-container">
                 <div class="thermostat-dial" id="thermostat-dial">
                     <span class="current-temp">
-                        <span id="current-temp">${currentTempDisplay}</span><span class="current-temp-unit">°F</span>
+                        <span id="current-temp">${currentTempDisplay}</span><span class="current-temp-unit" id="current-temp-unit">${label}</span>
                     </span>
-                    <span class="target-temp">Target: <span id="target-temp">${targetTempDisplay}</span>°F</span>
+                    <span class="target-temp">Target: <span id="target-temp">${targetTempDisplay}</span><span id="target-temp-unit">${label}</span></span>
                     <span class="thermostat-mode" id="thermostat-mode">${modeDisplay}</span>
                 </div>
                 <div class="thermostat-controls">
@@ -80,6 +82,10 @@ export class Thermostat {
             this.dataTempAndHumidity = { tempInC: null, tempInF: null, humidity: null };
             this.updateDisplay();
         });
+
+        // Re-render on Settings-page unit toggle.
+        this.unitsHandler = () => this.updateDisplay();
+        units.addEventListener('change', this.unitsHandler);
     }
 
     updateDisplay() {
@@ -88,9 +94,13 @@ export class Thermostat {
         const modeEl = document.getElementById('thermostat-mode');
         const dialEl = document.getElementById('thermostat-dial');
 
-        const currentTempDisplay = this.dataTempAndHumidity.tempInF != null ? Math.round(this.dataTempAndHumidity.tempInF) : '-';
-        if (currentTempEl) currentTempEl.textContent = currentTempDisplay;
-        if (targetTempEl) targetTempEl.textContent = this.data.target_temp != null ? this.data.target_temp : '-';
+        if (currentTempEl) currentTempEl.textContent = units.formatTemp(this.dataTempAndHumidity.tempInF);
+        if (targetTempEl) targetTempEl.textContent = units.formatTemp(this.data.target_temp);
+        const label = units.tempLabel();
+        const curUnitEl = document.getElementById('current-temp-unit');
+        const tgtUnitEl = document.getElementById('target-temp-unit');
+        if (curUnitEl) curUnitEl.textContent = label;
+        if (tgtUnitEl) tgtUnitEl.textContent = label;
         if (modeEl) modeEl.textContent = this.data.mode || '-';
 
         // Update dial state based on heating/cooling
@@ -107,7 +117,12 @@ export class Thermostat {
     }
 
     async adjustTemp(delta) {
-        const newTarget = Math.max(50, Math.min(90, this.data.target_temp + delta));
+        // Delta is one step in the user's preferred unit. When the user is
+        // in °C, a step of 1C ≈ 1.8F on the backend (which still stores +
+        // clamps in °F). Round the F value so target_temp stays an integer.
+        const stepF = units.temperature === 'C' ? delta * 9 / 5 : delta;
+        const proposed = Math.round((this.data.target_temp || 70) + stepF);
+        const newTarget = Math.max(50, Math.min(90, proposed));
 
         if (newTarget === this.data.target_temp) return;
 
@@ -128,5 +143,9 @@ export class Thermostat {
         }
         if (this.unsubStaleThermostat) this.unsubStaleThermostat();
         if (this.unsubStaleTempHumid) this.unsubStaleTempHumid();
+        if (this.unitsHandler) {
+            units.removeEventListener('change', this.unitsHandler);
+            this.unitsHandler = null;
+        }
     }
 }

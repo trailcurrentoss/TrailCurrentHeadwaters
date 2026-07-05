@@ -5057,17 +5057,26 @@ input[type="range"] {
    and the *body* scrolls instead of the log. Sized to fill the strip
    between the fixed header (60px) and the fixed bottom-nav (80px). */
 .page-peregrine {
-    position: fixed;
-    top: 60px;
-    bottom: 80px;
-    left: 0;
-    right: 0;
+    /* Peregrine was originally position:fixed inside the old shell (60px
+     * top header + 80px bottom nav). The new AppShell has neither, and on
+     * wide layouts the sidebar sits to the left of main-content — a fixed
+     * left:0 would overlap it. Live inside .main-content and size to the
+     * remaining viewport minus the .main-content padding for each layout. */
     display: flex;
     flex-direction: column;
     padding: 0;
-    margin: 0;
+    margin: 0 auto;
     background: var(--bg-primary);
-    z-index: 10;
+    /* main-content padding on wide/collapsed is 24 + 40 = 64px. */
+    height: calc(100vh - 64px);
+    max-height: calc(100vh - 64px);
+    width: 100%;
+}
+/* On narrow the main-content padding accounts for the fixed bottom-nav
+ * (14 + 106 = 120px). Give Peregrine the remaining vertical space. */
+.app-shell[data-layout="narrow"] .page-peregrine {
+    height: calc(100vh - 120px);
+    max-height: calc(100vh - 120px);
 }
 
 .peregrine-header {
@@ -6013,4 +6022,1576 @@ input[type="range"] {
 .alarm-rename-actions .btn-secondary:hover {
     background: var(--bg-card-hover);
     color: var(--text-primary);
+}
+
+/* ============================================================
+ * AppShell (Phase 2 — mode-aware chrome)
+ * ============================================================
+ * The shell owns brand + mode switcher + sidebar/bottom-nav + connection
+ * indicator + theme switcher + logout + #main-content. Legacy .app-header /
+ * .bottom-nav styles above still apply to the wizard (which doesn't mount
+ * the shell) — the new selectors below are scoped under `.app-shell` so
+ * they don't collide with the wizard chrome.
+ */
+
+.app-shell {
+    display: flex;
+    min-height: 100vh;
+    width: 100%;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+}
+
+/* --- Sidebar (wide + collapsed) ------------------------------- */
+.app-shell .app-sidebar {
+    width: 236px;
+    flex-shrink: 0;
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 20px 14px;
+    background: var(--bg-secondary);
+    border-right: 1px solid var(--border-color);
+    z-index: 40;
+}
+
+.app-shell[data-layout="narrow"] .app-sidebar { display: none; }
+.app-shell[data-layout="collapsed"] .app-sidebar { width: 72px; padding: 20px 8px; }
+
+.app-shell .sidebar-brand {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+    padding: 6px 8px 22px 8px;
+}
+.app-shell .sidebar-brand .app-logo { height: 32px; width: auto; }
+.app-shell .brand-tag {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-muted);
+    letter-spacing: 1.4px;
+    padding-left: 2px;
+}
+
+/* Mode switcher (segmented control) */
+.app-shell .mode-switcher {
+    display: flex;
+    gap: 4px;
+    padding: 4px;
+    border-radius: 10px;
+    background: var(--bg-card-hover);
+    margin: 0 8px 14px 8px;
+}
+.app-shell .mode-btn {
+    flex: 1;
+    padding: 8px 4px;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease;
+}
+.app-shell .mode-btn.active {
+    background: var(--bg-card);
+    color: var(--text-primary);
+    border-color: var(--border-color);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+.app-shell[data-layout="collapsed"] .mode-switcher {
+    flex-direction: column;
+    padding: 4px;
+    margin: 0 4px 14px 4px;
+}
+.app-shell[data-layout="collapsed"] .mode-btn { font-size: 10px; padding: 6px 2px; }
+
+/* Sidebar nav */
+.app-shell #app-sidebar-nav-slot {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-height: 0;
+    overflow-y: auto;
+}
+.app-shell .sidebar-nav-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 0;
+    margin: 0;
+    list-style: none;
+}
+.app-shell .sidebar-nav-section {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+.app-shell .sidebar-nav-divider {
+    height: 1px;
+    background: var(--border-color);
+    margin: 14px 8px 10px 8px;
+}
+.app-shell .sidebar-nav-section-label {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 1.2px;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    padding: 0 14px 6px 14px;
+}
+.app-shell .sidebar-nav-btn {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 14px;
+    border: none;
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 14px;
+    font-weight: 500;
+    border-radius: 10px;
+    cursor: pointer;
+    text-align: left;
+    transition: background 0.15s ease, color 0.15s ease;
+}
+.app-shell .sidebar-nav-btn:hover { background: var(--bg-card-hover); }
+.app-shell .sidebar-nav-btn.active {
+    color: var(--role-on-primary-container);
+    background: var(--role-primary-container);
+}
+.app-shell .sidebar-nav-icon svg {
+    display: block;
+    width: 20px;
+    height: 20px;
+}
+.app-shell[data-layout="collapsed"] .sidebar-nav-btn {
+    justify-content: center;
+    padding: 12px 8px;
+}
+.app-shell[data-layout="collapsed"] .sidebar-nav-label,
+.app-shell[data-layout="collapsed"] .brand-tag,
+.app-shell[data-layout="collapsed"] .sidebar-nav-section-label,
+.app-shell[data-layout="collapsed"] .conn-label,
+.app-shell[data-layout="collapsed"] .theme-btn span,
+.app-shell[data-layout="collapsed"] .sidebar-logout span { display: none; }
+.app-shell[data-layout="collapsed"] .sidebar-brand { align-items: center; padding: 6px 0 22px 0; }
+/* In collapsed mode we don't have room for the wide wordmark logo; clip
+ * the SVG to show just the icon on the left (viewBox 220x48; icon lives
+ * in the first ~48px). Rather than swap SVGs, mask via width. */
+.app-shell[data-layout="collapsed"] .sidebar-brand .app-logo {
+    height: 32px;
+    width: 32px;
+    object-fit: cover;
+    object-position: left center;
+}
+
+.app-shell .sidebar-flex-fill { flex: 1; }
+
+/* Connection indicator */
+.app-shell .sidebar-connection {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 14px;
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+.app-shell .conn-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 9999px;
+    background: var(--text-muted);
+    box-shadow: none;
+    flex-shrink: 0;
+}
+.app-shell .sidebar-connection[data-status="connected"] .conn-dot {
+    background: var(--role-primary);
+    box-shadow: var(--glow-primary);
+}
+.app-shell .sidebar-connection[data-status="disconnected"] .conn-dot,
+.app-shell .sidebar-connection[data-status="error"] .conn-dot {
+    background: var(--warning);
+}
+.app-shell .sidebar-connection-spacer { flex: 1; }
+.app-shell[data-layout="collapsed"] .sidebar-connection { justify-content: center; }
+
+/* Theme switcher */
+.app-shell .sidebar-theme-switcher {
+    display: flex;
+    gap: 4px;
+    padding: 4px;
+    border-radius: 10px;
+    background: var(--bg-card-hover);
+    margin: 4px 8px 0 8px;
+}
+.app-shell .theme-btn {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 8px 0;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease;
+}
+.app-shell .theme-btn svg { width: 14px; height: 14px; }
+.app-shell .theme-btn.active {
+    background: var(--bg-card);
+    color: var(--text-primary);
+    border-color: var(--border-color);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+.app-shell[data-layout="collapsed"] .sidebar-theme-switcher {
+    flex-direction: column;
+    margin: 4px 4px 0 4px;
+}
+
+/* Sidebar logout */
+.app-shell .sidebar-logout {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 8px 8px 0 8px;
+    padding: 10px 14px;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 13px;
+    font-weight: 500;
+    border-radius: 10px;
+    cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease;
+    text-align: left;
+}
+.app-shell .sidebar-logout:hover {
+    background: var(--tc-danger-bg-subtle);
+    color: var(--danger);
+}
+.app-shell .sidebar-logout svg { width: 18px; height: 18px; flex-shrink: 0; }
+.app-shell[data-layout="collapsed"] .sidebar-logout {
+    justify-content: center;
+    margin: 8px 4px 0 4px;
+    padding: 12px 8px;
+}
+
+/* --- Main column ---------------------------------------------- */
+.app-shell .app-main-column {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+}
+
+/* Reset the legacy .main-content padding when inside the shell — the old
+ * 80px top / 100px bottom padding was compensating for the fixed header /
+ * bottom-nav that no longer exist inside the shell. */
+.app-shell .main-content {
+    padding: 24px 40px 40px 40px;
+    max-width: 1280px;
+    margin: 0 auto;
+    width: 100%;
+    flex: 1;
+}
+.app-shell[data-layout="collapsed"] .main-content { padding: 24px 24px 40px 24px; }
+.app-shell[data-layout="narrow"] .main-content { padding: 14px 12px 106px 12px; }
+
+/* Narrow mode switcher header (only visible on phone) */
+.app-shell .app-main-mode-header {
+    display: none;
+    padding: 12px 12px 0 12px;
+    background: var(--bg-primary);
+}
+.app-shell[data-layout="narrow"] .app-main-mode-header { display: block; }
+.app-shell .mode-switcher-narrow {
+    margin: 0;
+    background: var(--bg-card-hover);
+    padding: 4px;
+    border-radius: 10px;
+}
+
+/* --- Bottom nav (narrow only) --------------------------------- */
+.app-shell .app-bottom-nav {
+    display: none;
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    justify-content: space-around;
+    align-items: center;
+    padding: 8px 4px calc(8px + env(safe-area-inset-bottom, 0)) 4px;
+    background: var(--nav-bg);
+    border-top: 1px solid var(--border-color);
+    backdrop-filter: blur(10px);
+    z-index: 50;
+}
+.app-shell[data-layout="narrow"] .app-bottom-nav { display: flex; }
+.app-shell .bnav-btn {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+    min-width: 52px;
+    padding: 6px 8px;
+    border: none;
+    background: none;
+    cursor: pointer;
+    color: var(--text-muted);
+    font-size: 10px;
+    font-weight: 500;
+    transition: color 0.15s ease;
+}
+.app-shell .bnav-btn.active { color: var(--role-primary); }
+.app-shell .bnav-btn.active .bnav-icon { filter: drop-shadow(var(--glow-primary)); }
+.app-shell .bnav-icon svg { display: block; width: 22px; height: 22px; }
+.app-shell .bnav-label { font-size: 10px; }
+.app-shell .bnav-more { position: relative; }
+.app-shell .bnav-overflow-menu {
+    position: absolute;
+    bottom: calc(100% + 8px);
+    right: 0;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    padding: 8px;
+    display: none;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 180px;
+    box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.3);
+    z-index: 60;
+}
+.app-shell .bnav-overflow-menu.open { display: flex; }
+.app-shell .bnav-overflow-btn {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 16px;
+    border: none;
+    background: none;
+    color: var(--text-secondary);
+    font-size: 13px;
+    font-weight: 500;
+    border-radius: 8px;
+    cursor: pointer;
+    text-align: left;
+    transition: background 0.15s ease, color 0.15s ease;
+}
+.app-shell .bnav-overflow-btn:hover { background: var(--bg-card-hover); }
+.app-shell .bnav-overflow-btn.active {
+    color: var(--role-on-primary-container);
+    background: var(--role-primary-container);
+}
+.app-shell .bnav-overflow-btn .bnav-icon svg { width: 18px; height: 18px; }
+
+/* --- Mode-specific chrome hiding ------------------------------ */
+/* In Driving / Storage, hide navigation entirely — the mode page owns the
+ * full screen. The mode switcher (top of narrow header) stays visible so
+ * the user can get back to Camping. */
+.app-shell[data-mode="driving"] .app-sidebar,
+.app-shell[data-mode="storage"] .app-sidebar { display: none; }
+.app-shell[data-mode="driving"] .app-bottom-nav,
+.app-shell[data-mode="storage"] .app-bottom-nav { display: none; }
+.app-shell[data-mode="driving"] .app-main-mode-header,
+.app-shell[data-mode="storage"] .app-main-mode-header { display: block; }
+
+/* Alert-banner slot lives at the top of the main column; empty until
+ * Phase 3 wires it up. */
+.app-shell #alert-banner-slot { padding: 0 40px; }
+.app-shell[data-layout="narrow"] #alert-banner-slot { padding: 0 12px; }
+
+/* ============================================================
+ * AlertHost (Phase 3 — three-surface alarm renderer)
+ * ============================================================
+ * The v02 design surfaces active alarms in THREE places:
+ *   1. Persistent banner at the top of #main-content (wide screens)
+ *   2. Persistent pill fixed to the top of the viewport (narrow screens)
+ *   3. Sidebar-footer bell + count badge (always accurate)
+ *
+ * The banner + pill are dismissible together (in-memory only). The sidebar
+ * bell count is never affected by dismissal.
+ */
+
+/* --- Sidebar bell -------------------------------------------- */
+.app-shell #sidebar-alarm-bell-slot {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+.app-shell .alert-bell {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    padding: 0;
+    border: none;
+    border-radius: 9999px;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease;
+}
+.app-shell .alert-bell:hover { background: var(--bg-card-hover); color: var(--text-primary); }
+.app-shell .alert-bell svg { width: 17px; height: 17px; display: block; }
+.app-shell .alert-bell.alert-bell-active { color: var(--danger); }
+.app-shell .alert-bell-badge {
+    position: absolute;
+    top: -1px;
+    right: -2px;
+    min-width: 15px;
+    height: 15px;
+    padding: 0 3px;
+    border-radius: 9999px;
+    background: var(--danger);
+    border: 2px solid var(--bg-secondary);
+    color: #ffffff;
+    font-size: 9px;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
+}
+
+/* --- Wide banner --------------------------------------------- */
+.app-shell #alert-banner-slot:empty { padding: 0 !important; }
+.app-shell[data-layout="narrow"] #alert-banner-slot { display: none; }
+/* Driving mode replaces alerts with a full-screen takeover (Phase 4).
+ * Storage mode is remote — the local alarm banner isn't meaningful there. */
+.app-shell[data-mode="driving"] #alert-banner-slot,
+.app-shell[data-mode="driving"] #alert-pill-slot,
+.app-shell[data-mode="storage"] #alert-banner-slot,
+.app-shell[data-mode="storage"] #alert-pill-slot { display: none; }
+
+.app-shell .alert-banner {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 18px;
+    margin-bottom: 12px;
+    border: 1px solid rgba(255, 84, 83, 0.4);
+    border-radius: 12px;
+    background: var(--tc-danger-bg-subtle);
+    color: var(--text-primary);
+    font-size: 13px;
+}
+.app-shell .alert-banner .alert-icon svg {
+    width: 18px;
+    height: 18px;
+    display: block;
+    color: var(--danger);
+}
+.app-shell .alert-banner .alert-title {
+    font-weight: 600;
+    color: var(--danger);
+}
+.app-shell .alert-banner .alert-text { color: var(--text-primary); }
+.app-shell .alert-banner .alert-more {
+    padding: 4px 12px;
+    border-radius: 9999px;
+    background: var(--bg-card);
+    color: var(--danger);
+    font-size: 12px;
+    font-weight: 600;
+}
+.app-shell .alert-banner .alert-spacer { flex: 1; }
+.app-shell .alert-banner .alert-view {
+    padding: 6px 14px;
+    border: 1px solid rgba(255, 84, 83, 0.4);
+    border-radius: 9999px;
+    background: transparent;
+    color: var(--danger);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s ease;
+}
+.app-shell .alert-banner .alert-view:hover { background: var(--bg-card); }
+.app-shell .alert-banner .alert-dismiss {
+    width: 28px;
+    height: 28px;
+    border: none;
+    border-radius: 9999px;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.15s ease, color 0.15s ease;
+}
+.app-shell .alert-banner .alert-dismiss:hover {
+    background: var(--bg-card);
+    color: var(--text-primary);
+}
+.app-shell .alert-banner .alert-dismiss svg { width: 14px; height: 14px; }
+.app-shell .alert-banner .alert-rows {
+    flex-basis: 100%;
+    display: flex;
+    flex-direction: column;
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid rgba(255, 84, 83, 0.4);
+}
+.app-shell .alert-banner .alert-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 9px 2px 9px 30px;
+}
+.app-shell .alert-banner .alert-row-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 9999px;
+    background: var(--danger);
+    flex-shrink: 0;
+}
+.app-shell .alert-banner .alert-row-text {
+    font-size: 13px;
+    color: var(--text-primary);
+}
+
+/* --- Narrow pill --------------------------------------------- */
+.app-shell #alert-pill-slot { display: none; }
+.app-shell[data-layout="narrow"] #alert-pill-slot { display: block; }
+
+.app-shell .alert-pill {
+    position: fixed;
+    top: calc(env(safe-area-inset-top, 0) + 10px);
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 60;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px 10px 16px;
+    border: 1px solid rgba(255, 84, 83, 0.4);
+    border-radius: 9999px;
+    background: var(--nav-bg);
+    backdrop-filter: blur(10px);
+    box-shadow: var(--tc-shadow-card-lifted);
+    max-width: 92vw;
+    cursor: pointer;
+}
+.app-shell .alert-pill-dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 9999px;
+    background: var(--danger);
+    flex-shrink: 0;
+    animation: ovpulse 2s ease-in-out infinite;
+}
+.app-shell .alert-pill-text {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.app-shell .alert-pill-dismiss {
+    width: 24px;
+    height: 24px;
+    border: none;
+    border-radius: 9999px;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    transition: color 0.15s ease;
+}
+.app-shell .alert-pill-dismiss:hover { color: var(--text-primary); }
+.app-shell .alert-pill-dismiss svg { width: 13px; height: 13px; }
+
+@keyframes ovpulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
+
+/* ============================================================
+ * Driving mode (Phase 4)
+ * ============================================================
+ * Full-screen dashboard — sidebar / bottom-nav are hidden via the
+ * `.app-shell[data-mode="driving"]` rules from Phase 2. The mode
+ * segmented control at the top of the main column stays visible so
+ * the driver can switch back to Camping.
+ */
+
+.drv-root {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    min-height: 0;
+}
+
+/* ── Header ────────────────────────────────────────────────── */
+.drv-header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+}
+.drv-link {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-secondary);
+}
+.drv-link-dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 9999px;
+    background: var(--text-muted);
+}
+.drv-gnss-chips {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-left: auto;
+    flex-wrap: wrap;
+}
+.drv-chip {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 3px;
+    padding: 5px 12px;
+    border-radius: 9999px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+.drv-chip-value {
+    font-weight: 600;
+    color: var(--text-primary);
+}
+.drv-chip-unit {
+    color: var(--text-muted);
+    font-size: 11px;
+}
+
+/* ── 3-column grid ─────────────────────────────────────────── */
+.drv-grid {
+    display: grid;
+    grid-template-columns: minmax(240px, 1fr) minmax(230px, 320px) minmax(240px, 1fr);
+    gap: 14px;
+    align-items: stretch;
+}
+@media (max-width: 900px) {
+    .drv-grid {
+        grid-template-columns: 1fr 1fr;
+    }
+    .drv-trailer-tile { grid-column: 1 / -1; grid-row: 1; }
+    .drv-arc-tile:nth-of-type(1) { grid-row: 2; }
+    .drv-arc-tile:nth-of-type(2) { grid-row: 2; }
+}
+
+.drv-arc-tile,
+.drv-trailer-tile {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 16px;
+    box-shadow: var(--tc-shadow-card);
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+}
+.drv-arc-status {
+    font-size: 16px;
+    font-weight: 500;
+    color: var(--role-primary);
+}
+
+/* ── Arc gauge (reusable) ───────────────────────────────── */
+.arc-gauge {
+    position: relative;
+    border-radius: 9999px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.arc-gauge-inner {
+    position: absolute;
+    border-radius: 9999px;
+    background: linear-gradient(145deg, var(--bg-card), var(--bg-card-hover));
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+}
+.drv-arc-icon { width: 22px; height: 22px; }
+.drv-arc-value {
+    font-size: 42px;
+    font-weight: 300;
+    line-height: 1;
+    color: var(--text-primary);
+}
+.drv-arc-unit {
+    font-size: 20px;
+    color: var(--text-secondary);
+}
+.drv-arc-sub {
+    font-size: 13px;
+    color: var(--text-muted);
+}
+
+/* ── Trailer diagram ────────────────────────────────────── */
+.trailer-diagram {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+}
+.trailer-coupler {
+    width: 52px;
+    height: 26px;
+    border: 1px solid var(--border-color);
+    border-radius: 7px;
+    background: var(--bg-card-hover);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.trailer-coupler-inner {
+    width: 26px;
+    height: 8px;
+    border-radius: 4px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+}
+.trailer-breakaway {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+}
+.trailer-breakaway-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 9999px;
+}
+.trailer-breakaway-label {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 1.2px;
+    text-transform: uppercase;
+}
+.trailer-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+.trailer-bs {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+}
+.trailer-bs-word {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+}
+.trailer-bs-label {
+    font-size: 9px;
+    letter-spacing: 0.8px;
+    text-transform: uppercase;
+    color: var(--text-muted);
+}
+.trailer-body-wrap {
+    position: relative;
+    width: 210px;
+    height: 200px;
+    display: flex;
+    justify-content: center;
+}
+.trailer-body {
+    position: relative;
+    width: 120px;
+    height: 200px;
+    border: 1px solid var(--border-color);
+    border-radius: 16px;
+    background: linear-gradient(145deg, var(--bg-card-hover), var(--bg-card));
+}
+.trailer-window {
+    position: absolute;
+    top: 10px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 42px;
+    height: 18px;
+    border-radius: 6px;
+    border: 1px solid var(--border-color);
+    background: var(--bg-card);
+}
+.trailer-tire {
+    position: absolute;
+    width: 10px;
+    height: 26px;
+    border-radius: 5px;
+    background: var(--text-muted);
+    /* Center the tire on its assigned top:% */
+    margin-top: -13px;
+}
+.trailer-tire-l { left: -5px; }
+.trailer-tire-r { right: -5px; }
+.trailer-tire-psi {
+    position: absolute;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    /* Center vertically on the axle's top:% + 2 offset */
+    margin-top: -8px;
+}
+.trailer-tire-psi-l { left: 0; }
+.trailer-tire-psi-r { right: 0; }
+.trailer-caption {
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
+/* ── Trailer light pills ────────────────────────────────── */
+.drv-lights {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(105px, 1fr));
+    gap: 10px;
+}
+.app-shell[data-layout="narrow"] .drv-lights {
+    grid-template-columns: repeat(5, 1fr);
+    gap: 6px;
+}
+.drv-pill {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    padding: 12px 8px;
+    border-radius: 12px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    min-width: 0;
+}
+.app-shell[data-layout="narrow"] .drv-pill {
+    padding: 10px 2px;
+    font-size: 9px;
+    letter-spacing: 0.4px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100%;
+}
+.drv-pill-dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 9999px;
+    background: var(--bg-card-hover);
+    border: 1px solid var(--border-color);
+}
+.drv-pill-ok       { background: var(--tc-success-bg-subtle); border-color: rgba(82, 164, 65, 0.4); color: var(--role-primary); }
+.drv-pill-ok       .drv-pill-dot { background: var(--role-primary); border: none; box-shadow: var(--glow-primary); }
+.drv-pill-amber    { background: var(--tc-warning-bg-subtle); border-color: rgba(255, 193, 7, 0.4); color: var(--warning); }
+.drv-pill-amber    .drv-pill-dot { background: var(--warning); border: none; }
+.drv-pill-danger   { background: var(--tc-danger-bg-subtle); border-color: rgba(255, 84, 83, 0.4); color: var(--danger); }
+.drv-pill-danger   .drv-pill-dot { background: var(--danger); border: none; box-shadow: var(--glow-danger); }
+.drv-pill-info     { background: var(--tc-info-bg-subtle); border-color: rgba(72, 230, 254, 0.4); color: var(--info); }
+.drv-pill-info     .drv-pill-dot { background: var(--info); border: none; }
+
+/* ── Full-screen alarm takeover ─────────────────────────── */
+.drv-takeover {
+    position: fixed;
+    inset: 0;
+    z-index: 90;
+    background: var(--danger);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 26px;
+    padding: 32px;
+}
+.drv-takeover-icon {
+    width: 64px;
+    height: 64px;
+    animation: ovpulse 1s ease-in-out infinite;
+}
+.drv-takeover-rows {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    align-items: center;
+}
+.drv-takeover-row {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+}
+.drv-takeover-text {
+    font-size: 30px;
+    font-weight: 600;
+    color: #ffffff;
+    text-align: center;
+    line-height: 1.2;
+}
+.drv-takeover-ack {
+    padding: 16px 44px;
+    border-radius: 9999px;
+    border: none;
+    background: #ffffff;
+    color: var(--danger);
+    font-size: 16px;
+    font-weight: 700;
+    font-family: inherit;
+    cursor: pointer;
+    transition: transform 0.15s ease;
+}
+.drv-takeover-ack:active { transform: scale(0.97); }
+
+/* ============================================================
+ * Home greeting header (Phase 5)
+ * ============================================================
+ * Shown at the top of the Home page — replaces the bare "Climate Control"
+ * heading with a time-of-day salutation plus a live subtitle of date +
+ * reverse-geocoded location + elevation.
+ */
+
+.home-greeting {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-bottom: 20px;
+}
+.home-greeting-title {
+    margin: 0;
+    font-size: 28px;
+    font-weight: 600;
+    letter-spacing: -0.3px;
+    color: var(--text-primary);
+}
+.home-greeting-sub {
+    font-size: 14px;
+    color: var(--text-muted);
+}
+
+/* ============================================================
+ * Storage mode (Phase 5)
+ * ============================================================
+ * Remote monitoring page — data comes from Farwatch directly, not from the
+ * local Overlook backend. Sidebar / bottom-nav are hidden via the
+ * `.app-shell[data-mode="storage"]` rules from Phase 2.
+ */
+
+.storage-root {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+
+.storage-header {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-bottom: 4px;
+}
+.storage-title {
+    margin: 0;
+    font-size: 28px;
+    font-weight: 600;
+    letter-spacing: -0.3px;
+    color: var(--text-primary);
+}
+.storage-subtitle {
+    font-size: 14px;
+    color: var(--text-muted);
+}
+
+/* ── Status cards ──────────────────────────────────────────── */
+.storage-status-grid {
+    display: grid;
+    grid-template-columns: 1.2fr 1fr;
+    gap: 20px;
+    align-items: start;
+}
+@media (max-width: 720px) {
+    .storage-status-grid { grid-template-columns: 1fr; }
+}
+.storage-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 16px;
+    box-shadow: var(--tc-shadow-card);
+    padding: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+.storage-card-label {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: var(--text-muted);
+}
+.storage-card-status {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+.storage-card-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 9999px;
+    background: var(--text-muted);
+    flex-shrink: 0;
+}
+.storage-card-title {
+    font-size: 20px;
+    font-weight: 500;
+}
+.storage-card-rows {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    font-size: 13px;
+}
+.storage-card-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    color: var(--text-secondary);
+}
+.storage-card-row span:last-child {
+    font-weight: 500;
+    color: var(--text-primary);
+}
+.storage-card-hint {
+    margin: 0;
+    font-size: 12px;
+    color: var(--text-muted);
+    line-height: 1.5;
+}
+
+/* ── Tiles ─────────────────────────────────────────────────── */
+.storage-tiles {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+    gap: 12px;
+}
+.storage-tile {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 16px;
+    box-shadow: var(--tc-shadow-card);
+    padding: 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+.storage-tile-label {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: var(--text-muted);
+}
+.storage-tile-value {
+    font-size: 26px;
+    font-weight: 400;
+    line-height: 1.15;
+    color: var(--text-primary);
+}
+.storage-tile-sub {
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+
+/* ── Empty state (no cloud creds) ──────────────────────────── */
+.storage-empty {
+    max-width: 480px;
+    margin: 80px auto;
+    padding: 40px 32px;
+    text-align: center;
+    background: var(--bg-card);
+    border: 1px dashed var(--border-color);
+    border-radius: 16px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+}
+.storage-empty-icon {
+    width: 48px;
+    height: 48px;
+    color: var(--text-muted);
+}
+.storage-empty h2 {
+    margin: 0;
+    font-size: 22px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+.storage-empty p {
+    margin: 0;
+    font-size: 14px;
+    color: var(--text-secondary);
+    line-height: 1.6;
+}
+
+/* ============================================================
+ * Wide-screen page layouts (Phase 6)
+ * ============================================================
+ * On ≥1240px, restructure Config, Alarms, and Peregrine into multi-column
+ * layouts. Playbill wide is handled in its own block below. Narrow layouts
+ * are unchanged.
+ */
+
+/* --- Config: firmware + WiFi side-by-side, module list full-width ------ */
+@media (min-width: 1240px) {
+    .app-shell[data-mode="camping"] .page-config {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 20px;
+        align-items: start;
+    }
+    .app-shell[data-mode="camping"] .page-config > h1,
+    .app-shell[data-mode="camping"] .page-config > h2,
+    .app-shell[data-mode="camping"] .page-config > .config-container,
+    .app-shell[data-mode="camping"] .page-config > .modal {
+        grid-column: 1 / -1;
+    }
+    .app-shell[data-mode="camping"] .page-config > .card {
+        margin: 0;
+    }
+}
+
+/* --- Alarms: sensor list + history side panel on wide ------------------ */
+.alarms-layout { display: block; }
+.alarm-history-panel { display: none; }
+
+@media (min-width: 1240px) {
+    .app-shell[data-mode="camping"] .alarms-layout {
+        display: grid;
+        grid-template-columns: 1.5fr 1fr;
+        gap: 20px;
+        align-items: start;
+    }
+    .app-shell[data-mode="camping"] .alarm-history-panel {
+        display: block;
+        background: var(--bg-card);
+        border: 1px solid var(--border-color);
+        border-radius: 16px;
+        box-shadow: var(--tc-shadow-card);
+        padding: 20px 22px;
+        position: sticky;
+        top: 20px;
+    }
+}
+.alarm-history-label {
+    display: block;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin-bottom: 12px;
+}
+.alarm-history-empty {
+    margin: 0;
+    padding: 24px 0;
+    text-align: center;
+    font-size: 13px;
+    color: var(--text-muted);
+}
+.alarm-history-rows {
+    display: flex;
+    flex-direction: column;
+    max-height: 60vh;
+    overflow-y: auto;
+}
+.alarm-history-row {
+    display: grid;
+    grid-template-columns: 12px 1fr auto auto;
+    gap: 10px;
+    align-items: center;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border-color);
+    font-size: 13px;
+}
+.alarm-history-row:last-child { border-bottom: none; }
+.alarm-history-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 9999px;
+    justify-self: center;
+}
+.alarm-history-dot-fired { background: var(--danger); box-shadow: var(--glow-danger); }
+.alarm-history-dot-cleared { background: var(--role-primary); }
+.alarm-history-text {
+    color: var(--text-primary);
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.alarm-history-time {
+    color: var(--text-muted);
+    font-size: 12px;
+    white-space: nowrap;
+}
+.alarm-history-state {
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 10px;
+    border-radius: 9999px;
+    background: var(--bg-card-hover);
+    color: var(--text-secondary);
+    white-space: nowrap;
+}
+
+/* --- Playbill: on wide, cap the tab body so it doesn't stretch to full
+ *     column width — that made buttons and text feel spread thin on desktop.
+ *     Keeps the tab-based layout; a deeper 3-column restructure is deferred
+ *     until Playbill's internals get their own refactor. */
+@media (min-width: 1240px) {
+    .app-shell[data-mode="camping"] .page-playbill {
+        max-width: 960px;
+        margin: 0 auto;
+    }
+}
+
+/* --- Peregrine: side panel (conversations) on wide + chat on the right.
+ *     Panel hidden below 1240px; chat takes full column. */
+.peregrine-conv-panel { display: none; }
+.peregrine-chat {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+    width: 100%;
+    max-width: 900px;
+    margin: 0 auto;
+}
+
+@media (min-width: 1240px) {
+    .app-shell[data-mode="camping"] .page-peregrine {
+        flex-direction: row !important;
+        gap: 20px;
+        max-width: 1240px;
+        margin: 0 auto;
+    }
+    .app-shell[data-mode="camping"] .peregrine-conv-panel {
+        display: flex;
+        flex-direction: column;
+        width: 260px;
+        flex-shrink: 0;
+        background: var(--bg-card);
+        border: 1px solid var(--border-color);
+        border-radius: 14px;
+        overflow: hidden;
+    }
+    .app-shell[data-mode="camping"] .peregrine-chat {
+        flex: 1;
+        max-width: none;
+        margin: 0;
+    }
+}
+
+.peregrine-conv-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--border-color);
+    background: var(--bg-card);
+    flex-shrink: 0;
+}
+.peregrine-conv-title {
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.8px;
+    text-transform: uppercase;
+    color: var(--text-muted);
+}
+.peregrine-conv-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px;
+}
+.peregrine-conv-empty {
+    margin: 24px 12px;
+    text-align: center;
+    font-size: 13px;
+    color: var(--text-muted);
+}
+.peregrine-conv-item {
+    position: relative;
+    display: grid;
+    grid-template-columns: 1fr auto;
+    align-items: center;
+    gap: 4px;
+    border-radius: 10px;
+    margin-bottom: 4px;
+    transition: background 0.15s ease;
+}
+.peregrine-conv-item:hover { background: var(--bg-card-hover); }
+.peregrine-conv-item.active { background: var(--role-primary-container); }
+.peregrine-conv-item.active .peregrine-conv-item-title { color: var(--role-on-primary-container); }
+.peregrine-conv-select {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+    padding: 10px 12px;
+    border: none;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+    text-align: left;
+    min-width: 0;
+    font-family: inherit;
+}
+.peregrine-conv-item-title {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 100%;
+}
+.peregrine-conv-item-meta {
+    font-size: 11px;
+    color: var(--text-muted);
+}
+.peregrine-conv-delete {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    margin-right: 4px;
+    border: none;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.15s ease, background 0.15s ease, color 0.15s ease;
+}
+.peregrine-conv-delete svg { width: 15px; height: 15px; }
+.peregrine-conv-item:hover .peregrine-conv-delete,
+.peregrine-conv-item.active .peregrine-conv-delete { opacity: 1; }
+.peregrine-conv-delete:hover {
+    background: var(--tc-danger-bg-subtle);
+    color: var(--danger);
+}
+
+/* --- Driving mode: shrink the trailer diagram on portrait phones ------- */
+/* At 375px (iPhone) with the 3-column horizontal row of
+ *   [blind-spot 26px] + [gap 10] + [body-wrap 210px] + [gap 10] + [blind-spot 26px]
+ * the diagram is 282px wide — plus the tile's 20px padding on each side
+ * that's 322px inside a 343px-content-width viewport. Fits, but tightly,
+ * and any language expansion in the label rows overflows.
+ *
+ * Below ~640px, halve the body dimensions and shrink the SVG curves so the
+ * whole thing sits comfortably at portrait phone widths without wrapping. */
+@media (max-width: 640px) {
+    .drv-trailer-tile { padding: 14px; }
+    .trailer-row { gap: 4px; }
+    .trailer-body-wrap {
+        width: 160px;
+        height: 170px;
+    }
+    .trailer-body {
+        width: 88px;
+        height: 170px;
+    }
+    .trailer-window {
+        width: 34px;
+        height: 14px;
+        top: 8px;
+    }
+    .trailer-tire {
+        width: 8px;
+        height: 22px;
+        margin-top: -11px;
+    }
+    .trailer-tire-psi {
+        font-size: 11px;
+        margin-top: -7px;
+    }
+    /* SVG blind-spot curves — resize via width/height attribute override */
+    .trailer-bs svg {
+        width: 18px !important;
+        height: 30px !important;
+    }
+    .trailer-bs-word {
+        font-size: 9px;
+        letter-spacing: 0.5px;
+    }
+    .trailer-bs-label { font-size: 8px; }
+    .trailer-coupler {
+        width: 42px;
+        height: 22px;
+    }
+    .trailer-coupler-inner {
+        width: 22px;
+        height: 6px;
+    }
+    .trailer-caption { font-size: 10px; }
+}
+
+/* ============================================================
+ * Settings — Units picker (segmented control)
+ * ============================================================ */
+.settings-units-container {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+.settings-units-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 14px;
+    flex-wrap: wrap;
+}
+.settings-units-label {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-primary);
+}
+.settings-units-choices {
+    display: inline-flex;
+    gap: 4px;
+    padding: 4px;
+    border-radius: 10px;
+    background: var(--bg-card-hover);
+}
+.settings-units-btn {
+    padding: 6px 18px;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease;
+    font-family: inherit;
+}
+.settings-units-btn.active {
+    background: var(--bg-card);
+    color: var(--text-primary);
+    border-color: var(--border-color);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+/* ============================================================
+ * Driving mode — portrait phone sizing (≤ 640px)
+ * ============================================================
+ * The Driving dashboard's default sizing is tuned for tablet + desktop.
+ * On portrait phones (iPhone 375–430px width, Android varies) everything
+ * needs to shrink so all three tiles + pill row + header fit above the
+ * fold without horizontal scroll. The arc-gauge SIZES are set inline by
+ * arcGauge() in the JS, so we override with !important. */
+@media (max-width: 640px) {
+    .drv-root { gap: 10px; }
+
+    /* Header row */
+    .drv-header { gap: 8px; }
+    .drv-link { font-size: 12px; }
+    .drv-chip {
+        padding: 3px 9px;
+        font-size: 11px;
+    }
+    .drv-chip-value { font-size: 12px; }
+    .drv-chip-unit { font-size: 10px; }
+    .drv-gnss-chips { gap: 6px; }
+
+    /* Tile padding + spacing */
+    .drv-arc-tile,
+    .drv-trailer-tile {
+        padding: 12px;
+        gap: 8px;
+        border-radius: 14px;
+    }
+
+    /* Grid gap */
+    .drv-grid { gap: 10px; }
+
+    /* Arc gauges — shrink to 130px (from 186px inline) */
+    .drv-arc-tile .arc-gauge {
+        width: 130px !important;
+        height: 130px !important;
+    }
+    .drv-arc-tile .arc-gauge-inner {
+        inset: 8px !important;
+    }
+    .drv-arc-icon { width: 16px; height: 16px; }
+    .drv-arc-value { font-size: 30px; }
+    .drv-arc-unit { font-size: 14px; }
+    .drv-arc-sub { font-size: 11px; }
+    .drv-arc-status { font-size: 13px; }
+
+    /* Trailer light pill row */
+    .drv-lights { gap: 4px; }
+    .app-shell[data-layout="narrow"] .drv-pill {
+        padding: 8px 2px;
+        font-size: 8px;
+        letter-spacing: 0.3px;
+    }
+    .drv-pill-dot { width: 9px; height: 9px; }
+}
+
+/* Very narrow phones (≤ 380px, iPhone SE / mini) — tighter still. */
+@media (max-width: 380px) {
+    .drv-arc-tile .arc-gauge {
+        width: 110px !important;
+        height: 110px !important;
+    }
+    .drv-arc-tile .arc-gauge-inner {
+        inset: 7px !important;
+    }
+    .drv-arc-value { font-size: 24px; }
+    .drv-arc-unit { font-size: 12px; }
+    .drv-chip {
+        padding: 2px 7px;
+        font-size: 10px;
+    }
+    .drv-chip-value { font-size: 11px; }
+    .drv-chip-unit { font-size: 9px; }
 }
