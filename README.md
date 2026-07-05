@@ -280,6 +280,48 @@ Groups are defined in `MqttService.ALARM_GROUPS` in `containers/backend/src/mqtt
 
 **Requirements:** SMS must be configured and enabled in Settings for alarm notifications to be sent.
 
+### In-App Alarm Notifications (PWA)
+
+Separate from the SMS system, the PWA can render OS-native notifications (audible ding, vibration, banner) for the sensor-armed alarms configured in **Alarms**. This is delivered entirely over the vehicle's local Wi-Fi with **no cloud, cellular, or internet dependency** — the alarm-service broadcasts over the existing WebSocket, and the browser's service worker calls `showNotification()` locally.
+
+**Enable:** Alarms page → toggle **Alarm Notifications** on. The browser will prompt for notification permission (must be granted). A **Send test notification** button appears after permission is granted so you can verify the display path independently of an actual alarm.
+
+**How the toggle behaves:**
+
+- Requests OS notification permission on first enable
+- Persists the on/off state in `localStorage` (`alarmPushEnabled`)
+- Subscribes to the `alarms_update` WebSocket event and fires a notification for each *newly* active alarm (self-clearing alarms don't re-notify)
+- Requests a Screen Wake Lock (`navigator.wakeLock.request('screen')`) so the display stays awake while notifications are enabled — this is what prevents iOS/Android from suspending the PWA
+- On disable, tears down the WS listener and releases the wake lock
+
+**⚠️ Critical caveats — read before relying on this feature:**
+
+This uses the standard browser Notification + WebSocket path. It is **not** Web Push. Web Push was rejected as a design because it requires internet on the Headwaters side, defeating the whole point of an offline off-grid alarm.
+
+The consequence is that the PWA's JavaScript must be alive when the alarm fires. iOS and Android both suspend backgrounded PWAs after a short grace window (~30 seconds), regardless of screen state. There is **no user-facing OS setting** that changes this — it is a platform-level design of both OSes.
+
+Behavior matrix:
+
+| Scenario | Notifications fire? |
+|----------|---------------------|
+| PWA foreground, screen on (wake lock holding it awake) | ✅ Yes, indefinitely |
+| PWA foreground, user idle, wake lock keeps display from dimming | ✅ Yes, indefinitely |
+| PWA foreground, wake lock unsupported, screen auto-sleeps | ❌ No — OS suspends the PWA once the screen sleeps |
+| User locks the phone with the power button | ❌ No — OS suspends the PWA within ~30 s |
+| User switches to another app (Mail, Safari, etc.) | ❌ No — same reason |
+| User taps home button (goes to home screen) | ❌ No — same reason |
+| Vehicle Wi-Fi is down / phone not connected to it | ❌ No — WebSocket can't reach the backend |
+
+**Practical implication:** this feature is designed for a **dashboard-mounted tablet dedicated to the PWA**, or a phone left on a charger with the PWA visible. It is *not* a fit for a phone the driver is actively using (checking mail, browsing) — no PWA-only mechanism can survive the app being backgrounded.
+
+**Delivery over the wire:** Alarm transitions are broadcast from `alarms-service.js` via MQTT/WebSocket. The frontend `notifications.js` module diffs the active-set membership against the last snapshot and fires the notification only for keys that just entered the active set. The service worker's `notificationclick` handler focuses (or opens) the PWA on `#alarms` when the user taps the notification.
+
+**Requirements:**
+- HTTPS (already enforced — nginx listens only on 443).
+- PWA installed to the home screen on iOS (`Notification` API doesn't work in a Safari tab). Android Chrome works either way.
+- Phone/tablet on the same vehicle Wi-Fi as Headwaters.
+- Screen Wake Lock API for the "keep it awake" leg — supported on iOS 16.4+ and Chrome 84+ / Edge 84+ / Samsung Internet 14+.
+
 ### Host-Side Services
 
 Python scripts running as systemd services on the host (outside Docker):

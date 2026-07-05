@@ -17,6 +17,7 @@ import { playbillPage } from './pages/playbill.js';
 import { peregrinePage } from './pages/peregrine.js';
 import { alarmsPage } from './pages/alarms.js';
 import { AlarmBell } from './components/alarm-bell.js';
+import * as notifications from './notifications.js';
 
 class App {
     constructor() {
@@ -141,6 +142,16 @@ class App {
         // Connect WebSocket
         wsClient.connect();
         this.setupConnectionStatus();
+
+        // Alarm notifier lives at the app level so notifications fire
+        // regardless of which page is showing. Wake-lock keeps the WS
+        // alive when the display would otherwise sleep — this is what
+        // makes offline alarm delivery viable on a vehicle Wi-Fi with
+        // no internet path to a cloud push service.
+        notifications.startAlarmNotifier();
+        if (notifications.isEnabled()) {
+            notifications.enableWakeLock();
+        }
 
         // Navigate to initial page
         const initialPage = router.getPageFromHash();
@@ -448,6 +459,8 @@ class App {
 
         // Disconnect WebSocket
         wsClient.disconnect();
+        notifications.stopAlarmNotifier();
+        notifications.disableWakeLock();
 
         // Tear down the alarm bell so it doesn't double-mount on next login.
         if (this.alarmBell) {

@@ -1,6 +1,7 @@
 // Alarms page — flat list of every digital input across configured
 // Picket + Switchback modules with per-sensor arm toggle and rename.
 import { API } from '../api.js';
+import * as notifications from '../notifications.js';
 
 const LABEL_MAX = 24;
 const SENSORS_PER = { switchback: 8, picket: 12 };
@@ -107,6 +108,119 @@ function scheduleBatterySave() {
             console.error('[Alarms] Battery save failed:', err);
         }
     }, 300);
+}
+
+let pushCardStatus = '';
+
+function renderPushCard() {
+    const supported = notifications.isSupported();
+    const perm = notifications.permissionState();
+    const enabled = notifications.isEnabled();
+    const disabled = !supported || perm === 'denied';
+
+    let desc;
+    if (!supported) {
+        desc = 'This browser does not support notifications.';
+    } else if (perm === 'denied') {
+        desc = 'Notifications are blocked. Enable them in your device settings for this site.';
+    } else if (enabled) {
+        desc = 'Notifications are on. Keep this app open with the screen awake to receive alarms offline.';
+    } else {
+        desc = 'Show a device notification when a sensor fires an alarm. Works over the vehicle Wi-Fi with no internet needed — keep this app open on a dashboard tablet or phone on charge.';
+    }
+
+    const testBtn = (perm === 'granted')
+        ? `<button class="btn-secondary alarm-push-test-btn" data-action="push-test">Send test notification</button>`
+        : '';
+    const status = pushCardStatus
+        ? `<div class="alarm-push-status">${escapeHtml(pushCardStatus)}</div>`
+        : '';
+
+    return `
+        <div class="alarm-push-card">
+            <div class="alarm-push-header">
+                <div class="alarm-push-label">
+                    <div class="alarm-push-title">Alarm Notifications</div>
+                    <div class="alarm-push-desc">${escapeHtml(desc)}</div>
+                </div>
+                <div class="toggle-switch ${enabled ? 'active' : ''} ${disabled ? 'is-disabled' : ''}"
+                     data-action="push-toggle" role="switch"
+                     aria-checked="${enabled}"
+                     aria-disabled="${disabled}"></div>
+            </div>
+            ${testBtn ? `<div class="alarm-push-actions">${testBtn}</div>` : ''}
+            ${status}
+        </div>
+    `;
+}
+
+function refreshPushCard() {
+    const container = document.getElementById('alarms-push-container');
+    if (container) container.innerHTML = renderPushCard();
+}
+
+function setPushStatus(msg) {
+    pushCardStatus = msg || '';
+    refreshPushCard();
+    if (pushCardStatus) {
+        setTimeout(() => {
+            if (pushCardStatus === msg) {
+                pushCardStatus = '';
+                refreshPushCard();
+            }
+        }, 8000);
+    }
+}
+
+async function handlePushToggle() {
+    if (!notifications.isSupported()) {
+        setPushStatus('This browser does not support notifications.');
+        return;
+    }
+    if (notifications.permissionState() === 'denied') {
+        setPushStatus('Permission was denied earlier — enable it in your device notification settings.');
+        return;
+    }
+
+    if (notifications.isEnabled()) {
+        notifications.setEnabled(false);
+        await notifications.disableWakeLock();
+        setPushStatus('Notifications turned off.');
+        refreshPushCard();
+        return;
+    }
+
+    const perm = await notifications.requestPermission();
+    if (perm !== 'granted') {
+        if (perm === 'denied') {
+            setPushStatus('Permission denied. Change it in your device notification settings for this site.');
+        } else {
+            setPushStatus(`Permission prompt was dismissed — tap again to retry.`);
+        }
+        refreshPushCard();
+        return;
+    }
+
+    notifications.setEnabled(true);
+    notifications.startAlarmNotifier();
+    const wl = await notifications.enableWakeLock();
+    if (wl.ok) {
+        setPushStatus('Enabled. Screen will stay awake so alarms fire even when Headwaters has no internet.');
+    } else if (wl.reason === 'unsupported') {
+        setPushStatus('Enabled. Note: this browser does not support keeping the screen awake — alarms may stop if the display sleeps.');
+    } else {
+        setPushStatus('Enabled, but could not keep the screen awake. Alarms may stop if the display sleeps.');
+    }
+    refreshPushCard();
+}
+
+async function handlePushTest() {
+    const result = await notifications.fireTestNotification();
+    if (result && result.ok) {
+        setPushStatus('Test notification fired. If nothing appeared, check OS-level notification settings for this app.');
+    } else {
+        setPushStatus(`Test failed: ${result && result.error ? result.error : 'unknown error'}.`);
+    }
 }
 
 function renderBatteryCard() {
@@ -268,6 +382,10 @@ function handleContainerClick(e) {
         saveRename(k);
     } else if (kind === 'battery-toggle') {
         handleBatteryToggle();
+    } else if (kind === 'push-toggle') {
+        handlePushToggle();
+    } else if (kind === 'push-test') {
+        handlePushTest();
     }
 }
 
@@ -287,6 +405,7 @@ export const alarmsPage = {
                         Arm individual sensors to surface their state in the alarm bell.
                         A sensor that auto-clears (e.g. a door re-closing) clears its alarm.
                     </p>
+                    <div id="alarms-push-container"></div>
                     <div id="alarms-battery-container">
                         <p class="alarms-loading">Loading…</p>
                     </div>
@@ -317,6 +436,7 @@ export const alarmsPage = {
             modules = (sysCfg && sysCfg.mcu_modules) || [];
             batteryContainer.innerHTML = renderBatteryCard();
             listContainer.innerHTML = renderList();
+            refreshPushCard();
         } catch (err) {
             console.error('[Alarms] Failed to load:', err);
             listContainer.innerHTML = '<p style="color: var(--danger);">Failed to load alarms configuration.</p>';

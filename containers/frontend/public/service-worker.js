@@ -8,6 +8,7 @@ const STATIC_ASSETS = [
     '/js/app.js',
     '/js/router.js',
     '/js/api.js',
+    '/js/notifications.js',
     '/js/components/airquality-display.js',
     '/js/components/brightness-modal.js',
     '/js/components/energy-display.js',
@@ -139,4 +140,27 @@ self.addEventListener('message', (event) => {
     if (event.data && event.data.type === 'CLIENTS_CLAIM') {
         self.clients.claim();
     }
+});
+
+// Focus the PWA (or open it) when the user taps an alarm notification.
+self.addEventListener('notificationclick', (event) => {
+    event.notification.close();
+    const targetPath = (event.notification.data && event.notification.data.url) || '/#alarms';
+    event.waitUntil((async () => {
+        const clientsList = await self.clients.matchAll({
+            type: 'window',
+            includeUncontrolled: true,
+        });
+        for (const client of clientsList) {
+            if ('focus' in client) {
+                try {
+                    if ('navigate' in client) await client.navigate(targetPath);
+                } catch (_) { /* cross-origin nav guard; ignore */ }
+                return client.focus();
+            }
+        }
+        if (self.clients.openWindow) {
+            return self.clients.openWindow(targetPath);
+        }
+    })());
 });

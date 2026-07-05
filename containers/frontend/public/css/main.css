@@ -5717,7 +5717,65 @@ input[type="range"] {
     list-style: none;
     margin: 0;
     padding: 0;
-    border-top: 1px solid var(--border-color);
+}
+
+/* Push notifications card — mirrors .alarm-battery-card layout */
+.alarm-push-card {
+    padding: 12px 0 16px 0;
+    border-bottom: 1px solid var(--border-color);
+    margin-bottom: 4px;
+}
+
+.alarm-push-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.alarm-push-label {
+    flex: 1;
+    min-width: 0;
+}
+
+.alarm-push-title {
+    color: var(--text-primary);
+    font-size: 0.9375rem;
+    font-weight: 600;
+}
+
+.alarm-push-desc {
+    color: var(--text-secondary);
+    font-size: 0.8125rem;
+    margin-top: 2px;
+}
+
+.toggle-switch.is-disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    pointer-events: none;
+}
+
+.alarm-push-actions {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 12px;
+}
+
+.alarm-push-test-btn {
+    padding: 8px 16px;
+    font-size: 0.875rem;
+    border-radius: 8px;
+}
+
+.alarm-push-status {
+    margin-top: 10px;
+    padding: 10px 12px;
+    background: var(--bg-secondary);
+    border-radius: 8px;
+    color: var(--text-secondary);
+    font-size: 0.8125rem;
+    line-height: 1.4;
 }
 
 /* Solstice battery-level alarm card */
