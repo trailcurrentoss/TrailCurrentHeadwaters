@@ -30,8 +30,9 @@ sudo ./RADXAQ6A/image/build.sh
 sudo ./RADXAQ6A/image/flash.sh --firmware
 sudo ./RADXAQ6A/image/flash.sh --os RADXAQ6A/image/output/headwaters-q6a-v0.0.28.img
 
-# 4. Connect Ethernet + 12V power. The HAT can stay installed.
-#    Wait ~3 minutes for first-boot setup to finish.
+# 4. Connect Ethernet + 12V power TO THE RADXA's 3-PIN HEADER ONLY.
+#    NEVER wire 12V to the CAN HAT — see the CAN bus section below.
+#    The HAT can stay installed. Wait ~3 min for first-boot to finish.
 
 # 5. SSH in
 ssh trailcurrent@headwaters.local     # password: trailcurrent
@@ -133,15 +134,28 @@ cleanly if it never does. No boot stall when the HAT is absent
 | Built-in cellular | no | yes (via module slot) |
 | Target power | low (~3 W idle) | low (underclocked + subsystems off, target ≤5 W idle) |
 
-**Price is the main reason to offer a Q6A image.** Three cost levers combine
+**Price is the main reason to offer a Q6A image.** Two cost levers combine
 to land the Q6A BOM at or below the equivalent Pi-based Headwaters BOM:
 
 1. **4 GB Dragon Q6A with on-board NVMe** vs. 4 GB CM5 + NVMe-capable carrier
    + separate M.2 drive — three parts collapse into one module.
-2. **Plain Waveshare RS485 CAN HAT** is noticeably cheaper than the
-   Waveshare RS485 CAN HAT (B) used on the CM5 target.
-3. **On-board 12 V input** on the Q6A — no 12→5 V buck regulator or USB-C PD
+2. **On-board 12 V input** on the Q6A — no 12→5 V buck regulator or USB-C PD
    path required, shaving another component off the power stage.
+
+The Q6A uses the same **Waveshare RS485 CAN HAT (B)** as the CM5 target.
+An earlier revision of this image shipped with the cheaper plain Waveshare
+RS485 CAN HAT (12 MHz crystal) and was pulled after A/B testing on the
+live board showed **silent post-CRC payload corruption** at ~1 in 6,700
+frames vs. zero in a matched 5-minute capture on the (B) HAT. Both HATs
+use the same MCP2515 controller and same SN65HVD230 transceiver — the
+only difference that matters is the crystal frequency. A 12 MHz clock
+can't reach sample-point 0.875 in the MCP2515 kernel driver's bit-timing
+math at 500 kbit/s (closest achievable is 0.833), which occasionally
+mis-samples the byte after a wire-level edge transition and produces
+high-bit flips that pass the hardware CRC but corrupt payloads at the
+application layer. The (B) HAT's 16 MHz crystal hits 0.875 exactly.
+The BOM saving from the plain HAT is not worth the silent data
+corruption on a vehicle bus.
 
 Its NPU and higher clock speeds aren't needed for the Headwaters workload
 (MongoDB + Mosquitto + Node backend + nginx + tileserver) and are explicitly
@@ -204,12 +218,65 @@ RADXAQ6A/
     └── output/                  Built images (gitignored, ~28 GB each)
 ```
 
-## CAN bus (Waveshare RS485 CAN HAT)
+## CAN bus (Waveshare RS485 CAN HAT (B))
 
-The Waveshare RS485 CAN HAT plugs directly onto the Q6A's 40-pin header.
-Although the Q6A's header layout is electrically RPi-HAT-compatible, the
-GPIO numbering is the QCS6490 tlmm scheme (not the RPi BCM scheme), so a
+The Q6A build uses the **Waveshare RS485 CAN HAT (B)** — the same HAT the
+CM5 `Base` build uses (16 MHz crystal, MCP2515 controller, SN65HVD230
+transceiver, on-board digital isolation + isolated DC-DC on the CAN
+side). It plugs directly onto the Q6A's 40-pin header. Although the
+Q6A's header layout is electrically RPi-HAT-compatible, the GPIO
+numbering is the QCS6490 tlmm scheme (not the RPi BCM scheme), so a
 Q6A-specific device-tree overlay is required — not the RPi one.
+
+> **Do NOT use the plain Waveshare RS485 CAN HAT** (12 MHz crystal, same
+> SN65HVD230 transceiver, non-isolated). Verified by controlled A/B test
+> on the live board (2026-07-05): plain HAT causes **silent post-CRC
+> payload corruption** at ~1 in 6,700 frames vs. zero on the (B) HAT in
+> a matched 5-minute capture. The 12 MHz crystal cannot reach
+> sample-point 0.875 at 500 kbit/s (closest achievable is 0.833), which
+> occasionally mis-samples the byte after a wire-level edge transition —
+> corrupted frames still pass the hardware CRC, so the kernel doesn't
+> flag them and only application-layer decoding notices. The (B)
+> variant is required.
+
+### ⚠ Power wiring — 12 V goes to the Q6A ONLY, never to the HAT
+
+**On the Q6A, 12 V connects to the Radxa's on-board 3-pin power header
+only.** The Q6A's internal buck regulator produces 5 V and sources it
+outward on pins 2 and 4 of the 40-pin header, which powers the HAT.
+
+**Never wire 12 V (or any external DC supply) to the CAN HAT's own
+power input terminal.** If the HAT's on-board buck is fed externally
+while the Q6A is also powered, the HAT will inject 5 V back onto the
+40-pin header's 5 V rail — Radxa's documentation explicitly warns
+against driving that rail from an external source, and doing so can
+damage the Q6A's power stage.
+
+The correct topology is one-directional:
+
+```
+    12 V vehicle supply
+            │
+            ▼
+    Radxa Q6A 3-pin power header
+            │
+    ┌───────┴───────┐
+    │ internal buck │  (12 V → 5 V)
+    └───────┬───────┘
+            │  5 V
+            ▼
+    40-pin header pins 2, 4
+            │
+            ▼
+    Waveshare RS485 CAN HAT (B)   ← HAT external DC input:
+    (draws 5 V from header)         DO NOT CONNECT
+```
+
+This differs from the CM5 `Base` build, where the HAT can optionally
+carry its own DC input. On the Q6A, the HAT's DC input is always left
+disconnected — the Q6A is the sole power source.
+
+### Pin map
 
 Pin map on the Q6A's 40-pin header for the HAT:
 
@@ -222,7 +289,7 @@ Pin map on the Q6A's 40-pin header for the HAT:
 | 22 | INT (GPIO25 on RPi) | **`GPIO_57`** | MCP2515 interrupt |
 
 The overlay source is **vendored in this repo** at
-[`image/overlays/qcs6490-radxa-dragon-q6a-spi12-cs0-mcp2515-12mhz.dts`](image/overlays/qcs6490-radxa-dragon-q6a-spi12-cs0-mcp2515-12mhz.dts)
+[`image/overlays/qcs6490-radxa-dragon-q6a-spi12-cs0-mcp2515-16mhz.dts`](image/overlays/qcs6490-radxa-dragon-q6a-spi12-cs0-mcp2515-16mhz.dts)
 — a 60-line DTS derived from Radxa's upstream DTSO with the two `#include`
 directives and the `IRQ_TYPE_EDGE_FALLING` macro inlined as a literal so
 the file compiles with plain `dtc -@`, no cpp preprocessing, no kernel

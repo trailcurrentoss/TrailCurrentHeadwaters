@@ -8,6 +8,10 @@ is the Q6A equivalent of [`../CM5/SETUP.md`](../CM5/SETUP.md).
 - A Radxa Dragon Q6A board — the 4 GB SKU is the default target and
   has on-board NVMe, so no separate M.2 drive or NVMe-capable carrier
   is required
+- **Waveshare RS485 CAN HAT (B)** — the isolated, 16 MHz variant. The
+  plain Waveshare RS485 CAN HAT (12 MHz, non-isolated) is **not**
+  supported — see [`README.md`](README.md#can-bus-waveshare-rs485-can-hat-b)
+  for the rationale
 - USB-C cable, laptop running Linux
 - 12 V DC power supply for the Q6A
 - Ethernet cable (WiFi is disabled by default)
@@ -15,6 +19,30 @@ is the Q6A equivalent of [`../CM5/SETUP.md`](../CM5/SETUP.md).
 
 If you don't have the image yet, see [`README.md`](README.md) for the
 build procedure.
+
+### ⚠ Power wiring — read this before applying 12 V
+
+**On the Q6A, 12 V goes to the Radxa's on-board 3-pin power header
+only.** The Q6A produces 5 V internally and sources it out through pins 2
+and 4 of the 40-pin header, which powers the CAN HAT.
+
+**Do NOT wire 12 V (or any external DC supply) to the CAN HAT's own
+power input terminal.** The HAT's DC input must be left disconnected on
+the Q6A build. If the HAT's on-board buck is fed while the Q6A is also
+powered, the HAT will back-feed 5 V onto the 40-pin header's 5 V rail
+and can damage the Q6A's power stage — Radxa's docs explicitly warn
+against driving that rail from an external source.
+
+Correct wiring (one direction only):
+
+```
+   12 V ──▶ Radxa 3-pin header ──▶ (internal 5 V) ──▶ HAT via 40-pin header
+                                                      HAT DC input: OPEN
+```
+
+This is different from the CM5 `Base` build, where wiring the HAT's own
+DC input is an option. On the Q6A it is not — the Radxa is the sole
+power source for the whole stack.
 
 ## 1. Enter EDL (Emergency Download) mode
 
@@ -68,8 +96,10 @@ The image includes:
 
 1. **Disconnect the USB-C cable** from the Q6A
 2. Connect Ethernet to the Q6A
-3. Apply 12 V power (with or without the Waveshare CAN HAT — both work
-   from first boot)
+3. Apply 12 V power **to the Radxa's 3-pin power header** (see the
+   ⚠ Power wiring callout in section 0 — never wire 12 V to the CAN
+   HAT itself). The image boots with or without the CAN HAT installed;
+   both are supported from first boot.
 4. Wait ~3 minutes — first boot runs two services in sequence:
 
    **`headwaters-firstboot.service`** (early, runs before networking):

@@ -582,9 +582,11 @@ function(
             //   pin 23 SCLK → GPIO_50 → SPI12_SCLK
             //   pin 24 CE0  → GPIO_51 → SPI12_CS_0
             //   pin 22 INT  → GPIO_57 (MCP2515 interrupt)
-            //   8 MHz external crystal on the HAT
+            //   16 MHz external crystal on the HAT (RS485 CAN HAT (B) — the
+            //   plain HAT's 12 MHz crystal cannot hit sample-point 0.875 at
+            //   500 kbit/s and is not supported).
             //
-            // The overlay source (qcs6490-radxa-dragon-q6a-spi12-cs0-mcp2515-12mhz.dts)
+            // The overlay source (qcs6490-radxa-dragon-q6a-spi12-cs0-mcp2515-16mhz.dts)
             // is vendored at RADXAQ6A/image/overlays/ and compiled on the build
             // host by build.sh into $STAGING/files/dtbo/*.dtbo BEFORE this hook
             // runs. That means this hook just copies the pre-built dtbo into the
@@ -609,7 +611,7 @@ function(
                 # the unused-pins-disable LAST so its gpio-hog claims happen
                 # after the active drivers (MCP2515) have taken their pins.
                 OVERLAYS="
-                    qcs6490-radxa-dragon-q6a-spi12-cs0-mcp2515-12mhz.dtbo
+                    qcs6490-radxa-dragon-q6a-spi12-cs0-mcp2515-16mhz.dtbo
                     qcs6490-radxa-dragon-q6a-headwaters-unused-pins-disable.dtbo
                 "
                 for OVR in $OVERLAYS; do
@@ -921,7 +923,7 @@ function(
                 # Verify all expected device-tree overlays are staged AND
                 # referenced by the systemd-boot loader entry (hook 19b).
                 for OVR in \
-                    "qcs6490-radxa-dragon-q6a-spi12-cs0-mcp2515-12mhz.dtbo" \
+                    "qcs6490-radxa-dragon-q6a-spi12-cs0-mcp2515-16mhz.dtbo" \
                     "qcs6490-radxa-dragon-q6a-headwaters-unused-pins-disable.dtbo"
                 do
                     if ls "$1"/boot/efi/*/[0-9]*/dtbo/"$OVR" 1>/dev/null 2>&1; then
