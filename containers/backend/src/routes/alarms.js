@@ -23,6 +23,17 @@ function sanitizeSensors(input) {
     return out;
 }
 
+function sanitizeBattery(input) {
+    if (!input || typeof input !== 'object') return { enabled: false, threshold: 20 };
+    const enabled = input.enabled === true;
+    let threshold = Number(input.threshold);
+    if (!Number.isFinite(threshold)) threshold = 20;
+    threshold = Math.round(threshold);
+    if (threshold < 0) threshold = 0;
+    if (threshold > 100) threshold = 100;
+    return { enabled, threshold };
+}
+
 module.exports = (db) => {
     const router = express.Router();
     const alarmsService = require('../services/alarms-service');
@@ -33,29 +44,31 @@ module.exports = (db) => {
         try {
             const cfg = await systemConfig.findOne({ _id: 'main' });
             const sensors = (cfg && cfg.alarms && cfg.alarms.sensors) || {};
-            res.json({ sensors });
+            const battery = sanitizeBattery(cfg && cfg.alarms && cfg.alarms.battery);
+            res.json({ sensors, battery });
         } catch (err) {
             console.error('[Alarms route] GET /config failed:', err);
             res.status(500).json({ error: 'Failed to fetch alarms config' });
         }
     });
 
-    // PUT /api/alarms/config — overwrite the sensors map (sparse)
+    // PUT /api/alarms/config — overwrite the sensors map (sparse) and battery
     router.put('/config', async (req, res) => {
         try {
-            const sensors = sanitizeSensors(req.body && req.body.sensors);
-            await systemConfig.updateOne(
-                { _id: 'main' },
-                {
-                    $set: {
-                        'alarms.sensors': sensors,
-                        updated_at: new Date(),
-                    },
-                },
-                { upsert: true }
-            );
+            const body = req.body || {};
+            const $set = { updated_at: new Date() };
+            if (body.sensors !== undefined) {
+                $set['alarms.sensors'] = sanitizeSensors(body.sensors);
+            }
+            if (body.battery !== undefined) {
+                $set['alarms.battery'] = sanitizeBattery(body.battery);
+            }
+            await systemConfig.updateOne({ _id: 'main' }, { $set }, { upsert: true });
             await alarmsService.reloadConfig();
-            res.json({ sensors });
+            const cfg = await systemConfig.findOne({ _id: 'main' });
+            const sensors = (cfg && cfg.alarms && cfg.alarms.sensors) || {};
+            const battery = sanitizeBattery(cfg && cfg.alarms && cfg.alarms.battery);
+            res.json({ sensors, battery });
         } catch (err) {
             console.error('[Alarms route] PUT /config failed:', err);
             res.status(500).json({ error: 'Failed to save alarms config' });

@@ -27,6 +27,12 @@ let labels = new Map();          // "type:addr:sensor" → string
 let lastInputs = new Map();      // "type:addr" → bitmask (raw, for diffing)
 let active = new Map();          // "type:addr:sensor" → true (currently armed + high)
 
+// Solstice battery-level alarm — synthetic entry keyed "battery"
+let batteryEnabled = false;
+let batteryThreshold = 20;       // percent
+let lastBatteryPercent = null;   // last observed SOC (%)
+let batteryActive = false;       // currently below threshold + enabled
+
 function key(type, addr, sensor) { return `${type}:${addr}:${sensor}`; }
 function modKey(type, addr)      { return `${type}:${addr}`; }
 
@@ -54,6 +60,17 @@ function buildActiveList() {
         a.addr - b.addr ||
         a.sensor - b.sensor
     );
+    if (batteryActive) {
+        const pctText = lastBatteryPercent !== null
+            ? ` (${lastBatteryPercent.toFixed(1)}%)`
+            : '';
+        out.push({
+            type: 'battery',
+            addr: 0,
+            sensor: 0,
+            label: `Battery below ${batteryThreshold}%${pctText}`,
+        });
+    }
     return out;
 }
 
@@ -88,6 +105,24 @@ function recomputeActive() {
         // disarmed and another armed in the same call). Cheap to always push.
         broadcastUpdate();
     }
+}
+
+// Re-evaluate the battery-alarm state against enabled+threshold+lastPercent.
+// Returns true if the active flag changed.
+function evaluateBattery() {
+    let shouldBeActive = false;
+    if (batteryEnabled && lastBatteryPercent !== null) {
+        shouldBeActive = lastBatteryPercent < batteryThreshold;
+    }
+    if (shouldBeActive === batteryActive) return false;
+    batteryActive = shouldBeActive;
+    return true;
+}
+
+function handleBatteryPercent(pct) {
+    if (typeof pct !== 'number' || !Number.isFinite(pct)) return;
+    lastBatteryPercent = pct;
+    if (evaluateBattery()) broadcastUpdate();
 }
 
 function handleInputs(type, addr, inputs) {
@@ -132,7 +167,12 @@ async function loadConfig() {
                 labels.set(k, entry.label);
             }
         }
-        console.log(`[Alarms] Loaded config: ${armed.size} armed sensors, ${labels.size} custom labels`);
+        const battery = (cfg && cfg.alarms && cfg.alarms.battery) || {};
+        batteryEnabled = battery.enabled === true;
+        const t = Number(battery.threshold);
+        batteryThreshold = Number.isFinite(t) ? Math.max(0, Math.min(100, Math.round(t))) : 20;
+        console.log(`[Alarms] Loaded config: ${armed.size} armed sensors, ${labels.size} custom labels, battery=${batteryEnabled ? `on@${batteryThreshold}%` : 'off'}`);
+        evaluateBattery();
         recomputeActive();
     } catch (err) {
         console.error('[Alarms] Failed to load config:', err.message);
@@ -157,6 +197,7 @@ function init(mqtt, mongo) {
 
     const SPOOR_TOPIC = 'local/spoor/+/inputs';
     const PICKET_TOPIC = 'local/picket/+/inputs';
+    const ENERGY_TOPIC = 'local/energy/status';
 
     client.subscribe(SPOOR_TOPIC, (err) => {
         if (err) console.error('[Alarms] Subscribe spoor failed:', err);
@@ -166,8 +207,21 @@ function init(mqtt, mongo) {
         if (err) console.error('[Alarms] Subscribe picket failed:', err);
         else console.log('[Alarms] Subscribed to', PICKET_TOPIC);
     });
+    client.subscribe(ENERGY_TOPIC, (err) => {
+        if (err) console.error('[Alarms] Subscribe energy failed:', err);
+        else console.log('[Alarms] Subscribed to', ENERGY_TOPIC);
+    });
 
     client.on('message', (topic, message) => {
+        if (topic === ENERGY_TOPIC) {
+            try {
+                const payload = JSON.parse(message.toString());
+                handleBatteryPercent(payload.battery_percent);
+            } catch (err) {
+                console.error('[Alarms] Failed to parse', topic, err.message);
+            }
+            return;
+        }
         if (!topic.startsWith('local/spoor/') && !topic.startsWith('local/picket/')) return;
         if (!topic.endsWith('/inputs')) return;
         try {

@@ -314,6 +314,13 @@ class API {
         });
     }
 
+    static async updateAlarmsBattery(battery) {
+        return this.request('/alarms/config', {
+            method: 'PUT',
+            body: JSON.stringify({ battery })
+        });
+    }
+
     static async getActiveAlarms() {
         return this.request('/alarms/active');
     }

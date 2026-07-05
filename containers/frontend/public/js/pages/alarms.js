@@ -6,9 +6,12 @@ const LABEL_MAX = 24;
 const SENSORS_PER = { switchback: 8, picket: 12 };
 
 let sensors = {};        // "type:addr:sensor" → { armed, label }
+let battery = { enabled: false, threshold: 20 };
 let modules = [];        // configured picket/switchback modules
 let saveTimer = null;
+let batterySaveTimer = null;
 let containerClickListener = null;
+let containerInputListener = null;
 let modalKeydownListener = null;
 
 function key(type, addr, sensor) { return `${type}:${addr}:${sensor}`; }
@@ -94,6 +97,45 @@ function scheduleSave() {
     }, 300);
 }
 
+function scheduleBatterySave() {
+    if (batterySaveTimer) clearTimeout(batterySaveTimer);
+    batterySaveTimer = setTimeout(async () => {
+        batterySaveTimer = null;
+        try {
+            await API.updateAlarmsBattery(battery);
+        } catch (err) {
+            console.error('[Alarms] Battery save failed:', err);
+        }
+    }, 300);
+}
+
+function renderBatteryCard() {
+    const enabled = !!battery.enabled;
+    const threshold = Number.isFinite(battery.threshold) ? battery.threshold : 20;
+    return `
+        <div class="alarm-battery-card">
+            <div class="alarm-battery-header">
+                <div class="alarm-battery-label">
+                    <div class="alarm-battery-title">Solstice Battery Level</div>
+                    <div class="alarm-battery-desc">
+                        Alarm when battery state of charge drops below the threshold.
+                    </div>
+                </div>
+                <div class="toggle-switch ${enabled ? 'active' : ''}" data-action="battery-toggle"
+                     role="switch" aria-checked="${enabled}"></div>
+            </div>
+            <div class="alarm-battery-slider-row ${enabled ? '' : 'is-disabled'}">
+                <input type="range" min="0" max="100" step="1" value="${threshold}"
+                       id="alarm-battery-slider" class="alarm-battery-slider"
+                       aria-label="Battery threshold percent"
+                       style="--pct: ${threshold}"
+                       ${enabled ? '' : 'disabled'}>
+                <span class="alarm-battery-pct" id="alarm-battery-pct">${threshold}%</span>
+            </div>
+        </div>
+    `;
+}
+
 function setEntry(k, partial) {
     const cur = sensors[k] || {};
     const next = { ...cur, ...partial };
@@ -112,6 +154,30 @@ function handleToggle(k) {
         el.setAttribute('aria-checked', String(!wasArmed));
     }
     scheduleSave();
+}
+
+function handleBatteryToggle() {
+    battery.enabled = !battery.enabled;
+    const el = document.querySelector('[data-action="battery-toggle"]');
+    if (el) {
+        el.classList.toggle('active', battery.enabled);
+        el.setAttribute('aria-checked', String(battery.enabled));
+    }
+    const sliderRow = document.querySelector('.alarm-battery-slider-row');
+    const slider = document.getElementById('alarm-battery-slider');
+    if (sliderRow) sliderRow.classList.toggle('is-disabled', !battery.enabled);
+    if (slider) slider.disabled = !battery.enabled;
+    scheduleBatterySave();
+}
+
+function handleBatterySliderInput(value) {
+    const v = Math.max(0, Math.min(100, Math.round(Number(value) || 0)));
+    battery.threshold = v;
+    const slider = document.getElementById('alarm-battery-slider');
+    const pct = document.getElementById('alarm-battery-pct');
+    if (slider) slider.style.setProperty('--pct', v);
+    if (pct) pct.textContent = `${v}%`;
+    scheduleBatterySave();
 }
 
 function openRenameModal(k) {
@@ -200,6 +266,14 @@ function handleContainerClick(e) {
         closeRenameModal();
     } else if (kind === 'rename-save' && k) {
         saveRename(k);
+    } else if (kind === 'battery-toggle') {
+        handleBatteryToggle();
+    }
+}
+
+function handleContainerInput(e) {
+    if (e.target && e.target.id === 'alarm-battery-slider') {
+        handleBatterySliderInput(e.target.value);
     }
 }
 
@@ -213,6 +287,9 @@ export const alarmsPage = {
                         Arm individual sensors to surface their state in the alarm bell.
                         A sensor that auto-clears (e.g. a door re-closing) clears its alarm.
                     </p>
+                    <div id="alarms-battery-container">
+                        <p class="alarms-loading">Loading…</p>
+                    </div>
                     <div id="alarms-list-container">
                         <p class="alarms-loading">Loading…</p>
                     </div>
@@ -222,8 +299,9 @@ export const alarmsPage = {
     },
 
     async init() {
-        const container = document.getElementById('alarms-list-container');
-        if (!container) return;
+        const listContainer = document.getElementById('alarms-list-container');
+        const batteryContainer = document.getElementById('alarms-battery-container');
+        if (!listContainer || !batteryContainer) return;
 
         try {
             const [config, sysCfg] = await Promise.all([
@@ -231,16 +309,25 @@ export const alarmsPage = {
                 API.getSystemConfig(),
             ]);
             sensors = (config && config.sensors) || {};
+            const b = (config && config.battery) || {};
+            battery = {
+                enabled: b.enabled === true,
+                threshold: Number.isFinite(Number(b.threshold)) ? Number(b.threshold) : 20,
+            };
             modules = (sysCfg && sysCfg.mcu_modules) || [];
-            container.innerHTML = renderList();
+            batteryContainer.innerHTML = renderBatteryCard();
+            listContainer.innerHTML = renderList();
         } catch (err) {
             console.error('[Alarms] Failed to load:', err);
-            container.innerHTML = '<p style="color: var(--danger);">Failed to load alarms configuration.</p>';
+            listContainer.innerHTML = '<p style="color: var(--danger);">Failed to load alarms configuration.</p>';
             return;
         }
 
+        const page = document.querySelector('.page-alarms');
         containerClickListener = handleContainerClick;
-        document.querySelector('.page-alarms').addEventListener('click', containerClickListener);
+        containerInputListener = handleContainerInput;
+        page.addEventListener('click', containerClickListener);
+        page.addEventListener('input', containerInputListener);
     },
 
     cleanup() {
@@ -248,13 +335,20 @@ export const alarmsPage = {
             clearTimeout(saveTimer);
             saveTimer = null;
         }
+        if (batterySaveTimer) {
+            clearTimeout(batterySaveTimer);
+            batterySaveTimer = null;
+        }
         const page = document.querySelector('.page-alarms');
-        if (page && containerClickListener) {
-            page.removeEventListener('click', containerClickListener);
+        if (page) {
+            if (containerClickListener) page.removeEventListener('click', containerClickListener);
+            if (containerInputListener) page.removeEventListener('input', containerInputListener);
         }
         containerClickListener = null;
+        containerInputListener = null;
         closeRenameModal();
         sensors = {};
+        battery = { enabled: false, threshold: 20 };
         modules = [];
     }
 };

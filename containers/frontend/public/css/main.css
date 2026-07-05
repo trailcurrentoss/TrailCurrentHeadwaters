@@ -5720,6 +5720,114 @@ input[type="range"] {
     border-top: 1px solid var(--border-color);
 }
 
+/* Solstice battery-level alarm card */
+.alarm-battery-card {
+    padding: 12px 0 16px 0;
+    border-bottom: 1px solid var(--border-color);
+    margin-bottom: 4px;
+}
+
+.alarm-battery-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.alarm-battery-label {
+    flex: 1;
+    min-width: 0;
+}
+
+.alarm-battery-title {
+    color: var(--text-primary);
+    font-size: 0.9375rem;
+    font-weight: 600;
+}
+
+.alarm-battery-desc {
+    color: var(--text-secondary);
+    font-size: 0.8125rem;
+    margin-top: 2px;
+}
+
+.alarm-battery-slider-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-top: 12px;
+    transition: opacity 0.2s ease;
+}
+
+.alarm-battery-slider-row.is-disabled {
+    opacity: 0.5;
+}
+
+.alarm-battery-slider {
+    flex: 1;
+    -webkit-appearance: none;
+    appearance: none;
+    height: 6px;
+    border-radius: 999px;
+    background: var(--bg-secondary);
+    outline: none;
+    cursor: pointer;
+    touch-action: pan-x;
+}
+.alarm-battery-slider::-webkit-slider-runnable-track {
+    height: 6px;
+    border-radius: 999px;
+    background: linear-gradient(
+        to right,
+        var(--primary) 0%,
+        var(--primary) calc(var(--pct, 0) * 1%),
+        var(--bg-secondary) calc(var(--pct, 0) * 1%),
+        var(--bg-secondary) 100%
+    );
+}
+.alarm-battery-slider::-moz-range-track {
+    height: 6px;
+    border-radius: 999px;
+    background: var(--bg-secondary);
+}
+.alarm-battery-slider::-moz-range-progress {
+    height: 6px;
+    border-radius: 999px;
+    background: var(--primary);
+}
+.alarm-battery-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 18px; height: 18px;
+    margin-top: -6px;
+    border-radius: 50%;
+    background: var(--primary);
+    border: 2px solid var(--bg-card);
+    box-shadow: 0 0 8px color-mix(in srgb, var(--primary) 50%, transparent);
+    cursor: grab;
+}
+.alarm-battery-slider::-webkit-slider-thumb:active { cursor: grabbing; transform: scale(1.1); }
+.alarm-battery-slider::-moz-range-thumb {
+    width: 18px; height: 18px;
+    border-radius: 50%;
+    background: var(--primary);
+    border: 2px solid var(--bg-card);
+    box-shadow: 0 0 8px color-mix(in srgb, var(--primary) 50%, transparent);
+    cursor: grab;
+}
+.alarm-battery-slider:disabled { cursor: not-allowed; }
+.alarm-battery-slider:disabled::-webkit-slider-thumb { background: var(--text-muted); box-shadow: none; cursor: not-allowed; }
+.alarm-battery-slider:disabled::-moz-range-thumb     { background: var(--text-muted); box-shadow: none; cursor: not-allowed; }
+
+.alarm-battery-pct {
+    min-width: 48px;
+    text-align: right;
+    font-size: 0.875rem;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-secondary);
+    font-weight: 500;
+}
+
 .alarm-row {
     display: flex;
     align-items: center;
