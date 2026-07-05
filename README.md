@@ -1,8 +1,5 @@
 # TrailCurrent In-Vehicle Compute
 
-> [!CAUTION]
-> **The Radxa Dragon Q6A variant is a work in progress and is not recommended for use yet.** Further hardware and field testing is required before it should be considered shippable. Use the **CM5 build** for any real deployment.
-
 ![TrailCurrent Headwaters](DOCS/IMGS/headwaters_case.png)
 
 Dockerized edge gateway with MQTT broker, tile server, and local dashboards. Part of the [TrailCurrent](https://trailcurrent.com) open-source vehicle platform.
@@ -522,10 +519,3 @@ The debugging setup is configured in `.vscode/launch.json`:
 5. **Conditional breakpoints**: Right-click a breakpoint to set conditions
 6. **Logpoints**: Right-click line number to log values without pausing
 
----
-
-## Third-Party Components
-
-TrailCurrent Headwaters is MIT-licensed, but the image-build tooling for the Radxa Dragon Q6A target vendors the **Radxa SDK** ([`RadxaOS-SDK/rsdk`](https://github.com/RadxaOS-SDK/rsdk)) under its original **GPL-3.0-or-later** license. The vendored tree lives at [`RADXAQ6A/image/rsdk/`](RADXAQ6A/image/rsdk/) with its upstream [`LICENSE`](RADXAQ6A/image/rsdk/LICENSE) preserved. rsdk is a build-time tool — it produces the flashable image but is not linked into or shipped inside any TrailCurrent runtime component, so the MIT licensing of the TrailCurrent sources is unaffected.
-
----

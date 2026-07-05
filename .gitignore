@@ -45,16 +45,6 @@ CM5/usbboot/
 CM5/rpi-image-gen/
 CM5/image/splash/
 
-# RADXAQ6A (Dragon Q6A) build artifacts
-RADXAQ6A/image/cache/
-RADXAQ6A/image/output/
-RADXAQ6A/image/rsdk/out/
-RADXAQ6A/image/rsdk/externals/keyrings/
-# The `firmware/` pattern above would hide the committed SPI NOR firmware zips —
-# re-allow them so contributors can build without cloning them separately.
-!RADXAQ6A/image/firmware/
-!RADXAQ6A/image/firmware/**
-
 # Build and log files
 *.log
 *.output
