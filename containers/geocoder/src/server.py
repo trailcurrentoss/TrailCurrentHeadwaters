@@ -1,16 +1,23 @@
 #!/usr/bin/env python3
 """Tiny offline reverse-geocode HTTP service.
 
-Endpoint:
+Endpoints:
     GET /reverse?lat=<f>&lon=<f>
         → 200 {"place": str, "region": str, "country": str, "cc": str, "distance_km": float}
         → 404 {"error": "no match"}
         → 400 on missing/invalid params
 
+    GET /nearby?lat=<f>&lon=<f>&limit=<int>&radius_km=<f>
+        → 200 {"results": [{"place","region","country","cc","distance_km"}, ...]}
+        → 400 on missing/invalid params
+        limit defaults to 5 (max 20); radius_km defaults to 100 (max 500).
+        Excludes the exact nearest hit (that's what /reverse already gave you) —
+        so "cities nearby" reads as a list of neighbours around the current spot.
+
 The lookup pre-filters with a bounding-box on the indexed lat/lon columns
-then picks the row with smallest squared angular distance. This is exact
-for city-level "where am I?" resolution — meaningful within a few tens of
-kilometers where great-circle vs. flat-plane distance diverge negligibly.
+then picks by smallest squared angular distance. This is exact for
+city-level resolution — meaningful within a few tens of kilometers where
+great-circle vs. flat-plane distance diverge negligibly.
 
 No dependencies beyond Python stdlib. Runs on port 8000.
 """
@@ -52,9 +59,10 @@ def haversine_km(lat1, lon1, lat2, lon2):
     return 2 * r * math.asin(math.sqrt(h))
 
 
-def reverse_geocode(lat: float, lon: float, radius: float = BOX_DEGREES):
+def _nearby_rows(lat: float, lon: float, radius_deg: float, limit: int):
+    """Return up to `limit` rows ordered by squared angular distance."""
     conn = get_conn()
-    row = conn.execute(
+    return conn.execute(
         """
         SELECT c.name AS place, c.cc AS cc, c.lat AS lat, c.lon AS lon,
                COALESCE(a.name, '') AS region,
@@ -65,12 +73,15 @@ def reverse_geocode(lat: float, lon: float, radius: float = BOX_DEGREES):
         WHERE c.lat BETWEEN ? - ? AND ? + ?
           AND c.lon BETWEEN ? - ? AND ? + ?
         ORDER BY (c.lat - ?) * (c.lat - ?) + (c.lon - ?) * (c.lon - ?)
-        LIMIT 1
+        LIMIT ?
         """,
-        (lat, radius, lat, radius, lon, radius, lon, radius, lat, lat, lon, lon),
-    ).fetchone()
-    if row is None:
-        return None
+        (lat, radius_deg, lat, radius_deg,
+         lon, radius_deg, lon, radius_deg,
+         lat, lat, lon, lon, limit),
+    ).fetchall()
+
+
+def _row_to_dict(row, lat, lon):
     dist = haversine_km(lat, lon, row["lat"], row["lon"])
     return {
         "place": row["place"],
@@ -79,6 +90,32 @@ def reverse_geocode(lat: float, lon: float, radius: float = BOX_DEGREES):
         "cc": row["cc"],
         "distance_km": round(dist, 2),
     }
+
+
+def reverse_geocode(lat: float, lon: float, radius: float = BOX_DEGREES):
+    rows = _nearby_rows(lat, lon, radius, limit=1)
+    if not rows:
+        return None
+    return _row_to_dict(rows[0], lat, lon)
+
+
+def nearby_cities(lat: float, lon: float, radius_km: float, limit: int):
+    # Pull one extra row so we can drop the exact nearest (which callers get
+    # from /reverse already) and still return `limit` neighbours.
+    radius_deg = max(radius_km / 111.0, 0.1)
+    rows = _nearby_rows(lat, lon, radius_deg, limit=limit + 1)
+    results = []
+    for row in rows:
+        entry = _row_to_dict(row, lat, lon)
+        if entry["distance_km"] > radius_km:
+            continue
+        results.append(entry)
+    # Skip the top row (the reverse-geocode hit) so the list reads as
+    # "other cities around you." If the caller wants the nearest itself,
+    # they hit /reverse.
+    if results:
+        results = results[1:]
+    return results[:limit]
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -98,18 +135,29 @@ class Handler(BaseHTTPRequestHandler):
         if u.path == "/health":
             self._json(200, {"ok": True})
             return
-        if u.path != "/reverse":
-            self._json(404, {"error": "not found"})
+        if u.path == "/reverse":
+            self._handle_reverse(u)
             return
+        if u.path == "/nearby":
+            self._handle_nearby(u)
+            return
+        self._json(404, {"error": "not found"})
+
+    def _parse_latlon(self, u):
         params = parse_qs(u.query)
         try:
             lat = float(params.get("lat", [None])[0])
             lon = float(params.get("lon", [None])[0])
         except (TypeError, ValueError):
-            self._json(400, {"error": "lat and lon query params required"})
-            return
+            return None, None, params, "lat and lon query params required"
         if not (-90.0 <= lat <= 90.0) or not (-180.0 <= lon <= 180.0):
-            self._json(400, {"error": "lat/lon out of range"})
+            return None, None, params, "lat/lon out of range"
+        return lat, lon, params, None
+
+    def _handle_reverse(self, u):
+        lat, lon, _params, err = self._parse_latlon(u)
+        if err:
+            self._json(400, {"error": err})
             return
         result = reverse_geocode(lat, lon)
         if result is None:
@@ -119,6 +167,24 @@ class Handler(BaseHTTPRequestHandler):
             self._json(404, {"error": "no match"})
             return
         self._json(200, result)
+
+    def _handle_nearby(self, u):
+        lat, lon, params, err = self._parse_latlon(u)
+        if err:
+            self._json(400, {"error": err})
+            return
+        try:
+            limit = int(params.get("limit", ["5"])[0])
+        except (TypeError, ValueError):
+            limit = 5
+        try:
+            radius_km = float(params.get("radius_km", ["100"])[0])
+        except (TypeError, ValueError):
+            radius_km = 100.0
+        limit = max(1, min(limit, 20))
+        radius_km = max(1.0, min(radius_km, 500.0))
+        results = nearby_cities(lat, lon, radius_km, limit)
+        self._json(200, {"results": results})
 
     def log_message(self, fmt, *args):
         # Terse one-line log.

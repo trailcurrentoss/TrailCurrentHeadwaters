@@ -1,4 +1,8 @@
-// Air quality display component
+// Air quality display — v02 layout: header with title + recommendation +
+// overall-status pill on the right; then a 2×2 grid of cards for Temp /
+// Humidity / TVOC / eCO₂, each with an icon-in-circle, the current value
+// with a gradient slider bar and a pointer showing where the reading sits
+// within the healthy range.
 import { wsClient } from '../api.js';
 import { units } from '../services/units.js';
 
@@ -16,199 +20,304 @@ export class AirQualityDisplay {
             tempInC: null,
             tempInF: null,
             humidity: null
-        }
+        };
         this.wsTempAndHumidityHandler = null;
         this.unsubStaleTempHumid = null;
+        this.unitsHandler = null;
     }
 
     render() {
-        const tempDisplay = units.formatTemp(this.dataTempAndHumidity.tempInF);
-        const tempLabel = units.tempLabel();
-        const humidityDisplay = this.dataTempAndHumidity.humidity != null ? Math.round(this.dataTempAndHumidity.humidity) : '-';
-        const tvocDisplay = this.data.tvoc_ppb != null ? Math.round(this.data.tvoc_ppb) : '-';
-        const eco2Display = this.data.eco2_ppm != null ? Math.round(this.data.eco2_ppm) : '-';
         return `
-            <div class="airquality-container">
-                <!-- Temperature -->
-                <div class="card airquality-card">
-                    <svg class="airquality-icon temp" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M14 14.76V3.5a2.5 2.5 0 0 0-5 0v11.26a4.5 4.5 0 1 0 5 0z"/>
-                    </svg>
-                    <div class="airquality-info">
-                        <span class="airquality-value" id="temp-value">${tempDisplay}<span class="airquality-unit">${tempLabel}</span></span>
-                        <span class="airquality-label">Temperature</span>
+            <div class="airquality-page">
+                <header class="airquality-header">
+                    <div class="airquality-header-left">
+                        <h1 class="page-title">Air Quality</h1>
+                        <span class="page-subtitle" id="airquality-rec">${this.getRecommendation()}</span>
                     </div>
-                </div>
+                    <span class="airquality-status-pill ${this.getOverallClass()}" id="airquality-status-pill">${this.getOverallLabel()}</span>
+                </header>
 
-                <!-- Humidity -->
-                <div class="card airquality-card">
-                    <svg class="airquality-icon humidity" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"/>
-                    </svg>
-                    <div class="airquality-info">
-                        <span class="airquality-value" id="humidity-value">${humidityDisplay}<span class="airquality-unit">%</span></span>
-                        <span class="airquality-label">Humidity</span>
-                    </div>
+                <div class="airquality-grid">
+                    ${this.renderTempCard()}
+                    ${this.renderHumidityCard()}
+                    ${this.renderTvocCard()}
+                    ${this.renderEco2Card()}
                 </div>
-                <!-- TVOC -->
-                <div class="card airquality-card ${this.getTvocClass()}">
-                    <svg class="airquality-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M9.59 4.59A2 2 0 1 1 11 8H2m10.59 11.41A2 2 0 1 0 14 16H2m15.73-8.27A2.5 2.5 0 1 1 19.5 12H2"/>
-                    </svg>
-                    <div class="airquality-info">
-                        <span class="airquality-value" id="tvoc-value">${tvocDisplay}<span class="airquality-unit">ppb</span></span>
-                        <span class="airquality-label">TVOC</span>
-                        <span class="airquality-badge ${this.getTvocClass()}" id="tvoc-badge" ${this.data.tvoc_ppb == null ? 'style="display:none"' : ''}>${this.getTvocLabel()}</span>
-                    </div>
-                </div>
+            </div>
+        `;
+    }
 
-                <!-- eCO2 -->
-                <div class="card airquality-card ${this.getEco2Class()}">
-                    <svg class="airquality-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"/>
+    // ── Card renderers ──────────────────────────────────────────
+
+    renderTempCard() {
+        return `
+            <div class="airquality-tile">
+                <div class="airquality-tile-icon temp">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <path d="M14 14.76V3.5a2.5 2.5 0 0 0-5 0v11.26a4.5 4.5 0 1 0 5 0z"></path>
                     </svg>
-                    <div class="airquality-info">
-                        <span class="airquality-value" id="eco2-value">${eco2Display}<span class="airquality-unit">ppm</span></span>
-                        <span class="airquality-label">eCO₂</span>
-                        <span class="airquality-badge ${this.getEco2Class()}" id="eco2-badge" ${this.data.eco2_ppm == null ? 'style="display:none"' : ''}>${this.getEco2Label()}</span>
+                </div>
+                <div class="airquality-tile-body">
+                    <div class="airquality-tile-head">
+                        <span class="airquality-tile-value" id="temp-value">${units.formatTemp(this.dataTempAndHumidity.tempInF)}<span class="airquality-tile-unit">${units.tempLabel()}</span></span>
+                        <span class="airquality-tile-label">Temperature</span>
+                    </div>
+                    <div class="airquality-slider temp-slider" id="temp-slider">
+                        <span class="airquality-slider-pointer" id="temp-pointer" style="left:${this.tempPointerPct()}%"></span>
+                    </div>
+                    <div class="airquality-slider-scale">
+                        <span>50°</span><span>Comfort</span><span>90°</span>
                     </div>
                 </div>
             </div>
         `;
     }
 
-    getTvocClass() {
-        const tvoc = this.data.tvoc_ppb;
-        if (tvoc == null) return '';
-        if (tvoc < 65) return 'good';
-        if (tvoc < 220) return 'moderate';
-        if (tvoc < 660) return 'sensitive';
-        return 'unhealthy';
+    renderHumidityCard() {
+        return `
+            <div class="airquality-tile">
+                <div class="airquality-tile-icon humidity">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"></path>
+                    </svg>
+                </div>
+                <div class="airquality-tile-body">
+                    <div class="airquality-tile-head">
+                        <span class="airquality-tile-value" id="humidity-value">${this.fmtHumidity()}<span class="airquality-tile-unit">%</span></span>
+                        <span class="airquality-tile-label">Humidity</span>
+                    </div>
+                    <div class="airquality-slider humidity-slider" id="humidity-slider">
+                        <span class="airquality-slider-pointer" id="humidity-pointer" style="left:${this.humidityPointerPct()}%"></span>
+                    </div>
+                    <div class="airquality-slider-scale">
+                        <span>Dry</span><span>30–50% ideal</span><span>Humid</span>
+                    </div>
+                </div>
+            </div>
+        `;
     }
 
+    renderTvocCard() {
+        return `
+            <div class="airquality-tile">
+                <div class="airquality-tile-icon neutral">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <path d="M9.59 4.59A2 2 0 1 1 11 8H2m10.59 11.41A2 2 0 1 0 14 16H2m15.73-8.27A2.5 2.5 0 1 1 19.5 12H2"></path>
+                    </svg>
+                </div>
+                <div class="airquality-tile-body">
+                    <div class="airquality-tile-head">
+                        <span class="airquality-tile-value" id="tvoc-value">${this.fmtTvoc()}<span class="airquality-tile-unit"> ppb</span></span>
+                        <span class="airquality-tile-label">TVOC</span>
+                        <span class="airquality-badge ${this.getTvocClass()}" id="tvoc-badge" ${this.data.tvoc_ppb == null ? 'style="display:none"' : ''}>${this.getTvocLabel()}</span>
+                    </div>
+                    <div class="airquality-slider tvoc-slider" id="tvoc-slider">
+                        <span class="airquality-slider-pointer" id="tvoc-pointer" style="left:${this.tvocPointerPct()}%"></span>
+                    </div>
+                    <div class="airquality-slider-scale">
+                        <span>0</span><span>220 moderate</span><span>1000+ ppb</span>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+    renderEco2Card() {
+        return `
+            <div class="airquality-tile">
+                <div class="airquality-tile-icon neutral">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <path d="M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z"></path>
+                    </svg>
+                </div>
+                <div class="airquality-tile-body">
+                    <div class="airquality-tile-head">
+                        <span class="airquality-tile-value" id="eco2-value">${this.fmtEco2()}<span class="airquality-tile-unit"> ppm</span></span>
+                        <span class="airquality-tile-label">eCO₂</span>
+                        <span class="airquality-badge ${this.getEco2Class()}" id="eco2-badge" ${this.data.eco2_ppm == null ? 'style="display:none"' : ''}>${this.getEco2Label()}</span>
+                    </div>
+                    <div class="airquality-slider eco2-slider" id="eco2-slider">
+                        <span class="airquality-slider-pointer" id="eco2-pointer" style="left:${this.eco2PointerPct()}%"></span>
+                    </div>
+                    <div class="airquality-slider-scale">
+                        <span>400</span><span>1000 high</span><span>2000+ ppm</span>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+    // ── Formatters ──────────────────────────────────────────────
+
+    fmtHumidity() { return this.dataTempAndHumidity.humidity == null ? '--' : Math.round(this.dataTempAndHumidity.humidity); }
+    fmtTvoc()     { return this.data.tvoc_ppb  == null ? '--' : Math.round(this.data.tvoc_ppb); }
+    fmtEco2()     { return this.data.eco2_ppm  == null ? '--' : Math.round(this.data.eco2_ppm); }
+
+    // ── Slider pointer positions (0-100%) ───────────────────────
+
+    tempPointerPct() {
+        const f = this.dataTempAndHumidity.tempInF;
+        if (f == null) return 50;
+        return Math.max(0, Math.min(100, ((f - 50) / 40) * 100));
+    }
+    humidityPointerPct() {
+        const h = this.dataTempAndHumidity.humidity;
+        if (h == null) return 50;
+        return Math.max(0, Math.min(100, h));
+    }
+    tvocPointerPct() {
+        const t = this.data.tvoc_ppb;
+        if (t == null) return 0;
+        return Math.max(0, Math.min(100, (t / 1000) * 100));
+    }
+    eco2PointerPct() {
+        const e = this.data.eco2_ppm;
+        if (e == null) return 0;
+        return Math.max(0, Math.min(100, ((e - 400) / 1600) * 100));
+    }
+
+    // ── Level classification ────────────────────────────────────
+
+    getTvocClass() {
+        const t = this.data.tvoc_ppb;
+        if (t == null) return 'unset';
+        if (t < 220) return 'good';
+        if (t < 660) return 'moderate';
+        return 'unhealthy';
+    }
     getTvocLabel() {
-        const tvoc = this.data.tvoc_ppb;
-        if (tvoc == null) return '';
-        if (tvoc < 65) return 'Excellent';
-        if (tvoc < 220) return 'Good';
-        if (tvoc < 660) return 'Moderate';
-        if (tvoc < 2200) return 'Poor';
+        const t = this.data.tvoc_ppb;
+        if (t == null) return '';
+        if (t < 65)   return 'Excellent';
+        if (t < 220)  return 'Good';
+        if (t < 660)  return 'Moderate';
+        if (t < 2200) return 'Poor';
         return 'Unhealthy';
     }
-
     getEco2Class() {
-        const eco2 = this.data.eco2_ppm;
-        if (eco2 == null) return '';
-        if (eco2 < 400) return 'good';
-        if (eco2 < 1000) return 'good';
-        if (eco2 < 2000) return 'sensitive';
+        const e = this.data.eco2_ppm;
+        if (e == null) return 'unset';
+        if (e < 1000) return 'good';
+        if (e < 2000) return 'moderate';
         return 'unhealthy';
     }
-
     getEco2Label() {
-        const eco2 = this.data.eco2_ppm;
-        if (eco2 == null) return '';
-        if (eco2 < 400) return 'Low';
-        if (eco2 < 1000) return 'Normal';
-        if (eco2 < 2000) return 'High';
+        const e = this.data.eco2_ppm;
+        if (e == null) return '';
+        if (e < 1000) return 'Normal';
+        if (e < 2000) return 'High';
         return 'Alarm';
     }
+
+    // Overall status: worst of TVOC + eCO₂. Drives the header pill + recommendation.
+    getOverallClass() {
+        const t = this.data.tvoc_ppb;
+        const e = this.data.eco2_ppm;
+        if (t == null && e == null) return 'unset';
+        if ((t != null && t >= 660) || (e != null && e >= 2000)) return 'unhealthy';
+        if ((t != null && t >= 220) || (e != null && e >= 1000)) return 'moderate';
+        return 'good';
+    }
+    getOverallLabel() {
+        return ({ unset: '—', good: 'Good', moderate: 'Moderate', unhealthy: 'Unhealthy' })[this.getOverallClass()];
+    }
+    getRecommendation() {
+        const cls = this.getOverallClass();
+        return ({
+            unset:     'Waiting for sensor data…',
+            good:      'Air quality is good',
+            moderate:  'Ventilation recommended',
+            unhealthy: 'Ventilation needed'
+        })[cls];
+    }
+
+    // ── Lifecycle ────────────────────────────────────────────────
 
     init(data, dataTempAndHumidity) {
         if (data) this.data = data;
         if (dataTempAndHumidity) this.dataTempAndHumidity = dataTempAndHumidity;
-        this.updateDisplay();
-        this.updateTempAndHumidity();
+        this.updateAll();
 
-        // Setup WebSocket listener
         this.wsHandler = (data) => {
             this.data = data;
-            this.updateDisplay();
+            this.updateAll();
         };
         wsClient.on('airquality', this.wsHandler);
 
         this.wsTempAndHumidityHandler = (dataTempAndHumidity) => {
             this.dataTempAndHumidity = dataTempAndHumidity;
-            this.updateTempAndHumidity();
-        }
-        wsClient.on('temphumid',this.wsTempAndHumidityHandler);
+            this.updateAll();
+        };
+        wsClient.on('temphumid', this.wsTempAndHumidityHandler);
 
         this.unsubStaleAir = wsClient.onStale('airquality', () => {
             this.data = { tvoc_ppb: null, eco2_ppm: null };
-            this.updateDisplay();
+            this.updateAll();
         });
         this.unsubStaleTempHumid = wsClient.onStale('temphumid', () => {
             this.dataTempAndHumidity = { tempInC: null, tempInF: null, humidity: null };
-            this.updateTempAndHumidity();
+            this.updateAll();
         });
 
-        // Re-render when the user flips units in Settings.
-        this.unitsHandler = () => this.updateTempAndHumidity();
+        // Re-render when user flips temperature units.
+        this.unitsHandler = () => this.updateAll();
         units.addEventListener('change', this.unitsHandler);
     }
 
-    updateTempAndHumidity() {
-        const tempValue = document.getElementById('temp-value');
-        const humidityValue = document.getElementById('humidity-value');
-
-        if (tempValue) {
-            tempValue.innerHTML = `${units.formatTemp(this.dataTempAndHumidity.tempInF)}<span class="airquality-unit">${units.tempLabel()}</span>`;
+    updateAll() {
+        // Header
+        const rec = document.getElementById('airquality-rec');
+        if (rec) rec.textContent = this.getRecommendation();
+        const pill = document.getElementById('airquality-status-pill');
+        if (pill) {
+            pill.textContent = this.getOverallLabel();
+            pill.className = `airquality-status-pill ${this.getOverallClass()}`;
         }
 
-        if (humidityValue) {
-            humidityValue.innerHTML = this.dataTempAndHumidity.humidity != null
-                ? `${Math.round(this.dataTempAndHumidity.humidity)}<span class="airquality-unit">%</span>`
-                : `-<span class="airquality-unit">%</span>`;
-        }
-    }
+        // Temp
+        const tempV = document.getElementById('temp-value');
+        if (tempV) tempV.innerHTML = `${units.formatTemp(this.dataTempAndHumidity.tempInF)}<span class="airquality-tile-unit">${units.tempLabel()}</span>`;
+        const tempPtr = document.getElementById('temp-pointer');
+        if (tempPtr) tempPtr.style.left = this.tempPointerPct() + '%';
 
-    updateDisplay() {
-        const tvocValue = document.getElementById('tvoc-value');
+        // Humidity
+        const humV = document.getElementById('humidity-value');
+        if (humV) humV.innerHTML = `${this.fmtHumidity()}<span class="airquality-tile-unit">%</span>`;
+        const humPtr = document.getElementById('humidity-pointer');
+        if (humPtr) humPtr.style.left = this.humidityPointerPct() + '%';
+
+        // TVOC
+        const tvocV = document.getElementById('tvoc-value');
+        if (tvocV) tvocV.innerHTML = `${this.fmtTvoc()}<span class="airquality-tile-unit"> ppb</span>`;
+        const tvocPtr = document.getElementById('tvoc-pointer');
+        if (tvocPtr) tvocPtr.style.left = this.tvocPointerPct() + '%';
         const tvocBadge = document.getElementById('tvoc-badge');
-        const eco2Value = document.getElementById('eco2-value');
-        const eco2Badge = document.getElementById('eco2-badge');
-
-        if (tvocValue) {
-            tvocValue.innerHTML = this.data.tvoc_ppb != null
-                ? `${Math.round(this.data.tvoc_ppb)}<span class="airquality-unit">ppb</span>`
-                : `-<span class="airquality-unit">ppb</span>`;
-        }
         if (tvocBadge) {
             tvocBadge.textContent = this.getTvocLabel();
             tvocBadge.className = `airquality-badge ${this.getTvocClass()}`;
             tvocBadge.style.display = this.data.tvoc_ppb != null ? '' : 'none';
         }
 
-        if (eco2Value) {
-            eco2Value.innerHTML = this.data.eco2_ppm != null
-                ? `${Math.round(this.data.eco2_ppm)}<span class="airquality-unit">ppm</span>`
-                : `-<span class="airquality-unit">ppm</span>`;
-        }
+        // eCO2
+        const eco2V = document.getElementById('eco2-value');
+        if (eco2V) eco2V.innerHTML = `${this.fmtEco2()}<span class="airquality-tile-unit"> ppm</span>`;
+        const eco2Ptr = document.getElementById('eco2-pointer');
+        if (eco2Ptr) eco2Ptr.style.left = this.eco2PointerPct() + '%';
+        const eco2Badge = document.getElementById('eco2-badge');
         if (eco2Badge) {
             eco2Badge.textContent = this.getEco2Label();
             eco2Badge.className = `airquality-badge ${this.getEco2Class()}`;
             eco2Badge.style.display = this.data.eco2_ppm != null ? '' : 'none';
         }
-        // Update card classes for TVOC
-        const tvocCard = document.querySelector('.airquality-card:nth-child(3)');
-        if (tvocCard) {
-            tvocCard.className = `card airquality-card ${this.getTvocClass()}`;
-        }
-
-        // Update card classes for eCO2
-        const eco2Card = document.querySelector('.airquality-card:nth-child(4)');
-        if (eco2Card) {
-            eco2Card.className = `card airquality-card ${this.getEco2Class()}`;
-        }
     }
 
+    // Legacy shim names still called by any external code.
+    updateDisplay() { this.updateAll(); }
+    updateTempAndHumidity() { this.updateAll(); }
+
     cleanup() {
-        if (this.wsHandler) {
-            wsClient.off('airquality', this.wsHandler);
-        }
-        if (this.wsTempAndHumidityHandler) {
-            wsClient.off('temphumid', this.wsTempAndHumidityHandler);
-        }
+        if (this.wsHandler) wsClient.off('airquality', this.wsHandler);
+        if (this.wsTempAndHumidityHandler) wsClient.off('temphumid', this.wsTempAndHumidityHandler);
         if (this.unsubStaleAir) this.unsubStaleAir();
         if (this.unsubStaleTempHumid) this.unsubStaleTempHumid();
         if (this.unitsHandler) {

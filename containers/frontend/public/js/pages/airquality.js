@@ -7,7 +7,6 @@ export const airqualityPage = {
     render() {
         return `
             <section class="page-airquality">
-                <h1 class="section-title">Air Quality</h1>
                 <div id="airquality-container">
                     <!-- Air quality display will be rendered here -->
                 </div>

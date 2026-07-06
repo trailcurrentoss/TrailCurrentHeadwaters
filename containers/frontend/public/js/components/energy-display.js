@@ -1,4 +1,7 @@
-// Energy display component
+// Energy display component — v02-style flow diagram (Solar → Battery →
+// Loads) at the top with a grid of stats tiles (Voltage, Charge Status,
+// Net Power, Time Remaining) below. Data flows in via WebSocket on the
+// `energy` topic; each field renders `--` until first data arrives.
 import { wsClient } from '../api.js';
 
 export class EnergyDisplay {
@@ -17,93 +20,88 @@ export class EnergyDisplay {
     }
 
     render() {
-        const batteryLow = this.data.battery_percent != null && this.data.battery_percent < 20;
-        const batteryFillWidth = this.data.battery_percent != null ? (this.data.battery_percent / 100) * 14 : 0;
         return `
-            <div class="energy-container">
-                <!-- Solar Panel -->
-                <div class="card energy-card">
-                    <svg class="energy-icon solar" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <circle cx="12" cy="12" r="5"/>
-                        <line x1="12" y1="1" x2="12" y2="3"/>
-                        <line x1="12" y1="21" x2="12" y2="23"/>
-                        <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/>
-                        <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
-                        <line x1="1" y1="12" x2="3" y2="12"/>
-                        <line x1="21" y1="12" x2="23" y2="12"/>
-                        <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/>
-                        <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+            <div class="energy-page">
+                <!-- Flow diagram: Solar → Battery → Loads -->
+                <div class="energy-flow-card">
+                    <div class="energy-flow-item">
+                        <div class="energy-flow-icon solar">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+                                <circle cx="12" cy="12" r="5"></circle>
+                                <line x1="12" y1="1" x2="12" y2="3"></line>
+                                <line x1="12" y1="21" x2="12" y2="23"></line>
+                                <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+                                <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+                                <line x1="1" y1="12" x2="3" y2="12"></line>
+                                <line x1="21" y1="12" x2="23" y2="12"></line>
+                                <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+                                <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+                            </svg>
+                        </div>
+                        <span class="energy-flow-value" id="flow-solar">${this.fmtWatts(this.data.solar_watts)}<span class="energy-flow-unit"> W</span></span>
+                        <span class="energy-flow-label">Solar</span>
+                    </div>
+                    <svg class="energy-flow-arrow" viewBox="0 0 36 16" fill="none" stroke="var(--text-muted)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <line x1="2" y1="8" x2="30" y2="8"></line>
+                        <polyline points="24 2 30 8 24 14"></polyline>
                     </svg>
-                    <div class="energy-info">
-                        <span class="energy-value" id="solar-watts">${this.data.solar_watts != null ? Math.round(this.data.solar_watts) : '-'}<span class="energy-unit">W</span></span>
-                        <span class="energy-label">Solar Input</span>
+                    <div class="energy-flow-item">
+                        <div class="energy-flow-icon battery" id="flow-battery-icon">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+                                <rect x="1" y="6" width="18" height="12" rx="2"></rect>
+                                <line x1="23" y1="10" x2="23" y2="14"></line>
+                            </svg>
+                        </div>
+                        <span class="energy-flow-value" id="flow-battery">${this.fmtPct(this.data.battery_percent)}<span class="energy-flow-unit"> %</span></span>
+                        <span class="energy-flow-label" id="flow-battery-label">Battery · ${this.formatChargeType(this.data.charge_type) || '--'}</span>
+                    </div>
+                    <svg class="energy-flow-arrow" viewBox="0 0 36 16" fill="none" stroke="var(--text-muted)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <line x1="2" y1="8" x2="30" y2="8"></line>
+                        <polyline points="24 2 30 8 24 14"></polyline>
+                    </svg>
+                    <div class="energy-flow-item">
+                        <div class="energy-flow-icon loads">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+                                <path d="M18 20V10"></path>
+                                <path d="M12 20V4"></path>
+                                <path d="M6 20v-6"></path>
+                            </svg>
+                        </div>
+                        <span class="energy-flow-value" id="flow-loads">${this.fmtWatts(this.data.consumption_watts)}<span class="energy-flow-unit"> W</span></span>
+                        <span class="energy-flow-label">Loads</span>
                     </div>
                 </div>
 
-                <!-- Battery -->
-                <div class="card energy-card">
-                    <svg class="energy-icon battery ${batteryLow ? 'low' : ''}" id="battery-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <rect x="1" y="6" width="18" height="12" rx="2" ry="2"/>
-                        <line x1="23" y1="10" x2="23" y2="14"/>
-                        <rect x="3" y="8" width="${batteryFillWidth}" height="8" fill="currentColor" stroke="none" id="battery-fill"/>
-                    </svg>
-                    <div class="energy-info">
-                        <span class="energy-value" id="battery-percent">${this.data.battery_percent != null ? Math.round(this.data.battery_percent) : '-'}<span class="energy-unit">%</span></span>
-                        <span class="energy-label">Battery Level</span>
+                <!-- Stats tiles -->
+                <div class="energy-stats-grid">
+                    <div class="energy-stat-tile">
+                        <span class="energy-stat-label">Battery Voltage</span>
+                        <span class="energy-stat-value" id="stat-voltage">${this.formatVoltage()}<span class="energy-stat-unit"> V</span></span>
                     </div>
-                </div>
-
-                <!-- Battery Voltage -->
-                <div class="card energy-card">
-                    <svg class="energy-icon voltage" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
-                    </svg>
-                    <div class="energy-info">
-                        <span class="energy-value" id="battery-voltage">${this.formatVoltage()}<span class="energy-unit">V</span></span>
-                        <span class="energy-label">Battery Voltage</span>
+                    <div class="energy-stat-tile">
+                        <span class="energy-stat-label">Charge Status</span>
+                        <span class="energy-stat-badge ${this.data.charge_type || 'unset'}" id="stat-charge">${this.formatChargeType(this.data.charge_type) || '--'}</span>
                     </div>
-                </div>
-
-                <!-- Charge Type -->
-                <div class="card energy-card">
-                    <svg class="energy-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
-                    </svg>
-                    <div class="energy-info">
-                        <span class="charge-badge ${this.data.charge_type || ''}" id="charge-type">${this.data.charge_type ? this.formatChargeType(this.data.charge_type) : '-'}</span>
-                        <span class="energy-label">Charge Status</span>
+                    <div class="energy-stat-tile">
+                        <span class="energy-stat-label">Net Power</span>
+                        <span class="energy-stat-value ${this.getNetClass()}" id="stat-net">${this.formatNet()}<span class="energy-stat-unit"> W</span></span>
                     </div>
-                </div>
-
-                <!-- Power Consumption -->
-                <div class="card energy-card">
-                    <svg class="energy-icon consumption" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M18 20V10"/>
-                        <path d="M12 20V4"/>
-                        <path d="M6 20v-6"/>
-                    </svg>
-                    <div class="energy-info">
-                        <span class="energy-value" id="consumption-watts">${this.data.consumption_watts != null ? Math.round(this.data.consumption_watts) : '-'}<span class="energy-unit">W</span></span>
-                        <span class="energy-label">Power Consumption</span>
-                    </div>
-                </div>
-
-                <!-- Time Remaining -->
-                <div class="card energy-card time-remaining-card ${this.getTimeRemainingClass()}">
-                    <svg class="energy-icon time-remaining" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <circle cx="12" cy="12" r="10"/>
-                        <polyline points="12 6 12 12 16 14"/>
-                    </svg>
-                    <div class="energy-info">
-                        <span class="energy-value time-remaining-value" id="time-remaining">${this.formatTimeRemaining()}</span>
-                        <span class="energy-label">Time Remaining</span>
+                    <div class="energy-stat-tile ${this.getTimeRemainingClass()}" id="stat-time-tile">
+                        <span class="energy-stat-label">Time Remaining</span>
+                        <span class="energy-stat-value" id="stat-time">${this.formatTimeRemaining()}</span>
                     </div>
                 </div>
             </div>
         `;
     }
 
+    // ── formatting helpers ─────────────────────────────────────
+
+    fmtWatts(w) { return w == null ? '--' : Math.round(w); }
+    fmtPct(p) { return p == null ? '--' : Math.round(p); }
+
     formatChargeType(type) {
+        if (!type) return '';
         const types = {
             off: 'Off',
             float: 'Float',
@@ -116,44 +114,44 @@ export class EnergyDisplay {
     }
 
     formatVoltage() {
-        const voltage = this.data.battery_voltage;
-        if (voltage == null) {
-            return '-';
-        }
-        return voltage.toFixed(1);
+        return this.data.battery_voltage == null ? '--' : this.data.battery_voltage.toFixed(1);
+    }
+
+    formatNet() {
+        const solar = this.data.solar_watts;
+        const load = this.data.consumption_watts;
+        if (solar == null || load == null) return '--';
+        const net = Math.round(solar - load);
+        return net > 0 ? `+${net}` : String(net);
+    }
+
+    getNetClass() {
+        const solar = this.data.solar_watts;
+        const load = this.data.consumption_watts;
+        if (solar == null || load == null) return '';
+        return (solar - load) >= 0 ? 'net-positive' : 'net-negative';
     }
 
     formatTimeRemaining() {
         const minutes = this.data.time_remaining_minutes;
-        if (minutes == null) {
-            return '-';
-        }
-
+        if (minutes == null) return '--';
         const days = Math.floor(minutes / 1440);
         const hours = Math.floor((minutes % 1440) / 60);
         const mins = Math.floor(minutes % 60);
-
-        if (days > 0) {
-            return `${days}d ${hours}h`;
-        } else if (hours > 0) {
-            return `${hours}h ${mins}m`;
-        } else {
-            return `${mins}m`;
-        }
+        if (days > 0) return `${days}d ${hours}h`;
+        if (hours > 0) return `${hours}h ${mins}m`;
+        return `${mins}m`;
     }
 
     getTimeRemainingClass() {
         const minutes = this.data.time_remaining_minutes;
-        if (minutes == null) {
-            return '';
-        }
-        if (minutes <= 60) {
-            return 'critical';
-        } else if (minutes <= 240) {
-            return 'warning';
-        }
+        if (minutes == null) return '';
+        if (minutes <= 60) return 'critical';
+        if (minutes <= 240) return 'warning';
         return '';
     }
+
+    // ── lifecycle ────────────────────────────────────────────────
 
     markStale() {
         this.data = {
@@ -171,82 +169,62 @@ export class EnergyDisplay {
         if (data) this.data = data;
         this.updateDisplay();
 
-        // Setup WebSocket listener
         this.wsHandler = (data) => {
             this.data = data;
             this.updateDisplay();
         };
         wsClient.on('energy', this.wsHandler);
 
-        // Mark stale if no data arrives within 30s
         this.unsubStale = wsClient.onStale('energy', () => this.markStale());
     }
 
     updateDisplay() {
-        const solarWatts = document.getElementById('solar-watts');
-        const batteryPercent = document.getElementById('battery-percent');
-        const chargeType = document.getElementById('charge-type');
-        const batteryFill = document.getElementById('battery-fill');
-        const batteryIcon = document.getElementById('battery-icon');
+        // Flow row
+        const solarEl = document.getElementById('flow-solar');
+        if (solarEl) solarEl.innerHTML = `${this.fmtWatts(this.data.solar_watts)}<span class="energy-flow-unit"> W</span>`;
 
-        if (solarWatts) {
-            solarWatts.innerHTML = this.data.solar_watts != null
-                ? `${Math.round(this.data.solar_watts)}<span class="energy-unit">W</span>`
-                : `-<span class="energy-unit">W</span>`;
+        const battEl = document.getElementById('flow-battery');
+        if (battEl) battEl.innerHTML = `${this.fmtPct(this.data.battery_percent)}<span class="energy-flow-unit"> %</span>`;
+
+        const battLabel = document.getElementById('flow-battery-label');
+        if (battLabel) battLabel.textContent = `Battery · ${this.formatChargeType(this.data.charge_type) || '--'}`;
+
+        const battIcon = document.getElementById('flow-battery-icon');
+        if (battIcon) battIcon.classList.toggle('low',
+            this.data.battery_percent != null && this.data.battery_percent < 20);
+
+        const loadsEl = document.getElementById('flow-loads');
+        if (loadsEl) loadsEl.innerHTML = `${this.fmtWatts(this.data.consumption_watts)}<span class="energy-flow-unit"> W</span>`;
+
+        // Stats grid
+        const vEl = document.getElementById('stat-voltage');
+        if (vEl) vEl.innerHTML = `${this.formatVoltage()}<span class="energy-stat-unit"> V</span>`;
+
+        const chargeEl = document.getElementById('stat-charge');
+        if (chargeEl) {
+            chargeEl.textContent = this.formatChargeType(this.data.charge_type) || '--';
+            chargeEl.className = `energy-stat-badge ${this.data.charge_type || 'unset'}`;
         }
 
-        if (batteryPercent) {
-            batteryPercent.innerHTML = this.data.battery_percent != null
-                ? `${Math.round(this.data.battery_percent)}<span class="energy-unit">%</span>`
-                : `-<span class="energy-unit">%</span>`;
+        const netEl = document.getElementById('stat-net');
+        if (netEl) {
+            netEl.innerHTML = `${this.formatNet()}<span class="energy-stat-unit"> W</span>`;
+            netEl.className = `energy-stat-value ${this.getNetClass()}`;
         }
 
-        const batteryVoltage = document.getElementById('battery-voltage');
-        if (batteryVoltage) {
-            batteryVoltage.innerHTML = `${this.formatVoltage()}<span class="energy-unit">V</span>`;
-        }
+        const timeEl = document.getElementById('stat-time');
+        if (timeEl) timeEl.textContent = this.formatTimeRemaining();
 
-        if (chargeType) {
-            chargeType.textContent = this.data.charge_type ? this.formatChargeType(this.data.charge_type) : '-';
-            chargeType.className = `charge-badge ${this.data.charge_type || ''}`;
-        }
-
-        if (batteryFill) {
-            const fillWidth = this.data.battery_percent != null ? (this.data.battery_percent / 100) * 14 : 0;
-            batteryFill.setAttribute('width', fillWidth);
-        }
-
-        if (batteryIcon) {
-            batteryIcon.classList.toggle('low', this.data.battery_percent != null && this.data.battery_percent < 20);
-        }
-
-        const consumptionWatts = document.getElementById('consumption-watts');
-        if (consumptionWatts) {
-            consumptionWatts.innerHTML = this.data.consumption_watts != null
-                ? `${Math.round(this.data.consumption_watts)}<span class="energy-unit">W</span>`
-                : `-<span class="energy-unit">W</span>`;
-        }
-
-        const timeRemaining = document.getElementById('time-remaining');
-        const timeRemainingCard = document.querySelector('.time-remaining-card');
-        if (timeRemaining) {
-            timeRemaining.textContent = this.formatTimeRemaining();
-        }
-        if (timeRemainingCard) {
-            timeRemainingCard.classList.remove('warning', 'critical');
-            const warningClass = this.getTimeRemainingClass();
-            if (warningClass) {
-                timeRemainingCard.classList.add(warningClass);
-            }
+        const timeTile = document.getElementById('stat-time-tile');
+        if (timeTile) {
+            timeTile.classList.remove('warning', 'critical');
+            const cls = this.getTimeRemainingClass();
+            if (cls) timeTile.classList.add(cls);
         }
     }
 
     cleanup() {
-        if (this.wsHandler) {
-            wsClient.off('energy', this.wsHandler);
-        }
-        if (this.unsubStale) {
-            this.unsubStale();
-        }
+        if (this.wsHandler) wsClient.off('energy', this.wsHandler);
+        if (this.unsubStale) this.unsubStale();
     }
 }

@@ -84,6 +84,25 @@ function deriveTitle(messages) {
     return t.length > 42 ? t.slice(0, 42) + '…' : t;
 }
 
+// True when the device is likely to raise a virtual keyboard on focus
+// (phone or touch tablet). Detects "coarse" pointer input — the CSS
+// standard signal for finger/touch devices. Used to skip programmatic
+// focus() calls that would otherwise thrash the on-screen keyboard.
+function _isTouchLike() {
+    try {
+        return window.matchMedia('(pointer: coarse)').matches;
+    } catch (_) { return false; }
+}
+
+// Focus the composer input, but ONLY on non-touch devices. On phones and
+// tablets, calling .focus() forces the on-screen keyboard back up — jarring
+// after submitting a message (page scrolls to the streaming assistant reply,
+// keyboard closes with it, then focus() slams the keyboard open again).
+function _focusInputIfDesktop(input) {
+    if (!input || _isTouchLike()) return;
+    input.focus();
+}
+
 // Legacy-shaped helpers so the rest of the file (send / stream / render)
 // keeps working with a single-history array. `activeHistory()` returns the
 // current conversation's message array; setting it back happens via
@@ -480,7 +499,7 @@ export const peregrinePage = {
             history = [];
             renderHistory(log, history);
             this._renderConvList();
-            input.focus();
+            _focusInputIfDesktop(input);
         };
 
         const onConvPanelClick = (e) => {
@@ -495,7 +514,7 @@ export const peregrinePage = {
                 history = activeHistory();
                 renderHistory(log, history);
                 this._renderConvList();
-                input.focus();
+                _focusInputIfDesktop(input);
             } else if (btn.dataset.action === 'delete') {
                 e.stopPropagation();
                 const wasActive = id === activeId;
@@ -582,7 +601,7 @@ export const peregrinePage = {
             saveHistory(history);
             renderHistory(log, history);
             this._renderConvList();
-            input.focus();
+            _focusInputIfDesktop(input);
         };
         clearBtn.addEventListener('click', onClear);
 
@@ -630,7 +649,10 @@ export const peregrinePage = {
                 }
                 inFlight = null;
                 sendBtn.disabled = false;
-                input.focus();
+                // Don't refocus on touch devices — it re-opens the on-screen
+                // keyboard right after the streaming reply just scrolled it
+                // away, which reads as a jarring "keyboard flicker" to the user.
+                _focusInputIfDesktop(input);
                 // Panel: title / order changes after a message.
                 this._renderConvList();
             }
@@ -650,8 +672,8 @@ export const peregrinePage = {
         if (newConvBtn) state.handlers.push([newConvBtn, 'click', startNewConversation]);
 
         autoResize();
-        // Don't autofocus on mobile (it pops the keyboard immediately).
-        if (window.matchMedia('(min-width: 700px)').matches) input.focus();
+        // Don't autofocus on touch devices (would pop the on-screen keyboard).
+        _focusInputIfDesktop(input);
     },
 
     cleanup() {

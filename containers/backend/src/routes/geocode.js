@@ -10,6 +10,10 @@
 // Returns: 200 { place, region, country, cc, distance_km }
 //          404 { error: 'no match' }
 //          502 { error: 'geocoder unreachable' }
+//
+// Query: GET /api/geocode/nearby?lat=<f>&lon=<f>&limit=<n>&radius_km=<f>
+// Returns: 200 { results: [{ place, region, country, cc, distance_km }, ...] }
+//          502 { error: 'geocoder unreachable' }
 
 const express = require('express');
 const router = express.Router();
@@ -57,6 +61,28 @@ module.exports = () => {
             const { status, body } = await proxyGet(
                 `/reverse?lat=${encodeURIComponent(latN)}&lon=${encodeURIComponent(lonN)}`
             );
+            res.status(status).json(body);
+        } catch (err) {
+            console.error('[geocode] proxy error:', err.message);
+            res.status(502).json({ error: 'geocoder unreachable' });
+        }
+    });
+
+    router.get('/nearby', async (req, res) => {
+        const { lat, lon, limit, radius_km } = req.query;
+        if (lat === undefined || lon === undefined) {
+            return res.status(400).json({ error: 'lat and lon required' });
+        }
+        const latN = Number(lat);
+        const lonN = Number(lon);
+        if (Number.isNaN(latN) || Number.isNaN(lonN)) {
+            return res.status(400).json({ error: 'lat and lon must be numbers' });
+        }
+        const qs = [`lat=${encodeURIComponent(latN)}`, `lon=${encodeURIComponent(lonN)}`];
+        if (limit !== undefined) qs.push(`limit=${encodeURIComponent(limit)}`);
+        if (radius_km !== undefined) qs.push(`radius_km=${encodeURIComponent(radius_km)}`);
+        try {
+            const { status, body } = await proxyGet(`/nearby?${qs.join('&')}`);
             res.status(status).json(body);
         } catch (err) {
             console.error('[geocode] proxy error:', err.message);

@@ -7,7 +7,10 @@ export const energyPage = {
     render() {
         return `
             <section class="page-energy">
-                <h1 class="section-title">Energy Monitor</h1>
+                <header class="page-heading">
+                    <h1 class="page-title">Energy</h1>
+                    <span class="page-subtitle">Solar, battery and consumption</span>
+                </header>
                 <div id="energy-container">
                     <!-- Energy display will be rendered here -->
                 </div>

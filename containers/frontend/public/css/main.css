@@ -344,6 +344,13 @@ body {
     margin-bottom: 0;
 }
 
+/* On mobile (column stack), lights/buttons come BEFORE the thermostat —
+ * device toggles are tapped far more often than the climate dial, and the
+ * dial is a tall block that would otherwise push the buttons off-screen.
+ * On wide (row layout below), we reset order so thermostat sits on the
+ * left as originally designed. */
+.lights-panel { order: -1; }
+
 @media (min-width: 900px) {
     .home-grid {
         flex-direction: row;
@@ -353,10 +360,12 @@ body {
     .thermostat-panel {
         flex: 0 0 auto;
         min-width: 320px;
+        order: 0;
     }
 
     .lights-panel {
         flex: 1;
+        order: 0;
     }
 }
 
@@ -2375,13 +2384,37 @@ body {
 }
 
 /* ===== MAP PAGE ===== */
+/* Map is one of the few pages where display area directly impacts
+ * functionality — how much of the surroundings the user can see at a
+ * given zoom level. Pin it to the viewport so it fills every pixel
+ * between the sidebar and the screen edges, breaking out of both
+ * .main-content's padding and its 1280px max-width cap. */
 .page-map {
+    position: fixed;
+    top: 0;
+    left: 236px;             /* wide sidebar width */
+    right: 0;
+    bottom: 0;
     display: flex;
     flex-direction: column;
-    height: calc(100vh - 140px); /* Full height minus header and nav */
     padding: 0;
-    margin: -20px; /* Counteract main-content padding */
-    margin-top: 0;
+    margin: 0;
+    height: auto;
+    max-height: none;
+    z-index: 10;
+}
+.app-shell[data-layout="collapsed"] .page-map {
+    left: 72px;              /* collapsed sidebar width */
+}
+.app-shell[data-layout="narrow"] .page-map {
+    left: 0;                 /* sidebar hidden */
+    /* Sit above the fixed bottom-nav (80px + safe-area). */
+    bottom: calc(80px + env(safe-area-inset-bottom, 0px));
+}
+/* Driving/storage modes hide the sidebar regardless of layout width. */
+.app-shell[data-mode="driving"] .page-map,
+.app-shell[data-mode="storage"] .page-map {
+    left: 0;
 }
 
 .page-map .section-title {
@@ -4619,46 +4652,90 @@ body {
     padding-top: 12px;
 }
 
+/* v02-style circular D-pad. Container is a big rounded disc with directional
+ * buttons at the four cardinal positions and a large primary OK in the
+ * middle. Buttons are transparent circles that fill on hover; the OK button
+ * is filled with the primary color for a "big obvious action" look. */
 .playbill-dpad {
-    display: grid;
-    grid-template-columns: repeat(3, 72px);
-    grid-template-rows:    repeat(3, 72px);
-    gap: 8px;
-    /* Positioned via grid-area below: up/left/select/right/down. */
+    position: relative;
+    width: 236px;
+    height: 236px;
+    border-radius: 9999px;
+    border: 1px solid var(--border-color);
+    background: linear-gradient(145deg, var(--bg-card), var(--bg-card-hover));
+    box-shadow: var(--tc-shadow-card);
+}
+@media (max-width: 480px) {
+    .playbill-dpad { width: 200px; height: 200px; }
 }
 
 .playbill-dpad-btn {
-    border: 1px solid var(--border-color);
-    background: var(--bg-card);
-    color: var(--text-primary);
-    border-radius: 18px;
-    font-size: 16px;
-    font-weight: 700;
-    cursor: pointer;
-    display: inline-flex;
+    position: absolute;
+    display: flex;
     align-items: center;
     justify-content: center;
-    transition: background 0.12s, box-shadow 0.15s, transform 0.05s;
+    border: none;
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+    border-radius: 9999px;
+    transition: background 0.15s ease, color 0.15s ease, transform 0.05s ease, box-shadow 0.2s ease;
 }
-.playbill-dpad-btn svg { width: 28px; height: 28px; }
+.playbill-dpad-btn svg { width: 26px; height: 26px; }
 .playbill-dpad-btn:hover {
-    background: color-mix(in srgb, var(--primary) 12%, var(--bg-card));
-    box-shadow: 0 0 10px color-mix(in srgb, var(--primary) 25%, transparent);
+    background: var(--bg-card-hover);
+    color: var(--text-primary);
 }
 .playbill-dpad-btn.pressed,
 .playbill-dpad-btn:active {
-    transform: scale(0.94);
-    background: var(--primary);
-    color: var(--btn-text);
-    box-shadow: var(--glow-primary);
+    transform: scale(0.92);
 }
 
-.playbill-dpad-up     { grid-column: 2; grid-row: 1; border-radius: 18px 18px 8px 8px; }
-.playbill-dpad-left   { grid-column: 1; grid-row: 2; border-radius: 18px 8px 8px 18px; }
-.playbill-dpad-select { grid-column: 2; grid-row: 2; border-radius: 50%; background: var(--primary); color: var(--btn-text); border-color: var(--primary); font-size: 14px; letter-spacing: 1px; }
-.playbill-dpad-select:hover { background: var(--primary-hover); box-shadow: var(--glow-primary); }
-.playbill-dpad-right  { grid-column: 3; grid-row: 2; border-radius: 8px 18px 18px 8px; }
-.playbill-dpad-down   { grid-column: 2; grid-row: 3; border-radius: 8px 8px 18px 18px; }
+/* Directional buttons — 56x56 transparent circles at cardinal positions.
+ * translate offsets center each button on the disc's edge. */
+.playbill-dpad-up,
+.playbill-dpad-down,
+.playbill-dpad-left,
+.playbill-dpad-right {
+    width: 56px;
+    height: 56px;
+}
+.playbill-dpad-up    { top: 8px;    left: 50%; transform: translateX(-50%); }
+.playbill-dpad-down  { bottom: 8px; left: 50%; transform: translateX(-50%); }
+.playbill-dpad-left  { left: 8px;   top: 50%;  transform: translateY(-50%); }
+.playbill-dpad-right { right: 8px;  top: 50%;  transform: translateY(-50%); }
+
+.playbill-dpad-up.pressed,    .playbill-dpad-up:active,
+.playbill-dpad-down.pressed,  .playbill-dpad-down:active { transform: translateX(-50%) scale(0.92); }
+.playbill-dpad-left.pressed,  .playbill-dpad-left:active,
+.playbill-dpad-right.pressed, .playbill-dpad-right:active { transform: translateY(-50%) scale(0.92); }
+
+/* Center OK — larger circle, filled with primary color, prominent glow on
+ * hover. Overrides absolute-position sizing above. */
+.playbill-dpad-select {
+    width: 86px;
+    height: 86px;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: var(--role-primary);
+    color: #ffffff;
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    box-shadow: var(--tc-shadow-card);
+}
+.playbill-dpad-select:hover {
+    background: var(--role-primary);
+    color: #ffffff;
+    box-shadow: var(--glow-primary);
+}
+.playbill-dpad-select.pressed,
+.playbill-dpad-select:active {
+    transform: translate(-50%, -50%) scale(0.95);
+    background: var(--role-primary);
+    color: #ffffff;
+}
 
 /* Rotate the single arrow SVG so we ship one icon. */
 .playbill-dpad-left   svg { transform: rotate(-90deg); }
@@ -7280,19 +7357,55 @@ input[type="range"] {
     white-space: nowrap;
 }
 
-/* --- Playbill: on wide, cap the tab body so it doesn't stretch to full
- *     column width — that made buttons and text feel spread thin on desktop.
- *     Keeps the tab-based layout; a deeper 3-column restructure is deferred
- *     until Playbill's internals get their own refactor. */
-@media (min-width: 1240px) {
+/* --- Playbill: on wide (≥1024px), split into a 2-column layout with the
+ *     wake/volume/tabs on the left rail and the active tab's body on the
+ *     right. Keeps the tab interaction model (per user's ask) but uses the
+ *     extra horizontal space. Tabs flip from horizontal strip to vertical
+ *     list. On narrow, layout stays as-is (top bar + volume + tab strip
+ *     + tab body stacked vertically). */
+@media (min-width: 1024px) {
     .app-shell[data-mode="camping"] .page-playbill {
-        max-width: 960px;
+        display: grid;
+        grid-template-columns: 280px 1fr;
+        grid-template-rows: auto auto 1fr;
+        column-gap: 24px;
+        row-gap: 14px;
+        max-width: 1240px;
         margin: 0 auto;
+        padding: 24px;
+    }
+    .app-shell[data-mode="camping"] .page-playbill .playbill-top-bar { grid-column: 1; grid-row: 1; margin-bottom: 0; }
+    .app-shell[data-mode="camping"] .page-playbill .playbill-volume  { grid-column: 1; grid-row: 2; }
+    .app-shell[data-mode="camping"] .page-playbill .playbill-tabs    {
+        grid-column: 1;
+        grid-row: 3;
+        flex-direction: column;
+        align-items: stretch;
+        align-self: start;      /* don't stretch the rail to fill 1fr row */
+        overflow-x: visible;
+    }
+    .app-shell[data-mode="camping"] .page-playbill .playbill-tabs .playbill-tab {
+        flex: 0 0 auto;         /* natural height, no vertical growth */
+        text-align: left;
+        padding: 12px 16px;
+    }
+    .app-shell[data-mode="camping"] .page-playbill .playbill-tab-body {
+        grid-column: 2;
+        grid-row: 1 / -1;
+        min-height: 480px;
+        background: var(--bg-card);
+        border: 1px solid var(--border-color);
+        border-radius: 16px;
+        box-shadow: var(--tc-shadow-card);
+        padding: 24px;
     }
 }
 
 /* --- Peregrine: side panel (conversations) on wide + chat on the right.
- *     Panel hidden below 1240px; chat takes full column. */
+ *     Below 1024px: single column, chat fills width. Above: 2-column with
+ *     conversations panel + chat, both filling the main-content width so
+ *     no wasted margins on laptops / tablets. Chat still has a soft max
+ *     for readability but only kicks in on very-wide desktops. */
 .peregrine-conv-panel { display: none; }
 .peregrine-chat {
     display: flex;
@@ -7300,16 +7413,13 @@ input[type="range"] {
     flex: 1;
     min-height: 0;
     width: 100%;
-    max-width: 900px;
-    margin: 0 auto;
 }
 
-@media (min-width: 1240px) {
+@media (min-width: 1024px) {
     .app-shell[data-mode="camping"] .page-peregrine {
         flex-direction: row !important;
         gap: 20px;
-        max-width: 1240px;
-        margin: 0 auto;
+        max-height: calc(100vh - 64px);
     }
     .app-shell[data-mode="camping"] .peregrine-conv-panel {
         display: flex;
@@ -7323,7 +7433,6 @@ input[type="range"] {
     }
     .app-shell[data-mode="camping"] .peregrine-chat {
         flex: 1;
-        max-width: none;
         margin: 0;
     }
 }
@@ -7594,4 +7703,313 @@ input[type="range"] {
     }
     .drv-chip-value { font-size: 11px; }
     .drv-chip-unit { font-size: 9px; }
+}
+
+/* ============================================================
+ * Energy page — v02 flow-diagram + stats-tiles layout
+ * ============================================================ */
+.energy-page {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+/* --- Top flow card: Solar → Battery → Loads --------------- */
+.energy-flow-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 16px;
+    box-shadow: var(--tc-shadow-card);
+    padding: 28px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-around;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+.energy-flow-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    min-width: 120px;
+    text-align: center;
+}
+.energy-flow-icon {
+    width: 52px;
+    height: 52px;
+    border-radius: 9999px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+.energy-flow-icon svg { width: 24px; height: 24px; }
+.energy-flow-icon.solar   { background: var(--tc-warning-bg-subtle); color: var(--warning); }
+.energy-flow-icon.battery { background: var(--tc-success-bg-subtle); color: var(--role-primary); }
+.energy-flow-icon.battery.low { background: var(--tc-danger-bg-subtle); color: var(--danger); }
+.energy-flow-icon.loads   { background: var(--tc-info-bg-subtle); color: var(--info); }
+.energy-flow-value {
+    font-size: 26px;
+    font-weight: 500;
+    line-height: 1;
+    color: var(--text-primary);
+}
+.energy-flow-unit {
+    font-size: 14px;
+    color: var(--text-muted);
+    font-weight: 400;
+}
+.energy-flow-label {
+    font-size: 12px;
+    color: var(--text-muted);
+}
+.energy-flow-arrow {
+    width: 36px;
+    height: 16px;
+    flex-shrink: 0;
+    align-self: center;
+}
+@media (max-width: 600px) {
+    .energy-flow-arrow { display: none; }  /* stacks cleaner without arrows on narrow */
+}
+
+/* --- Stats grid: Voltage / Charge / Net / Time Remaining ----- */
+.energy-stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+    gap: 16px;
+}
+.energy-stat-tile {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 16px;
+    box-shadow: var(--tc-shadow-card);
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-height: 96px;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+.energy-stat-tile.warning  { border-color: rgba(255, 193, 7, 0.4); box-shadow: 0 0 0 2px rgba(255, 193, 7, 0.08); }
+.energy-stat-tile.critical { border-color: rgba(255, 84, 83, 0.4); box-shadow: 0 0 0 2px rgba(255, 84, 83, 0.10); }
+.energy-stat-label {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: var(--text-muted);
+}
+.energy-stat-value {
+    font-size: 30px;
+    font-weight: 400;
+    line-height: 1;
+    color: var(--text-primary);
+}
+.energy-stat-value.net-positive { color: var(--role-primary); }
+.energy-stat-value.net-negative { color: var(--danger); }
+.energy-stat-unit {
+    font-size: 15px;
+    color: var(--text-muted);
+    font-weight: 400;
+}
+.energy-stat-badge {
+    align-self: flex-start;
+    font-size: 13px;
+    font-weight: 600;
+    padding: 5px 14px;
+    border-radius: 9999px;
+    background: var(--bg-card-hover);
+    color: var(--text-secondary);
+}
+.energy-stat-badge.float,
+.energy-stat-badge.absorption { background: var(--tc-success-bg-subtle); color: var(--role-primary); }
+.energy-stat-badge.bulk       { background: var(--tc-warning-bg-subtle); color: var(--warning); }
+.energy-stat-badge.equalize   { background: var(--tc-info-bg-subtle); color: var(--info); }
+.energy-stat-badge.fault      { background: var(--tc-danger-bg-subtle); color: var(--danger); }
+.energy-stat-badge.off,
+.energy-stat-badge.unset      { background: var(--bg-card-hover); color: var(--text-muted); }
+
+/* Shared page heading pattern (v02): big title + muted subtitle. */
+.page-heading {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-bottom: 12px;
+}
+.page-title {
+    margin: 0;
+    font-size: 28px;
+    font-weight: 600;
+    letter-spacing: -0.3px;
+    color: var(--text-primary);
+}
+.page-subtitle {
+    font-size: 14px;
+    color: var(--text-muted);
+}
+
+/* ============================================================
+ * Air Quality page — v02 header + slider-tile grid
+ * ============================================================ */
+.airquality-page {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+.airquality-header {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+}
+.airquality-header-left {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+}
+.airquality-status-pill {
+    font-size: 13px;
+    font-weight: 600;
+    padding: 6px 16px;
+    border-radius: 9999px;
+    background: var(--bg-card-hover);
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+.airquality-status-pill.good      { background: var(--tc-success-bg-subtle); color: var(--role-primary); }
+.airquality-status-pill.moderate  { background: var(--tc-warning-bg-subtle); color: var(--warning); }
+.airquality-status-pill.unhealthy { background: var(--tc-danger-bg-subtle);  color: var(--danger); }
+
+.airquality-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    gap: 20px;
+}
+
+/* --- Tile -------------------------------------------------- */
+.airquality-tile {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 16px;
+    box-shadow: var(--tc-shadow-card);
+    padding: 22px;
+    display: flex;
+    align-items: flex-start;
+    gap: 16px;
+    min-height: 128px;
+}
+.airquality-tile-icon {
+    width: 52px;
+    height: 52px;
+    border-radius: 9999px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+.airquality-tile-icon svg { width: 24px; height: 24px; }
+.airquality-tile-icon.temp     { background: var(--tc-danger-bg-subtle);  color: var(--danger); }
+.airquality-tile-icon.humidity { background: var(--tc-info-bg-subtle);    color: var(--info); }
+.airquality-tile-icon.neutral  { background: var(--bg-card-hover);        color: var(--text-secondary); }
+
+.airquality-tile-body {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    min-width: 0;
+}
+.airquality-tile-head {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    position: relative;
+}
+.airquality-tile-value {
+    font-size: 30px;
+    font-weight: 300;
+    line-height: 1;
+    color: var(--text-primary);
+}
+.airquality-tile-unit {
+    font-size: 15px;
+    color: var(--text-muted);
+    font-weight: 400;
+}
+.airquality-tile-label {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: var(--text-muted);
+}
+
+/* --- Slider bars ------------------------------------------ */
+.airquality-slider {
+    position: relative;
+    height: 8px;
+    border-radius: 9999px;
+    margin-top: 6px;
+}
+/* Comfort gradient: cool → sweet → hot */
+.temp-slider {
+    background: linear-gradient(to right, #48E6FE, var(--role-primary) 40%, var(--role-primary) 60%, #FFC107 80%, #FF5453);
+}
+/* Dry → ideal → humid */
+.humidity-slider {
+    background: linear-gradient(to right, #FFC107, var(--role-primary) 32%, var(--role-primary) 52%, #48E6FE 75%);
+}
+/* Increasing TVOC = worse */
+.tvoc-slider {
+    background: linear-gradient(to right, var(--role-primary), var(--role-primary) 20%, #FFC107 50%, #FF5453 85%);
+}
+/* Increasing eCO₂ = worse */
+.eco2-slider {
+    background: linear-gradient(to right, var(--role-primary), var(--role-primary) 30%, #FFC107 62%, #FF5453 92%);
+}
+.airquality-slider-pointer {
+    position: absolute;
+    top: 50%;
+    width: 14px;
+    height: 14px;
+    border-radius: 9999px;
+    background: #ffffff;
+    border: 2px solid var(--text-secondary);
+    transform: translate(-50%, -50%);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+    transition: left 0.3s ease;
+}
+.airquality-slider-scale {
+    display: flex;
+    justify-content: space-between;
+    font-size: 10px;
+    color: var(--text-muted);
+}
+
+/* --- Small "level" badge on TVOC/eCO₂ heads --------------- */
+.airquality-badge {
+    position: absolute;
+    top: 0;
+    right: 0;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 3px 10px;
+    border-radius: 9999px;
+    background: var(--bg-card-hover);
+    color: var(--text-secondary);
+    white-space: nowrap;
+}
+.airquality-badge.good      { background: var(--tc-success-bg-subtle); color: var(--role-primary); }
+.airquality-badge.moderate  { background: var(--tc-warning-bg-subtle); color: var(--warning); }
+.airquality-badge.unhealthy { background: var(--tc-danger-bg-subtle);  color: var(--danger); }
+
+/* On narrow, stack icon above body for compactness. */
+@media (max-width: 480px) {
+    .airquality-tile { flex-direction: column; align-items: center; text-align: center; }
+    .airquality-tile-head { align-items: center; }
+    .airquality-badge { position: static; margin-top: 4px; }
 }
