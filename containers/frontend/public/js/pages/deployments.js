@@ -252,6 +252,23 @@ export const deploymentsPage = {
         form.addEventListener('submit', (e) => {
             e.preventDefault();
 
+            // Double-submit guard: `submitBtn.disabled = true` below can't
+            // stop a second submit event that's already queued (double-click,
+            // Enter+click), because both events run the handler before either
+            // sees the disabled state. Without this check, two XHR uploads
+            // race for the same file — both fire onprogress on the same DOM
+            // elements (the counter appears to oscillate), the server sees
+            // two concurrent multipart streams for the same version, and one
+            // typically fails with "network error" when its connection is
+            // reset.
+            if (this._uploadInFlight) {
+                const messageEl = document.getElementById('upload-message');
+                messageEl.textContent = 'An upload is already in progress. Please wait for it to finish before starting another.';
+                messageEl.classList.remove('hidden', 'success');
+                messageEl.classList.add('error');
+                return;
+            }
+
             if (!validateVersion(true)) {
                 versionInput.focus();
                 return;
@@ -272,6 +289,7 @@ export const deploymentsPage = {
             const submitBtn = document.getElementById('upload-submit-btn');
 
             // Reset state
+            this._uploadInFlight = true;
             progressContainer.classList.remove('hidden');
             messageEl.classList.add('hidden');
             messageEl.classList.remove('success', 'error');
@@ -293,6 +311,7 @@ export const deploymentsPage = {
             };
 
             xhr.onload = () => {
+                this._uploadInFlight = false;
                 submitBtn.disabled = false;
                 submitBtn.textContent = 'Upload Package';
 
@@ -321,6 +340,7 @@ export const deploymentsPage = {
             };
 
             xhr.onerror = () => {
+                this._uploadInFlight = false;
                 submitBtn.disabled = false;
                 submitBtn.textContent = 'Upload Package';
                 messageEl.textContent = 'Upload failed - network error';
