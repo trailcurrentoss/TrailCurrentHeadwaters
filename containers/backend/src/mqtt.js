@@ -930,18 +930,23 @@ class MqttService {
     }    
 
 
-    // Publish light command — sends CAN messages directly (toggle 0x018, brightness 0x015)
+    // Publish light command — sends CAN messages directly. lightId is
+    // global (1-24) across up to three Torrent instances; the CAN ID is
+    // 0x018+instance (toggle) or 0x015+instance (brightness), and byte 0
+    // is the per-instance channel index (0-7).
     publishLightCommand(lightId, state, brightness = null) {
         if (!this.connected) {
             console.warn('MQTT not connected, cannot publish light command');
             return false;
         }
 
+        const instance = Math.floor((lightId - 1) / 8);
+        const channel = (lightId - 1) % 8;
         const canBridge = require('./services/can-bridge');
         if (brightness !== null) {
-            canBridge.sendLightBrightness(this, lightId - 1, brightness);
+            canBridge.sendLightBrightness(this, channel, brightness, instance);
         } else {
-            canBridge.sendLightToggle(this, lightId - 1);
+            canBridge.sendLightToggle(this, channel, instance);
         }
         return true;
     }

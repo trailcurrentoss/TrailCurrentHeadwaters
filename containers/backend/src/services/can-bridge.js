@@ -32,6 +32,10 @@ const CHARGE_TYPES = { 0: 'off', 2: 'fault', 3: 'bulk', 4: 'absorption', 5: 'flo
 // 0x029 → instance 1 (relays 9-16), 0x02a → instance 2 (relays 17-24).
 const SWITCHBACK_RELAY_OFFSET = { '0x028': 0, '0x029': 8, '0x02a': 16 };
 
+// Torrent (PDM) instance offsets: CAN 0x01b → instance 0 (lights 1-8),
+// 0x01c → instance 1 (lights 9-16), 0x01d → instance 2 (lights 17-24).
+const TORRENT_LIGHT_OFFSET = { '0x01b': 0, '0x01c': 8, '0x01d': 16 };
+
 const parsers = {
     // ── Firmware version broadcast (0x004) ─────────────────────────
     '0x004': async (data) => {
@@ -58,14 +62,10 @@ const parsers = {
         }
     },
 
-    // ── Lights (0x01b) ─────────────────────────────────────────────
-    '0x01b': (data, mqtt) => {
-        const decoded = decodeBitArrays(data);
-        for (let i = 0; i < 8; i++) {
-            const payload = { state: decoded[i] > 0 ? 1 : 0, brightness: decoded[i] };
-            mqtt.publish(`local/lights/${i + 1}/status`, JSON.stringify(payload));
-        }
-    },
+    // ── Lights (0x01b / 0x01c / 0x01d) — per-instance topics ───────
+    '0x01b': (data, mqtt) => parseLightStatus(data, mqtt, '0x01b'),
+    '0x01c': (data, mqtt) => parseLightStatus(data, mqtt, '0x01c'),
+    '0x01d': (data, mqtt) => parseLightStatus(data, mqtt, '0x01d'),
 
     // ── Switchback digital-input broadcasts (0x012/0x013/0x014) ────
     // CAN payload: byte 0 = DIN1..DIN8 bitmask (Picket-format), byte 1 reserved.
@@ -277,6 +277,15 @@ function parseRelayStatus(data, mqtt, canId) {
     }
 }
 
+function parseLightStatus(data, mqtt, canId) {
+    const decoded = decodeBitArrays(data);
+    const offset = TORRENT_LIGHT_OFFSET[canId];
+    for (let i = 0; i < 8; i++) {
+        const payload = { state: decoded[i] > 0 ? 1 : 0, brightness: decoded[i] };
+        mqtt.publish(`local/lights/${offset + i + 1}/status`, JSON.stringify(payload));
+    }
+}
+
 // ── Inbound handler (called by MqttService.handleMessage) ───────────
 
 function handleCanInbound(payload, mqttClient) {
@@ -288,12 +297,14 @@ function handleCanInbound(payload, mqttClient) {
 
 // ── Outbound command helpers ────────────────────────────────────────
 
-function sendLightToggle(mqttService, deviceIndex) {
-    mqttService.publishCanMessage(0x018, [deviceIndex]);
+function sendLightToggle(mqttService, deviceIndex, instance) {
+    const canId = 0x018 + (instance || 0);
+    mqttService.publishCanMessage(canId, [deviceIndex]);
 }
 
-function sendLightBrightness(mqttService, deviceIndex, brightness) {
-    mqttService.publishCanMessage(0x015, [deviceIndex, brightness]);
+function sendLightBrightness(mqttService, deviceIndex, brightness, instance) {
+    const canId = 0x015 + (instance || 0);
+    mqttService.publishCanMessage(canId, [deviceIndex, brightness]);
 }
 
 function sendRelayToggle(mqttService, channelIndex, instance) {

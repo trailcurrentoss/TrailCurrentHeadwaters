@@ -256,19 +256,27 @@ function handleCloudMessage(topic, message) {
 
         if (parts[1] === 'lights') {
             if (parts[2] === 'all' && parts[3] === 'command') {
-                // All lights on/off — uses CAN 0x018 with special address byte
+                // All lights on/off — broadcast to every Torrent instance
+                // (0x018/0x019/0x01A). Modules that aren't present ignore
+                // frames not addressed to their CAN ID.
                 const state = payload.state ? 1 : 0;
-                mqttServiceRef.publishCanMessage(0x018, [0x08, state]);
+                for (let instance = 0; instance < 3; instance++) {
+                    mqttServiceRef.publishCanMessage(0x018 + instance, [0x08, state]);
+                }
             } else if (parts[3] === 'command') {
                 const lightId = parseInt(parts[2]);
-                if (lightId >= 1 && lightId <= 8) {
-                    canBridge.sendLightToggle(mqttServiceRef, lightId - 1);
+                if (lightId >= 1 && lightId <= 24) {
+                    const instance = Math.floor((lightId - 1) / 8);
+                    const channel = (lightId - 1) % 8;
+                    canBridge.sendLightToggle(mqttServiceRef, channel, instance);
                 }
             } else if (parts[3] === 'brightness') {
                 const lightId = parseInt(parts[2]);
-                if (lightId >= 1 && lightId <= 8) {
+                if (lightId >= 1 && lightId <= 24) {
                     const brightness = payload.brightness || 0;
-                    canBridge.sendLightBrightness(mqttServiceRef, lightId - 1, brightness);
+                    const instance = Math.floor((lightId - 1) / 8);
+                    const channel = (lightId - 1) % 8;
+                    canBridge.sendLightBrightness(mqttServiceRef, channel, brightness, instance);
                 }
             }
         } else if (parts[1] === 'relays') {
