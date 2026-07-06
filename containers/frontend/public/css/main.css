@@ -4519,6 +4519,7 @@ body {
 .playbill-volume {
     display: flex;
     align-items: center;
+    flex-wrap: wrap;
     gap: 12px;
     padding: 10px 14px;
     background: var(--bg-card);
@@ -4556,6 +4557,11 @@ body {
 
 .playbill-vol-slider {
     flex: 1;
+    /* Range inputs carry an intrinsic min-content width (~129px in Chrome).
+       Without min-width:0 that minimum overrides flex shrinking, so in the
+       ≥1024px camping-mode left rail (280px) the step buttons overflow into
+       the tab-body column and vanish behind it. */
+    min-width: 0;
     -webkit-appearance: none;
     appearance: none;
     height: 6px;
