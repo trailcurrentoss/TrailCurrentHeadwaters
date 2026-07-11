@@ -77,7 +77,9 @@ services:
       - IMPORT_GB_POSTCODES=false
       - THREADS=4
     volumes:
-      - ./data/nominatim/map.osm.pbf:/nominatim/data/map.osm.pbf:ro
+      # NOT :ro — mediagis/nominatim's init.sh chowns /nominatim recursively
+      # on first run, which fails on read-only mounts.
+      - ./data/nominatim/map.osm.pbf:/nominatim/data/map.osm.pbf
       - nominatim-data:/var/lib/postgresql/16/main
     shm_size: 1gb
     restart: unless-stopped

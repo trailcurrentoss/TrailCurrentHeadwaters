@@ -268,15 +268,23 @@ export const deploymentsPage = {
                 messageEl.classList.add('error');
                 return;
             }
+            // Claim in-flight immediately so any queued duplicate submit
+            // event (double-click, Enter+click) that reaches the handler
+            // before we've finished setting things up still sees the flag.
+            this._uploadInFlight = true;
 
             if (!validateVersion(true)) {
+                this._uploadInFlight = false;
                 versionInput.focus();
                 return;
             }
             const version = versionInput.value.trim();
             const fileInput = document.getElementById('deployment-file');
             const file = fileInput.files[0];
-            if (!file) return;
+            if (!file) {
+                this._uploadInFlight = false;
+                return;
+            }
 
             const formData = new FormData();
             formData.append('version', version);
@@ -288,8 +296,15 @@ export const deploymentsPage = {
             const messageEl = document.getElementById('upload-message');
             const submitBtn = document.getElementById('upload-submit-btn');
 
+            // Belt-and-suspenders: if a prior xhr somehow survived (page
+            // re-init while one was mid-flight, browser bug), abort it so
+            // its late-arriving onprogress can't paint over the new bar.
+            if (this._currentXhr) {
+                try { this._currentXhr.abort(); } catch (_) { /* ignore */ }
+                this._currentXhr = null;
+            }
+
             // Reset state
-            this._uploadInFlight = true;
             progressContainer.classList.remove('hidden');
             messageEl.classList.add('hidden');
             messageEl.classList.remove('success', 'error');
@@ -297,23 +312,34 @@ export const deploymentsPage = {
             submitBtn.textContent = 'Uploading...';
             progressFill.style.width = '0%';
             progressText.textContent = '0%';
+            let maxPct = 0;
 
             const xhr = new XMLHttpRequest();
+            this._currentXhr = xhr;
             xhr.open('POST', '/api/deployments/upload');
             xhr.setRequestHeader('Authorization', `Bearer ${AuthStore.getToken()}`);
 
             xhr.upload.onprogress = (e) => {
-                if (e.lengthComputable) {
-                    const pct = Math.round((e.loaded / e.total) * 100);
-                    progressFill.style.width = pct + '%';
-                    progressText.textContent = pct + '% (' + formatFileSize(e.loaded) + ' / ' + formatFileSize(e.total) + ')';
-                }
+                // Ignore progress from a stale xhr (another submit
+                // replaced us). Also clamp the visual bar so a late/
+                // out-of-order event can't jump the width backwards.
+                if (this._currentXhr !== xhr) return;
+                if (!e.lengthComputable) return;
+                const pct = Math.round((e.loaded / e.total) * 100);
+                if (pct > maxPct) maxPct = pct;
+                progressFill.style.width = maxPct + '%';
+                progressText.textContent = maxPct + '% (' + formatFileSize(e.loaded) + ' / ' + formatFileSize(e.total) + ')';
             };
 
-            xhr.onload = () => {
+            const finish = () => {
+                if (this._currentXhr === xhr) this._currentXhr = null;
                 this._uploadInFlight = false;
                 submitBtn.disabled = false;
                 submitBtn.textContent = 'Upload Package';
+            };
+
+            xhr.onload = () => {
+                finish();
 
                 if (xhr.status >= 200 && xhr.status < 300) {
                     messageEl.textContent = 'Upload complete! Deployment notification sent.';
@@ -328,11 +354,12 @@ export const deploymentsPage = {
                     // Refresh list
                     this.loadDeployments();
                 } else {
-                    let errorMsg = 'Upload failed';
+                    let errorMsg = `Upload failed (HTTP ${xhr.status})`;
                     try {
                         const resp = JSON.parse(xhr.responseText);
-                        errorMsg = resp.error || errorMsg;
+                        if (resp.error) errorMsg = `${resp.error} (HTTP ${xhr.status})`;
                     } catch (e) { /* ignore parse error */ }
+                    console.error('[deployments] upload failed:', xhr.status, xhr.responseText);
                     messageEl.textContent = errorMsg;
                     messageEl.classList.remove('hidden', 'success');
                     messageEl.classList.add('error');
@@ -340,12 +367,22 @@ export const deploymentsPage = {
             };
 
             xhr.onerror = () => {
-                this._uploadInFlight = false;
-                submitBtn.disabled = false;
-                submitBtn.textContent = 'Upload Package';
+                finish();
+                console.error('[deployments] upload network error, status=', xhr.status);
                 messageEl.textContent = 'Upload failed - network error';
                 messageEl.classList.remove('hidden', 'success');
                 messageEl.classList.add('error');
+            };
+
+            xhr.onabort = () => {
+                // Someone (a new submit, or page teardown) aborted us —
+                // release the flag but leave any newer submit's UI alone.
+                if (this._currentXhr === xhr) finish();
+                else {
+                    this._uploadInFlight = false;
+                    submitBtn.disabled = false;
+                    submitBtn.textContent = 'Upload Package';
+                }
             };
 
             xhr.send(formData);
@@ -357,6 +394,14 @@ export const deploymentsPage = {
             wsClient.off('deployment_status', this._wsHandler);
             this._wsHandler = null;
         }
+        // If an upload is mid-flight when we tear down, abort it. The DOM
+        // it targets is about to be replaced, and letting it run risks a
+        // late onprogress painting on the next page's fresh element.
+        if (this._currentXhr) {
+            try { this._currentXhr.abort(); } catch (_) { /* ignore */ }
+            this._currentXhr = null;
+        }
+        this._uploadInFlight = false;
         deploymentsList = [];
     }
 };
