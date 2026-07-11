@@ -112,6 +112,28 @@ else
     exit 1
 fi
 
+# Save Nominatim for truly offline deployment (does NOT load into local Docker).
+# Tag must match docker-compose.yml exactly so `docker compose up --no-build`
+# on the Pi finds the loaded image.
+echo "=========================================="
+echo "Saving mediagis/nominatim:4.5 (linux/arm64)..."
+echo "=========================================="
+
+if docker buildx build --builder "$BUILDER_NAME" --platform linux/arm64 \
+    -t mediagis/nominatim:4.5 \
+    --output "type=docker,dest=images/nominatim.tar" \
+    - <<'DOCKERFILE' > /tmp/build.log 2>&1
+FROM mediagis/nominatim:4.5
+DOCKERFILE
+then
+    SIZE=$(du -h "images/nominatim.tar" | cut -f1)
+    echo "  Saved to images/nominatim.tar ($SIZE)"
+else
+    echo "  Failed to save mediagis/nominatim:4.5"
+    cat /tmp/build.log
+    exit 1
+fi
+
 echo ""
 echo "=========================================="
 echo "Build Complete!"

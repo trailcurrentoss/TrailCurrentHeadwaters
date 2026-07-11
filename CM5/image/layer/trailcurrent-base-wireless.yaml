@@ -184,6 +184,7 @@ mmdebstrap:
     # Prerequisites (must exist before running build.sh):
     #   - images/*.tar        (Docker image tarballs from build-and-save-images.sh)
     #   - data/tileserver/map.mbtiles  (map tile data)
+    #   - data/nominatim/map.osm.pbf   (OSM extract for the search service)
     #
     - |
       TC_HOME="$1/home/$IGconf_device_user1"
@@ -234,6 +235,16 @@ mmdebstrap:
       else
         echo "WARNING: map.mbtiles not found at data/tileserver/map.mbtiles"
         echo "The tileserver will not start without this file."
+      fi
+
+      # data/nominatim/map.osm.pbf (OSM extract for the search service, ~18GB)
+      mkdir -p "$TC_HOME/data/nominatim"
+      if [ -f "$REPO_ROOT/data/nominatim/map.osm.pbf" ]; then
+        cp "$REPO_ROOT/data/nominatim/map.osm.pbf" "$TC_HOME/data/nominatim/map.osm.pbf"
+        chown 1000:1000 "$TC_HOME/data/nominatim/map.osm.pbf"
+      else
+        echo "WARNING: map.osm.pbf not found at data/nominatim/map.osm.pbf"
+        echo "The nominatim search service will not start without this file."
       fi
 
       # data/keys/ directory (populated by firstboot)

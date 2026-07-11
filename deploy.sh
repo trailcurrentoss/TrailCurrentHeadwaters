@@ -231,8 +231,21 @@ echo "Step 4: Starting Docker services..."
 # Pre-create all Docker bind-mount directories as the current user before Docker
 # starts. If Docker creates them first it does so as root, causing permission
 # denied errors when the deploy script or backend tries to write into them.
-mkdir -p data/keys data/tileserver data/firmware data/deployments
-docker compose up -d --no-build --remove-orphans
+mkdir -p data/keys data/tileserver data/firmware data/deployments data/nominatim
+
+# Nominatim's PBF mount is a file, not a directory — if the file is missing,
+# Docker will silently create an empty directory in its place and the container
+# will fail with a cryptic import error. Fail fast with a helpful message.
+if [ ! -f data/nominatim/map.osm.pbf ]; then
+    echo ""
+    echo "  WARNING: data/nominatim/map.osm.pbf is missing."
+    echo "  The nominatim search service will not start until you place a"
+    echo "  regional .osm.pbf extract at that path. See DOCS/UpdatingNominatim.md."
+    echo "  Continuing without nominatim..."
+    docker compose up -d --no-build --remove-orphans --scale nominatim=0
+else
+    docker compose up -d --no-build --remove-orphans
+fi
 
 # Step 5: Ensure local_code is deployed to the user's home directory
 echo ""

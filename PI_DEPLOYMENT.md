@@ -106,6 +106,19 @@ For devices running older images without baked-in application artifacts:
    # Transfer map.mbtiles to data/tileserver/
    ```
 
+   **Place the Nominatim search dataset** (first time or when updating the region).
+   The same OSM extract used to generate the tiles can be used here directly —
+   Nominatim reads the `.osm.pbf` file with no conversion.
+   ```bash
+   mkdir -p data/nominatim
+   # Transfer map.osm.pbf to data/nominatim/
+   ```
+   See [DOCS/UpdatingNominatim.md](DOCS/UpdatingNominatim.md) for how to obtain
+   the PBF for a different region. If the file is missing when you run
+   `./deploy.sh`, the script will bring up the rest of the stack and print
+   a warning; nominatim starts as soon as you drop the file in and re-run
+   deploy.
+
 <a id="install-the-ca-certificate"></a>
 
 6. **Install the CA certificate on phones/tablets** (for PWA home screen icon):
@@ -202,6 +215,8 @@ These items are **PRESERVED** and never deleted by `deploy.sh`:
 
 ### Data
 - `data/tileserver/map.mbtiles` — Map tile database (~25GB)
+- `data/nominatim/map.osm.pbf` — Raw OSM extract used for search import
+- `nominatim-data` Docker volume — Imported PostgreSQL database that backs the search API (regenerated only if you delete the volume)
 - MongoDB data volume — All application state
 
 **CRITICAL: Never delete `data/` directory during updates!**
@@ -248,7 +263,7 @@ curl -k -o /dev/null -s -w "%{http_code}" https://localhost/
 ```bash
 # Check logs for specific service
 docker compose logs <service-name>
-# Services: backend, frontend, mosquitto, mongodb, tileserver
+# Services: backend, frontend, mosquitto, mongodb, tileserver, geocoder, nominatim
 
 # Restart all containers
 docker compose down && docker compose up -d --no-build
@@ -298,3 +313,4 @@ ping trailcurrent01.local
 - **OTA System Details**: [OTA_DEPLOYMENT_IMPLEMENTATION.md](OTA_DEPLOYMENT_IMPLEMENTATION.md) (includes MCU firmware OTA and cloud-to-Pi deployment watcher)
 - **Development**: [README.md](README.md)
 - **Map Tiles**: [DOCS/UpdatingMapTiles.md](DOCS/UpdatingMapTiles.md)
+- **Search Dataset (Nominatim)**: [DOCS/UpdatingNominatim.md](DOCS/UpdatingNominatim.md)

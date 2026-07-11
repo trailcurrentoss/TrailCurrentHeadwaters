@@ -2505,7 +2505,7 @@ body {
 
 .location-info {
     position: absolute;
-    top: 16px;
+    top: 72px; /* Sits below .map-search (which owns top:16px) */
     left: 16px;
     background: var(--bg-primary);
     border: 1px solid var(--border-color);
@@ -2514,6 +2514,144 @@ body {
     z-index: 1000;
     width: 65%;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+
+/* ===== Map search box ===== */
+.map-search {
+    position: absolute;
+    top: 16px;
+    left: 16px;
+    width: min(420px, calc(100% - 96px));
+    z-index: 1001;
+    font-family: inherit;
+}
+
+.map-search-input-wrapper {
+    position: relative;
+    display: flex;
+    align-items: center;
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    padding: 0 8px 0 12px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.map-search-input-wrapper:focus-within {
+    border-color: var(--primary);
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.25), 0 0 0 3px rgba(82, 164, 65, 0.15);
+}
+
+.map-search-icon {
+    width: 18px;
+    height: 18px;
+    color: var(--text-secondary);
+    flex-shrink: 0;
+}
+
+.map-search-input {
+    flex: 1;
+    min-width: 0;
+    background: transparent;
+    border: none;
+    outline: none;
+    color: var(--text-primary);
+    font-size: 0.95rem;
+    padding: 12px 8px;
+    font-family: inherit;
+}
+
+.map-search-input::placeholder {
+    color: var(--text-muted, var(--text-secondary));
+}
+
+.map-search-clear {
+    background: transparent;
+    border: none;
+    color: var(--text-secondary);
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+.map-search-clear:hover {
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+}
+
+.map-search-clear svg {
+    width: 16px;
+    height: 16px;
+}
+
+.map-search-results {
+    list-style: none;
+    margin: 6px 0 0 0;
+    padding: 6px 0;
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+    max-height: 60vh;
+    overflow-y: auto;
+}
+
+.map-search-result {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 10px 14px;
+    cursor: pointer;
+    transition: background-color 0.1s ease;
+}
+
+.map-search-result:hover,
+.map-search-result:focus {
+    background: var(--bg-secondary);
+}
+
+.map-search-result-icon {
+    width: 18px;
+    height: 18px;
+    color: var(--primary);
+    flex-shrink: 0;
+    margin-top: 2px;
+}
+
+.map-search-result-text {
+    flex: 1;
+    min-width: 0;
+}
+
+.map-search-result-primary {
+    color: var(--text-primary);
+    font-size: 0.9rem;
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.map-search-result-secondary {
+    color: var(--text-secondary);
+    font-size: 0.8rem;
+    margin-top: 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.map-search-empty {
+    padding: 12px 14px;
+    color: var(--text-secondary);
+    font-size: 0.875rem;
+    text-align: center;
 }
 
 .location-status {
@@ -2617,7 +2755,14 @@ body {
     .location-info {
         left: 16px;
         right: 16px;
+        top: 68px;
         text-align: center;
+    }
+
+    .map-search {
+        left: 16px;
+        right: 64px; /* leaves gap for map-controls column */
+        width: auto;
     }
 
     .map-btn {

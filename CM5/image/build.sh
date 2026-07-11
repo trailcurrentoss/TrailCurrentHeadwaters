@@ -56,6 +56,19 @@ else
     echo "  Map tiles ($MBTILES_SIZE): OK"
 fi
 
+if [ ! -f "$REPO_ROOT/data/nominatim/map.osm.pbf" ]; then
+    echo "WARNING: map.osm.pbf not found at data/nominatim/map.osm.pbf"
+    echo "  The image will be built without the search dataset."
+    echo "  The nominatim container will not start without this file."
+    read -rp "  Continue anyway? [y/N] " answer
+    if [ "$answer" != "y" ] && [ "$answer" != "Y" ]; then
+        exit 1
+    fi
+else
+    PBF_SIZE=$(du -h "$REPO_ROOT/data/nominatim/map.osm.pbf" | cut -f1)
+    echo "  Search dataset ($PBF_SIZE): OK"
+fi
+
 echo ""
 
 # Hash the password so we can use IGconf_device_user1passhash

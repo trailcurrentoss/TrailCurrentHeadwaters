@@ -77,7 +77,25 @@ mkdir -p data/tileserver
 
 A single US state (~200 MB - 2 GB) works fine for development. Full US coverage is ~10-25 GB.
 
-### Step 6: Build and start in development mode
+### Step 6: Obtain the search dataset (Nominatim PBF)
+
+The nominatim service powers the map's search box. It needs a raw OpenStreetMap
+`.osm.pbf` extract at `data/nominatim/map.osm.pbf`. **No conversion is needed** —
+Nominatim imports the PBF directly.
+
+```bash
+mkdir -p data/nominatim
+# Place your PBF file at: data/nominatim/map.osm.pbf
+```
+
+**How to get the PBF:**
+- **Reuse the PbfTileConverter cache:** If you already ran `Utilities/PbfTileConverter/convert.sh` for map tiles, the cached `<region>-latest.osm.pbf` is the same file — copy or symlink it into `data/nominatim/map.osm.pbf` (no re-download).
+- **Download directly from Geofabrik:** e.g. `curl -O https://download.geofabrik.de/north-america/us/colorado-latest.osm.pbf && mv colorado-latest.osm.pbf data/nominatim/map.osm.pbf`
+- **Copy from a team member:** Copy their `map.osm.pbf` from an existing machine
+
+Full details, region sizing, and import expectations: [DOCS/UpdatingNominatim.md](DOCS/UpdatingNominatim.md). First-run import into PostgreSQL takes hours for a small state and days for a continent.
+
+### Step 7: Build and start in development mode
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
@@ -100,7 +118,7 @@ Containers will automatically:
 After startup, verify all services are healthy:
 
 ```bash
-# All 5 containers should be running
+# All 7 containers should be running
 docker compose ps
 
 # Frontend loads
@@ -144,6 +162,7 @@ an interactive wizard on first SSH login.
 |------|---------------|
 | `images/*.tar` | Run `./build-and-save-images.sh` (builds ARM64 Docker images) |
 | `data/tileserver/map.mbtiles` | Download from OSM data or copy from a team member (see [DOCS/UpdatingMapTiles.md](DOCS/UpdatingMapTiles.md)) |
+| `data/nominatim/map.osm.pbf` | Raw OSM extract for the search service — same PBF that PbfTileConverter downloads, or grab from [Geofabrik](https://download.geofabrik.de/) (see [DOCS/UpdatingNominatim.md](DOCS/UpdatingNominatim.md)) |
 
 **Build the image:**
 ```bash
@@ -151,8 +170,9 @@ an interactive wizard on first SSH login.
 ./build-and-save-images.sh
 
 # 2. Ensure map.mbtiles exists at data/tileserver/map.mbtiles
+# 3. Ensure map.osm.pbf exists at data/nominatim/map.osm.pbf
 
-# 3. Build the CM5 image (bakes in Docker images, map tiles, app code, configs)
+# 4. Build the CM5 image (bakes in Docker images, map data, app code, configs)
 cd CM5/image
 sudo ./build.sh myuser mypassword
 ```
@@ -171,7 +191,7 @@ deployment zip:
 ```
 
 This will:
-1. Build all 4 service images for `linux/arm64` (plus pull `mongo:7`)
+1. Build all 5 local service images for `linux/arm64` (plus pull `mongo:7` and `mediagis/nominatim:4.5`)
 2. Save images as `.tar` files in `images/`
 3. Fetch MCU firmware from GitHub releases (if available)
 4. Package everything into `trailcurrent-deployment-1.0.0.zip`
@@ -198,7 +218,7 @@ See [PI_DEPLOYMENT.md](PI_DEPLOYMENT.md) for detailed deployment instructions.
 
 ### Services
 
-The application runs 5 Docker containers:
+The application runs 7 Docker containers:
 
 | Service | Purpose |
 |---------|---------|
@@ -207,6 +227,8 @@ The application runs 5 Docker containers:
 | **mosquitto** | Eclipse Mosquitto MQTT broker (TLS on port 8883) |
 | **mongodb** | MongoDB 7 document database |
 | **tileserver** | Custom vector tile server with styles, fonts, and sprites |
+| **geocoder** | Offline reverse-geocode service (GeoNames cities1000) |
+| **nominatim** | Offline forward-geocode / search service (OSM PBF → PostgreSQL) |
 
 ### CAN Bus Bridge
 
@@ -339,11 +361,14 @@ containers/          Dockerfiles for each service
   backend/           Node.js Express API + CAN bridge + cloud bridge
   mosquitto/         Eclipse Mosquitto MQTT broker
   tileserver/        Custom tile server (styles, fonts, sprites)
+  geocoder/          Offline reverse-geocode service
+  nominatim/         Marker only — image is mediagis/nominatim:4.5, no custom Dockerfile
 config/              Version-controlled service configurations
   mosquitto/         mosquitto.conf
 data/                Runtime data (gitignored)
   keys/              TLS certificates
   tileserver/        map.mbtiles (~25 GB, not in repo)
+  nominatim/         map.osm.pbf (OSM extract for search, not in repo)
 images/              ARM64 Docker image tarballs (gitignored, built by build-and-save-images.sh)
 local_code/          Python host services (CAN-to-MQTT bridge, deployment watcher, OTA helpers)
 scripts/             Utility scripts (cert generation)
@@ -351,7 +376,7 @@ CM5/                 CM5 image build system, flashing tools, setup guide
 ```
 
 **Docker Compose files:**
-- `docker-compose.yml` — Production orchestration (5 services)
+- `docker-compose.yml` — Production orchestration (7 services)
 - `docker-compose.dev.yml` — Development overrides (hot-reload, debug ports)
 
 ---
@@ -460,6 +485,7 @@ The `data/` directory contains all persistent application data:
 
 - **SSL certificates** (`data/keys/`) — Generated once, valid for 10 years
 - **Map tiles** (`data/tileserver/map.mbtiles`) — Set up once, rarely updated
+- **Search dataset** (`data/nominatim/map.osm.pbf`) — Set up once, rarely updated (imported into the `nominatim-data` PostgreSQL volume on first run)
 - **MongoDB** — Named volume `mongodb-data`, persists across rebuilds
 
 **Never delete `data/` during updates** unless performing a complete reset. All data persists across container rebuilds.

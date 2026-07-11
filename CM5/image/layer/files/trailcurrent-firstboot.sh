@@ -51,6 +51,7 @@ fi
 # so Docker uses the existing user-owned directories instead of creating root-owned ones.
 sudo -u "$TC_USER" mkdir -p "$TC_HOME/data/keys"
 sudo -u "$TC_USER" mkdir -p "$TC_HOME/data/tileserver"
+sudo -u "$TC_USER" mkdir -p "$TC_HOME/data/nominatim"
 sudo -u "$TC_USER" mkdir -p "$TC_HOME/data/firmware"
 sudo -u "$TC_USER" mkdir -p "$TC_HOME/data/deployments"
 sudo -u "$TC_USER" mkdir -p "$TC_HOME/local_code"

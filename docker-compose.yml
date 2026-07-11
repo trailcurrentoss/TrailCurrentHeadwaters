@@ -46,6 +46,7 @@ services:
       - mongodb
       - tileserver
       - geocoder
+      - nominatim
   geocoder:
     # Offline reverse-geocode service (GeoNames cities1000).
     # Backend proxies /api/geocode/reverse to this container so the browser
@@ -54,6 +55,31 @@ services:
     build:
       context: ./containers/geocoder
       dockerfile: Dockerfile
+    restart: unless-stopped
+  nominatim:
+    # Offline forward-geocode / search service (Nominatim + PostgreSQL).
+    # Backend proxies /api/geocode/search to this container on the Docker
+    # bridge; the browser never talks to it directly.
+    #
+    # FIRST-RUN: this imports data/nominatim/map.osm.pbf into PostgreSQL,
+    # which for a large regional PBF can take many hours and tens of GB of
+    # disk. Progress shows in `docker compose logs -f nominatim`. Data
+    # persists in the nominatim-data volume across restarts.
+    #
+    # See DOCS/UpdatingNominatim.md for how to obtain / regenerate the
+    # map.osm.pbf file for a different region.
+    image: mediagis/nominatim:4.5
+    environment:
+      - PBF_PATH=/nominatim/data/map.osm.pbf
+      - NOMINATIM_PASSWORD=${NOMINATIM_PASSWORD:-trailcurrent}
+      - IMPORT_WIKIPEDIA=false
+      - IMPORT_US_POSTCODES=false
+      - IMPORT_GB_POSTCODES=false
+      - THREADS=4
+    volumes:
+      - ./data/nominatim/map.osm.pbf:/nominatim/data/map.osm.pbf:ro
+      - nominatim-data:/var/lib/postgresql/16/main
+    shm_size: 1gb
     restart: unless-stopped
   mongodb:
     image: mongo:7
@@ -98,3 +124,4 @@ volumes:
   mongodb-data:
   mosquitto-data:
   mosquitto-log:
+  nominatim-data:
