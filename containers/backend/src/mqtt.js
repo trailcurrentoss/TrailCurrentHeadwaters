@@ -41,6 +41,7 @@ const TOPICS = {
     ENERGY_STATUS: `${MQTT_ROOT}/${MQTT_ENERGY}/${MSG_STATUS}`,
     AIRQUALITY_STATUS: `${MQTT_ROOT}/${MQTT_AIRQUALITY}/${MSG_STATUS}`,
     AIRQUALITY_TEMP_AND_HUMIDITY: `${MQTT_ROOT}/${MQTT_AIRQUALITY}/temphumid`,
+    AIRQUALITY_SAFETY: `${MQTT_ROOT}/${MQTT_AIRQUALITY}/safety`,
     GPS_LAT_LON: `${MQTT_ROOT}/${MQTT_GPS}/latlon`,
     GPS_ALT: `${MQTT_ROOT}/${MQTT_GPS}/alt`,
     GPS_GNSS_DETAILS: `${MQTT_ROOT}/${MQTT_GPS}/details`,
@@ -235,6 +236,15 @@ class MqttService {
                 console.log('Subscribed to air quality temp and humidity topic');
             }
         })
+
+        // Subscribe to air quality safety topic (CO / LPG / alarm flags from Borealis 0x20)
+        this.client.subscribe(TOPICS.AIRQUALITY_SAFETY, (err) => {
+            if (err) {
+                console.error('Failed to subscribe to air quality safety:', err);
+            } else {
+                console.log('Subscribed to air quality safety topic');
+            }
+        });
 
         // Subscribe to GPS lat and lon topic
         this.client.subscribe(TOPICS.GPS_LAT_LON, (err) => {
@@ -460,6 +470,8 @@ class MqttService {
                 this.handleAirQualityStatus(payload);
             } else if (parts[1] === MQTT_AIRQUALITY && parts[2] === 'temphumid') {
                 this.handleAirQualityTempAndHumdity(payload);
+            } else if (parts[1] === MQTT_AIRQUALITY && parts[2] === 'safety') {
+                this.handleAirQualitySafety(payload);
             } else if (parts[1] === MQTT_GPS && parts[2] === 'latlon') {
                 this.handleGpsStatus(payload);
             } else if (parts[1] === MQTT_GPS && parts[2] === 'alt') {
@@ -745,6 +757,13 @@ class MqttService {
     handleAirQualityStatus(payload) {
         if (this.broadcast) {
             this.broadcast('airquality', payload);
+        }
+    }
+
+    // Handle air quality safety update (CO ppm + LPG Rs/R0 + alarm flags) — passthrough to WebSocket
+    handleAirQualitySafety(payload) {
+        if (this.broadcast) {
+            this.broadcast('airquality-safety', payload);
         }
     }
 
@@ -1089,9 +1108,10 @@ class MqttService {
     }
 
     /**
-     * Publish Plateau leveling configuration via CAN bus (CAN ID 0x20)
-     * Sends a single-frame message with subcommand 0x01 (set config)
-     * Only the Plateau module firmware listens on CAN ID 0x20
+     * Publish Plateau leveling configuration via CAN bus (CAN ID 0x36)
+     * Sends a single-frame message with subcommand 0x01 (set config).
+     * Plateau's ID block was reallocated from 0x20/0x30-0x32 to
+     * 0x36-0x39 on 2026-05-19 when Borealis claimed 0x20.
      * @param {number} mounting - Mounting surface (0=floor, 1=left_wall, 2=right_wall)
      * @param {number} vehicleLengthCm - Vehicle length in centimeters (uint16)
      * @param {number} vehicleWidthCm - Vehicle width in centimeters (uint16)
@@ -1115,11 +1135,11 @@ class MqttService {
             0x01                                     // Persist to NVS
         ];
 
-        return this.publishCanMessage(0x20, dataBytes);
+        return this.publishCanMessage(0x36, dataBytes);
     }
 
     /**
-     * Send calibration save command to Plateau via CAN bus (CAN ID 0x20, subcmd 0x03)
+     * Send calibration save command to Plateau via CAN bus (CAN ID 0x36, subcmd 0x03)
      * Plateau will save current BNO055 offsets to NVS, verify the write,
      * then switch to ACCONLY mode and respond with an updated status message.
      * @returns {boolean} Success status
@@ -1131,7 +1151,7 @@ class MqttService {
         }
 
         console.log('[Plateau] Sending calibration save command');
-        return this.publishCanMessage(0x20, [0x03]);
+        return this.publishCanMessage(0x36, [0x03]);
     }
 
     /**

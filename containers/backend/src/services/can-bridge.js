@@ -117,6 +117,33 @@ const parsers = {
         }));
     },
 
+    // ── Borealis safety frame (0x020) — CO + LPG + alarm flags ─────
+    // SEN0466 (electrochemical CO, 0-1000 ppm) + MQ-6 LPG Rs/R0.
+    // Byte 4 alarm bitmask is the source of truth per DBC — bytes 0-3
+    // are for trending. Alarm thresholds are evaluated on-board by
+    // Borealis (CO warn >=70 ppm / alarm >=200 ppm; LPG Rs/R0 warn
+    // <0.5 / alarm <0.3; CO2/VOC alarms reference the environmental
+    // frame). The full flag byte is republished so consumers can pick
+    // the flags they care about without re-decoding.
+    '0x020': (data, mqtt) => {
+        const decoded = decodeBitArrays(data);
+        const co_ppm = (decoded[0] << 8) | decoded[1];
+        const lpg_rs_r0_x1000 = (decoded[2] << 8) | decoded[3];
+        const alarm_flags = decoded[4];
+        mqtt.publish('local/airquality/safety', JSON.stringify({
+            co_ppm,
+            lpg_rs_r0: parseFloat((lpg_rs_r0_x1000 / 1000).toFixed(3)),
+            alarm_flags,
+            co_warn:   (alarm_flags & 0x01) !== 0,
+            co_alarm:  (alarm_flags & 0x02) !== 0,
+            lpg_warn:  (alarm_flags & 0x04) !== 0,
+            lpg_alarm: (alarm_flags & 0x08) !== 0,
+            co2_warn:  (alarm_flags & 0x10) !== 0,
+            co2_alarm: (alarm_flags & 0x20) !== 0,
+            voc_alarm: (alarm_flags & 0x40) !== 0
+        }));
+    },
+
     // ── GPS DateTime (0x006) ───────────────────────────────────────
     '0x006': (data, mqtt) => {
         const decoded = decodeBitArrays(data);
@@ -219,8 +246,11 @@ const parsers = {
     '0x029': (data, mqtt) => parseRelayStatus(data, mqtt, '0x029'),
     '0x02a': (data, mqtt) => parseRelayStatus(data, mqtt, '0x02a'),
 
-    // ── Plateau tilt (0x030) ───────────────────────────────────────
-    '0x030': (data, mqtt) => {
+    // ── Plateau tilt (0x037) ───────────────────────────────────────
+    // Reallocated from 0x030 to 0x037 on 2026-05-19 when Borealis
+    // claimed 0x020 and the leveling group moved as one block to
+    // 0x036-0x039 (matches TrailCurrent.dbc and Plateau firmware).
+    '0x037': (data, mqtt) => {
         const decoded = decodeBitArrays(data);
         let pitch = (decoded[0] << 8) | decoded[1];
         if (pitch >= 0x8000) pitch -= 0x10000;
@@ -249,8 +279,8 @@ const parsers = {
         }));
     },
 
-    // ── Plateau status (0x032) ─────────────────────────────────────
-    '0x032': (data, mqtt) => {
+    // ── Plateau status (0x039) — reallocated from 0x032 ────────────
+    '0x039': (data, mqtt) => {
         const decoded = decodeBitArrays(data);
         const flags = decoded[0];
         const calPacked = decoded[1];

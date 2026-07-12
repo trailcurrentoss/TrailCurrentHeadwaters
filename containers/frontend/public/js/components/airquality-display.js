@@ -1,8 +1,8 @@
 // Air quality display — v02 layout: header with title + recommendation +
-// overall-status pill on the right; then a 2×2 grid of cards for Temp /
-// Humidity / TVOC / eCO₂, each with an icon-in-circle, the current value
-// with a gradient slider bar and a pointer showing where the reading sits
-// within the healthy range.
+// overall-status pill on the right; then a grid of cards for Temp /
+// Humidity / TVOC / eCO₂ / CO, each with an icon-in-circle, the current
+// value with a gradient slider bar and a pointer showing where the
+// reading sits within the healthy range.
 import { wsClient } from '../api.js';
 import { units } from '../services/units.js';
 
@@ -24,6 +24,18 @@ export class AirQualityDisplay {
         this.wsTempAndHumidityHandler = null;
         this.unsubStaleTempHumid = null;
         this.unitsHandler = null;
+
+        // Safety frame (Borealis 0x20) — CO ppm plus alarm bitmask.
+        // Byte 4 is the source of truth for alarm state per DBC; ppm is
+        // used for the slider position and trend value.
+        this.dataSafety = {
+            co_ppm: null,
+            alarm_flags: null,
+            co_warn: false,
+            co_alarm: false
+        };
+        this.wsSafetyHandler = null;
+        this.unsubStaleSafety = null;
     }
 
     render() {
@@ -42,6 +54,7 @@ export class AirQualityDisplay {
                     ${this.renderHumidityCard()}
                     ${this.renderTvocCard()}
                     ${this.renderEco2Card()}
+                    ${this.renderCoCard()}
                 </div>
             </div>
         `;
@@ -147,11 +160,41 @@ export class AirQualityDisplay {
         `;
     }
 
+    // Carbon Monoxide (SEN0466). Label uses plain "CO" — the eCO₂ card
+    // uses the subscript ₂ so the two never read the same at a glance.
+    renderCoCard() {
+        return `
+            <div class="airquality-tile">
+                <div class="airquality-tile-icon neutral">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <path d="M12 2 L4 5 V11 C4 15.5 7 19 12 22 C17 19 20 15.5 20 11 V5 L12 2 Z"></path>
+                        <line x1="12" y1="8" x2="12" y2="13"></line>
+                        <line x1="12" y1="16" x2="12" y2="16.5"></line>
+                    </svg>
+                </div>
+                <div class="airquality-tile-body">
+                    <div class="airquality-tile-head">
+                        <span class="airquality-tile-value" id="co-value">${this.fmtCo()}<span class="airquality-tile-unit"> ppm</span></span>
+                        <span class="airquality-tile-label">CO — Carbon Monoxide</span>
+                        <span class="airquality-badge ${this.getCoClass()}" id="co-badge" ${this.dataSafety.co_ppm == null ? 'style="display:none"' : ''}>${this.getCoLabel()}</span>
+                    </div>
+                    <div class="airquality-slider co-slider" id="co-slider">
+                        <span class="airquality-slider-pointer" id="co-pointer" style="left:${this.coPointerPct()}%"></span>
+                    </div>
+                    <div class="airquality-slider-scale">
+                        <span>0</span><span>70 warn</span><span>200+ ppm</span>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
     // ── Formatters ──────────────────────────────────────────────
 
     fmtHumidity() { return this.dataTempAndHumidity.humidity == null ? '--' : Math.round(this.dataTempAndHumidity.humidity); }
     fmtTvoc()     { return this.data.tvoc_ppb  == null ? '--' : Math.round(this.data.tvoc_ppb); }
     fmtEco2()     { return this.data.eco2_ppm  == null ? '--' : Math.round(this.data.eco2_ppm); }
+    fmtCo()       { return this.dataSafety.co_ppm == null ? '--' : Math.round(this.dataSafety.co_ppm); }
 
     // ── Slider pointer positions (0-100%) ───────────────────────
 
@@ -174,6 +217,13 @@ export class AirQualityDisplay {
         const e = this.data.eco2_ppm;
         if (e == null) return 0;
         return Math.max(0, Math.min(100, ((e - 400) / 1600) * 100));
+    }
+    // 0-300 ppm mapped so that the warn threshold (70) lands at 33% and
+    // the alarm threshold (200) lands at 67% — matches the scale labels.
+    coPointerPct() {
+        const c = this.dataSafety.co_ppm;
+        if (c == null) return 0;
+        return Math.max(0, Math.min(100, (c / 300) * 100));
     }
 
     // ── Level classification ────────────────────────────────────
@@ -209,12 +259,36 @@ export class AirQualityDisplay {
         return 'Alarm';
     }
 
-    // Overall status: worst of TVOC + eCO₂. Drives the header pill + recommendation.
+    // CO classification honors the Borealis alarm-flag byte first (per
+    // DBC: byte 4 is the source of truth), and falls back to ppm-based
+    // classification if the flags aren't reported.
+    getCoClass() {
+        const c = this.dataSafety.co_ppm;
+        if (c == null) return 'unset';
+        if (this.dataSafety.co_alarm) return 'unhealthy';
+        if (this.dataSafety.co_warn)  return 'moderate';
+        if (c >= 200) return 'unhealthy';
+        if (c >= 70)  return 'moderate';
+        return 'good';
+    }
+    getCoLabel() {
+        const c = this.dataSafety.co_ppm;
+        if (c == null) return '';
+        if (this.dataSafety.co_alarm || c >= 200) return 'Danger';
+        if (this.dataSafety.co_warn  || c >= 70)  return 'Warning';
+        return 'Normal';
+    }
+
+    // Overall status: worst of TVOC + eCO₂ + CO. CO in alarm dominates
+    // everything else because it's life-safety, not comfort.
     getOverallClass() {
         const t = this.data.tvoc_ppb;
         const e = this.data.eco2_ppm;
-        if (t == null && e == null) return 'unset';
+        const coCls = this.getCoClass();
+        if (t == null && e == null && coCls === 'unset') return 'unset';
+        if (coCls === 'unhealthy') return 'unhealthy';
         if ((t != null && t >= 660) || (e != null && e >= 2000)) return 'unhealthy';
+        if (coCls === 'moderate') return 'moderate';
         if ((t != null && t >= 220) || (e != null && e >= 1000)) return 'moderate';
         return 'good';
     }
@@ -222,6 +296,9 @@ export class AirQualityDisplay {
         return ({ unset: '—', good: 'Good', moderate: 'Moderate', unhealthy: 'Unhealthy' })[this.getOverallClass()];
     }
     getRecommendation() {
+        // CO danger gets its own explicit callout — generic "ventilate"
+        // language undersells an active carbon-monoxide alarm.
+        if (this.getCoClass() === 'unhealthy') return 'Carbon monoxide detected — ventilate immediately';
         const cls = this.getOverallClass();
         return ({
             unset:     'Waiting for sensor data…',
@@ -233,9 +310,10 @@ export class AirQualityDisplay {
 
     // ── Lifecycle ────────────────────────────────────────────────
 
-    init(data, dataTempAndHumidity) {
+    init(data, dataTempAndHumidity, dataSafety) {
         if (data) this.data = data;
         if (dataTempAndHumidity) this.dataTempAndHumidity = dataTempAndHumidity;
+        if (dataSafety) this.dataSafety = dataSafety;
         this.updateAll();
 
         this.wsHandler = (data) => {
@@ -250,12 +328,22 @@ export class AirQualityDisplay {
         };
         wsClient.on('temphumid', this.wsTempAndHumidityHandler);
 
+        this.wsSafetyHandler = (dataSafety) => {
+            this.dataSafety = dataSafety;
+            this.updateAll();
+        };
+        wsClient.on('airquality-safety', this.wsSafetyHandler);
+
         this.unsubStaleAir = wsClient.onStale('airquality', () => {
             this.data = { tvoc_ppb: null, eco2_ppm: null };
             this.updateAll();
         });
         this.unsubStaleTempHumid = wsClient.onStale('temphumid', () => {
             this.dataTempAndHumidity = { tempInC: null, tempInF: null, humidity: null };
+            this.updateAll();
+        });
+        this.unsubStaleSafety = wsClient.onStale('airquality-safety', () => {
+            this.dataSafety = { co_ppm: null, alarm_flags: null, co_warn: false, co_alarm: false };
             this.updateAll();
         });
 
@@ -309,6 +397,18 @@ export class AirQualityDisplay {
             eco2Badge.className = `airquality-badge ${this.getEco2Class()}`;
             eco2Badge.style.display = this.data.eco2_ppm != null ? '' : 'none';
         }
+
+        // CO
+        const coV = document.getElementById('co-value');
+        if (coV) coV.innerHTML = `${this.fmtCo()}<span class="airquality-tile-unit"> ppm</span>`;
+        const coPtr = document.getElementById('co-pointer');
+        if (coPtr) coPtr.style.left = this.coPointerPct() + '%';
+        const coBadge = document.getElementById('co-badge');
+        if (coBadge) {
+            coBadge.textContent = this.getCoLabel();
+            coBadge.className = `airquality-badge ${this.getCoClass()}`;
+            coBadge.style.display = this.dataSafety.co_ppm != null ? '' : 'none';
+        }
     }
 
     // Legacy shim names still called by any external code.
@@ -318,8 +418,10 @@ export class AirQualityDisplay {
     cleanup() {
         if (this.wsHandler) wsClient.off('airquality', this.wsHandler);
         if (this.wsTempAndHumidityHandler) wsClient.off('temphumid', this.wsTempAndHumidityHandler);
+        if (this.wsSafetyHandler) wsClient.off('airquality-safety', this.wsSafetyHandler);
         if (this.unsubStaleAir) this.unsubStaleAir();
         if (this.unsubStaleTempHumid) this.unsubStaleTempHumid();
+        if (this.unsubStaleSafety) this.unsubStaleSafety();
         if (this.unitsHandler) {
             units.removeEventListener('change', this.unitsHandler);
             this.unitsHandler = null;

@@ -1497,6 +1497,72 @@ body {
     color: var(--text-primary);
 }
 
+/* Disk usage card — iOS Storage-style single-bar visualization. Sits
+   below the CPU/Fan tiles in the System settings card. */
+.disk-usage {
+    margin-top: 16px;
+    padding: 12px 4px 4px;
+}
+
+.disk-usage-header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 10px;
+}
+
+.disk-usage-title {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.disk-usage-summary {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    text-align: right;
+}
+
+.disk-usage-summary-of,
+.disk-usage-summary-suffix,
+.disk-usage-footer-suffix {
+    color: var(--text-muted, var(--text-secondary));
+    font-weight: 400;
+}
+
+.disk-usage-bar {
+    width: 100%;
+    height: 10px;
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 5px;
+    overflow: hidden;
+}
+
+.disk-usage-fill {
+    height: 100%;
+    width: 0%;
+    background: var(--primary);
+    border-radius: 5px 0 0 5px;
+    transition: width 0.4s ease, background-color 0.2s ease;
+}
+
+/* Pressure states — data-pressure is set from the JS based on used %. */
+.disk-usage[data-pressure="warning"] .disk-usage-fill {
+    background: var(--warning);
+}
+
+.disk-usage[data-pressure="danger"] .disk-usage-fill {
+    background: var(--danger);
+}
+
+.disk-usage-footer {
+    margin-top: 8px;
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+}
+
 .settings-item {
     display: flex;
     align-items: center;
@@ -8121,6 +8187,11 @@ input[type="range"] {
 /* Increasing eCO₂ = worse */
 .eco2-slider {
     background: linear-gradient(to right, var(--role-primary), var(--role-primary) 30%, #FFC107 62%, #FF5453 92%);
+}
+/* CO scale is 0-300 ppm mapped 0-100%: warn threshold 70 lands ~23%,
+   alarm threshold 200 lands ~67%. Gradient tracks those breakpoints. */
+.co-slider {
+    background: linear-gradient(to right, var(--role-primary), var(--role-primary) 20%, #FFC107 33%, #FFC107 60%, #FF5453 70%);
 }
 .airquality-slider-pointer {
     position: absolute;

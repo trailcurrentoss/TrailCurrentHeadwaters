@@ -24,7 +24,7 @@ module.exports = (db) => {
     router.post('/upload', (req, res) => {
         const busboy = Busboy({
             headers: req.headers,
-            limits: { fileSize: 2 * 1024 * 1024 * 1024 } // 2GB limit
+            limits: { fileSize: 20 * 1024 * 1024 * 1024 } // 20GB limit — matches nginx client_max_body_size
         });
 
         let version = null;

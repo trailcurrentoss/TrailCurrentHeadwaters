@@ -16,6 +16,25 @@ function escapeHtmlSettings(s) {
         .replace(/"/g, '&quot;');
 }
 
+// Human-friendly byte formatter for disk stats. Restricted to MB / GB / TB
+// only — bytes and KB are too granular for disk sizes on this class of
+// hardware (a CM5's smallest disk is measured in gigabytes). Auto-selects
+// the largest unit that keeps the value under ~1000 (e.g. "232 GB",
+// "1.46 TB"). Returns 'N/A' for null/undefined so the tile shows a
+// graceful placeholder while the first update arrives.
+function formatBytes(bytes) {
+    if (bytes == null || Number.isNaN(bytes)) return 'N/A';
+    const units = ['MB', 'GB', 'TB'];
+    let value = bytes / (1024 * 1024);   // start in MB, never smaller
+    let unit = 0;
+    while (value >= 1024 && unit < units.length - 1) {
+        value /= 1024;
+        unit++;
+    }
+    const decimals = value >= 100 ? 0 : value >= 10 ? 1 : 2;
+    return `${value.toFixed(decimals)} ${units[unit]}`;
+}
+
 export const settingsPage = {
     render() {
         return `
@@ -52,6 +71,24 @@ export const settingsPage = {
                     <div class="system-stat">
                         <span class="system-stat-label">Fan Speed</span>
                         <span class="system-stat-value" id="stat-fan-speed">--</span>
+                    </div>
+                </div>
+                <div class="disk-usage" id="disk-usage">
+                    <div class="disk-usage-header">
+                        <span class="disk-usage-title">Storage</span>
+                        <span class="disk-usage-summary">
+                            <span id="stat-disk-used">--</span>
+                            <span class="disk-usage-summary-of"> of </span>
+                            <span id="stat-disk-total">--</span>
+                            <span class="disk-usage-summary-suffix"> used</span>
+                        </span>
+                    </div>
+                    <div class="disk-usage-bar" role="progressbar" aria-label="Disk usage">
+                        <div class="disk-usage-fill" id="disk-usage-fill"></div>
+                    </div>
+                    <div class="disk-usage-footer">
+                        <span id="stat-disk-free">--</span>
+                        <span class="disk-usage-footer-suffix"> free</span>
                     </div>
                 </div>
             </div>
@@ -1345,6 +1382,28 @@ export const settingsPage = {
         if (tempEl) tempEl.textContent = stats.cpu_temp_c !== null ? `${stats.cpu_temp_c.toFixed(1)}\u00B0C` : 'N/A';
         if (cpuEl) cpuEl.textContent = stats.cpu_percent !== null ? `${stats.cpu_percent}%` : 'N/A';
         if (fanEl) fanEl.textContent = stats.fan_percent !== null ? `${stats.fan_percent}%` : 'N/A';
+
+        const totalEl = document.getElementById('stat-disk-total');
+        const usedEl  = document.getElementById('stat-disk-used');
+        const freeEl  = document.getElementById('stat-disk-free');
+        if (totalEl) totalEl.textContent = formatBytes(stats.disk_total_bytes);
+        if (usedEl)  usedEl.textContent  = formatBytes(stats.disk_used_bytes);
+        if (freeEl)  freeEl.textContent  = formatBytes(stats.disk_free_bytes);
+
+        // Update the fill width + color-code by pressure. Under 75 %: primary
+        // (green); 75-90 %: warning (amber); over 90 %: danger (red). The
+        // color band is a data-attribute the CSS keys off so the fill's
+        // background swaps without extra JS.
+        const fillEl = document.getElementById('disk-usage-fill');
+        const barEl  = document.getElementById('disk-usage');
+        if (fillEl && barEl && stats.disk_total_bytes) {
+            const pct = (stats.disk_used_bytes / stats.disk_total_bytes) * 100;
+            fillEl.style.width = `${Math.max(0, Math.min(100, pct)).toFixed(2)}%`;
+            barEl.dataset.pressure = pct >= 90 ? 'danger'
+                                   : pct >= 75 ? 'warning'
+                                   : 'ok';
+            barEl.setAttribute('aria-valuenow', pct.toFixed(0));
+        }
     },
 
     async setupSystemStats() {
