@@ -419,6 +419,39 @@ class API {
     static async deleteDeployment(id) {
         return this.request(`/deployments/${id}`, { method: 'DELETE' });
     }
+
+    // Maps
+    static async getMapCurrent() {
+        // Bypass API.request because the intentional 404 for no-bundle would
+        // be surfaced as a thrown error otherwise. This endpoint's 404 body
+        // is meaningful data, not an error.
+        const token = AuthStore.getToken();
+        const apiKey = this.getApiKey();
+        const headers = { 'Content-Type': 'application/json' };
+        if (token)  headers['Authorization']    = `Bearer ${token}`;
+        if (apiKey) headers['x-api-key']        = apiKey;
+
+        const response = await fetch(`${API_BASE}/maps/current`, { headers, credentials: 'include' });
+        if (response.status === 404) {
+            const body = await response.json().catch(() => ({}));
+            return { status: 'no-bundle', ...body };
+        }
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Failed to fetch current map');
+        return data;
+    }
+
+    static async getMapVersions() {
+        return this.request('/maps/versions');
+    }
+
+    static async getMapUploads() {
+        return this.request('/maps/uploads');
+    }
+
+    static async rollbackMap() {
+        return this.request('/maps/rollback', { method: 'POST' });
+    }
 }
 
 // WebSocket connection for real-time updates

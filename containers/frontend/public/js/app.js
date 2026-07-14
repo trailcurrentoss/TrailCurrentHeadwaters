@@ -14,6 +14,7 @@ import { mapPage } from './pages/map.js';
 import { wizardPage } from './pages/wizard.js';
 import { configPage } from './pages/config.js';
 import { deploymentsPage } from './pages/deployments.js';
+import { mapsPage } from './pages/maps.js';
 import { playbillPage } from './pages/playbill.js';
 import { peregrinePage } from './pages/peregrine.js';
 import { alarmsPage } from './pages/alarms.js';
@@ -122,6 +123,7 @@ class App {
             .register('map', mapPage)
             .register('config', configPage)
             .register('deployments', deploymentsPage)
+            .register('maps', mapsPage)
             .register('playbill', playbillPage)
             .register('peregrine', peregrinePage)
             .register('alarms', alarmsPage)

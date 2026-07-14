@@ -15,6 +15,7 @@ const MQTT_RELAYS = 'relays';
 const MQTT_LEVEL = 'level';
 const MQTT_WATER = 'water';
 const MQTT_DEPLOYMENT = 'deployment';
+const MQTT_MAPS = 'maps';
 // Playbill in-rig entertainment node — owns radio/livetv/transport state and
 // publishes per-device retained status. Multiple Playbills can coexist on one
 // rig; topics carry a <deviceId> segment so observers can address one or all.
@@ -78,6 +79,9 @@ const TOPICS = {
     SYSTEM_STATS: `${MQTT_ROOT}/system/stats`,
     DEPLOYMENT_AVAILABLE: `${MQTT_ROOT}/${MQTT_DEPLOYMENT}/available`,
     DEPLOYMENT_STATUS: `${MQTT_ROOT}/${MQTT_DEPLOYMENT}/${MSG_STATUS}`,
+    MAPS_AVAILABLE: `${MQTT_ROOT}/${MQTT_MAPS}/available`,
+    MAPS_STATUS: `${MQTT_ROOT}/${MQTT_MAPS}/${MSG_STATUS}`,
+    MAPS_ROLLBACK: `${MQTT_ROOT}/${MQTT_MAPS}/rollback`,
     PROXIMITY_EVENT: `${MQTT_ROOT}/proximity/event`,
     PROXIMITY_STATUS: `${MQTT_ROOT}/proximity/status`,
     WIRELESS_DISCOVERY_TRIGGER: 'local/discovery/trigger',
@@ -406,6 +410,15 @@ class MqttService {
             }
         });
 
+        // Subscribe to local maps status topic (from map-watcher)
+        this.client.subscribe(TOPICS.MAPS_STATUS, (err) => {
+            if (err) {
+                console.error('Failed to subscribe to maps status:', err);
+            } else {
+                console.log('Subscribed to maps status topic');
+            }
+        });
+
         // Subscribe to every Playbill device's per-feature status. The
         // controller publishes retained payloads so a late-joining PWA gets
         // the current state on subscribe without polling.
@@ -508,6 +521,8 @@ class MqttService {
                 this.handleConfigRequest();
             } else if (parts[1] === MQTT_DEPLOYMENT && parts[2] === MSG_STATUS) {
                 this.handleDeploymentStatus(payload);
+            } else if (parts[1] === MQTT_MAPS && parts[2] === MSG_STATUS) {
+                this.handleMapsStatus(payload);
             } else if (parts[1] === 'proximity' && parts[2] === 'event') {
                 this.handleProximityEvent(payload);
             } else if (parts[1] === 'proximity' && parts[2] === 'status') {
@@ -937,6 +952,81 @@ class MqttService {
         }
         const topic = TOPICS.DEPLOYMENT_AVAILABLE;
         console.log(`[Deployment] Publishing to ${topic}: ${data.filename}`);
+        this.client.publish(topic, JSON.stringify(data), { qos: 1 });
+        return true;
+    }
+
+    // Handle maps status from map-watcher (via local MQTT). Persists to
+    // map_upload_statuses and re-emits as a WebSocket 'map_status' event
+    // for the Maps page.
+    async handleMapsStatus(payload) {
+        const { id, status } = payload;
+        if (!id || !status) return;
+
+        const validStatuses = ['uploaded', 'verifying', 'extracting', 'applied', 'failed', 'rolled-back'];
+        if (!validStatuses.includes(status)) return;
+
+        if (this.db) {
+            try {
+                await this.db.collection('map_upload_statuses').insertOne({
+                    uploadId: id,
+                    status,
+                    reason: payload.reason || null,
+                    version: payload.version || null,
+                    region: payload.region || null,
+                    timestamp: new Date(payload.timestamp || Date.now()),
+                    receivedAt: new Date()
+                });
+                // Denormalize onto the parent upload doc so /uploads returns
+                // the latest state without an aggregate.
+                await this.db.collection('map_uploads').updateOne(
+                    { id },
+                    {
+                        $set: {
+                            status,
+                            statusReason: payload.reason || null,
+                            statusUpdatedAt: new Date(payload.timestamp || Date.now())
+                        }
+                    }
+                );
+            } catch (err) {
+                console.error('Error saving map status:', err.message);
+            }
+        }
+
+        if (this.broadcast) {
+            this.broadcast('map_status', {
+                id,
+                status,
+                reason: payload.reason || null,
+                version: payload.version || null,
+                region: payload.region || null,
+                timestamp: payload.timestamp || new Date().toISOString()
+            });
+        }
+    }
+
+    // Publish local maps-available notification (fires after upload lands
+    // in data/maps/staging/ and metadata is recorded).
+    publishLocalMapsAvailable(data) {
+        if (!this.connected) {
+            console.warn('MQTT not connected, cannot publish local maps available');
+            return false;
+        }
+        const topic = TOPICS.MAPS_AVAILABLE;
+        console.log(`[Maps] Publishing to ${topic}: ${data.filename}`);
+        this.client.publish(topic, JSON.stringify(data), { qos: 1 });
+        return true;
+    }
+
+    // Publish rollback request for map-watcher to act on.
+    publishLocalMapsRollback(data) {
+        if (!this.connected) {
+            console.warn('MQTT not connected, cannot publish local maps rollback');
+            return false;
+        }
+        const topic = TOPICS.MAPS_ROLLBACK;
+        console.log(`[Maps] Publishing rollback to ${topic}: ${data.targetVersion}`);
         this.client.publish(topic, JSON.stringify(data), { qos: 1 });
         return true;
     }

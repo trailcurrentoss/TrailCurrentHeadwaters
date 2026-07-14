@@ -26,6 +26,7 @@ const discoveryRoutes = require('./routes/discovery');
 const osRoutes = require('./routes/os');
 const systemStatsRoutes = require('./routes/system-stats');
 const deploymentsRoutes = require('./routes/deployments');
+const mapsRoutes = require('./routes/maps');
 const playbillRoutes = require('./routes/playbill');
 const peregrineRoutes = require('./routes/peregrine');
 const alarmsRoutes = require('./routes/alarms');
@@ -33,6 +34,17 @@ const geocodeRoutes = require('./routes/geocode');
 
 const app = express();
 const server = http.createServer(app);
+
+// Node 18+ defaults server.requestTimeout to 300000 ms (5 minutes) as a
+// slowloris defense — it kills any HTTP request whose body hasn't finished
+// within that window, regardless of whether data is actively flowing. Map
+// bundle uploads run 90–130 GB and take tens of minutes on the LAN, so the
+// cap has to move. nginx caps runaway upstream reads at 24 h; match that
+// here so both sides agree.
+server.requestTimeout = 86400 * 1000;
+// headersTimeout must be >= requestTimeout when both are set; keep them
+// in sync so header-parse and body-receive share the same budget.
+server.headersTimeout = 86400 * 1000;
 
 const PORT = process.env.API_PORT;
 
@@ -80,6 +92,7 @@ async function startServer() {
         app.use('/api/os', osRoutes());
         app.use('/api/system-stats', systemStatsRoutes());
         app.use('/api/deployments', deploymentsRoutes(db));
+        app.use('/api/maps', mapsRoutes(db));
         app.use('/api/playbill', playbillRoutes());
         app.use('/api/peregrine', peregrineRoutes(db));
         app.use('/api/alarms', alarmsRoutes(db));

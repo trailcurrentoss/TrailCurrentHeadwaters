@@ -33,6 +33,7 @@ services:
       - ./data/keys/ca.pem:/app/certs/ca.pem:ro
       - ./data/firmware:/app/firmware
       - ./data/deployments:/app/deployments
+      - ./data/maps:/app/maps
       - /sys:/host/sys:ro
       - /proc:/host/proc:ro
       # Host root FS bind-mount so system-stats can statvfs the actual host

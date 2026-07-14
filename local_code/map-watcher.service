@@ -1,0 +1,24 @@
+[Unit]
+Description=TrailCurrent Map Watcher
+After=docker.service network-online.target
+Requires=docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=trailcurrent
+Group=trailcurrent
+WorkingDirectory=/home/trailcurrent/local_code
+EnvironmentFile=/home/trailcurrent/local_code/.env
+ExecStart=/home/trailcurrent/local_code/cantomqtt/bin/python /home/trailcurrent/local_code/map-watcher.py
+Restart=always
+RestartSec=10
+
+# Security: the watcher must never write outside data/maps/. Combined with
+# the Phase 6 bake ownership invariant this is the map path's blast radius.
+ProtectSystem=strict
+ReadWritePaths=/home/trailcurrent/data/maps /tmp
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

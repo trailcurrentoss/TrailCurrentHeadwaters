@@ -390,6 +390,27 @@ else
     fi
 fi
 
+# Step 6.2: Install (or refresh) the map watcher service. Independent
+# pipeline from deployment-watcher — see PLANS/Offline-Maps-Migration.md.
+echo ""
+echo "Step 6.2: Setting up map watcher service..."
+if [ -f "local_code/map-watcher.service" ]; then
+    sudo cp local_code/map-watcher.service /etc/systemd/system/map-watcher.service
+    sudo systemctl daemon-reload
+    if sudo systemctl is-active --quiet map-watcher.service 2>/dev/null; then
+        sudo systemctl restart map-watcher.service
+        echo "  map-watcher.service refreshed and restarted"
+    elif sudo systemctl is-enabled --quiet map-watcher.service 2>/dev/null; then
+        sudo systemctl start map-watcher.service
+        echo "  map-watcher.service enabled but was stopped, started"
+    else
+        sudo systemctl enable --now map-watcher.service
+        echo "  map-watcher.service installed and started"
+    fi
+else
+    echo "  local_code/map-watcher.service not found, skipping"
+fi
+
 # Step 6.5: Provision WiFi credentials to MCUs (needed for OTA)
 echo ""
 echo "Step 6.5: Provisioning WiFi credentials to MCUs..."
