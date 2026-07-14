@@ -1,0 +1,28 @@
+Font Licenses
+==============
+
+The PBF glyph files in this directory are sourced from the openmaptiles/fonts
+project (https://github.com/openmaptiles/fonts) v2.0 release. Only the font
+families used by this project's map styles are included.
+
+Each font family retains its original license:
+
+Noto Sans (Regular, Bold, Italic)
+  License: SIL Open Font License 1.1 (OFL)
+  Copyright: Google Inc.
+  https://fonts.google.com/noto
+  Free for commercial use. Must include this license notice.
+
+Roboto (Regular, Medium, Condensed Italic)
+  License: Apache License 2.0
+  Copyright: Google Inc.
+  https://fonts.google.com/specimen/Roboto
+  Free for commercial use. Must include license notice.
+
+Metropolis (Regular, Light, Light Italic, Medium Italic)
+  License: Unlicense (Public Domain)
+  Author: Chris Simpson
+  https://fontsarena.com/metropolis-by-chris-simpson/
+  Free for any use without restriction.
+
+All fonts are compatible with MIT licensing and commercial use.

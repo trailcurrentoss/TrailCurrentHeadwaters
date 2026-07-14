@@ -73,12 +73,90 @@ export class MapDisplay {
     }
 
     async init() {
-        // Freshly-flashed devices ship with no map data. Show the "Map Data
-        // not Loaded" state cleanly rather than initializing MapLibre against
-        // a nonexistent tile source. Post-live, the map-upload OTA will land
-        // and this can conditionally load MapLibre when data is present.
-        this.initNoMapDataState();
+        // Two entry points depending on whether a map bundle is installed:
+        //   no-bundle  → render the placeholder, wire up WebSocket, done.
+        //   installed  → load MapLibre + PMTiles adapter, register protocol,
+        //                init the map, wire theme-change listener, WebSocket.
+        // We consult /api/maps/current so a device that gets a bundle uploaded
+        // via the Maps page can render the map on the next page load without
+        // any special case.
         this.setupWebSocket();
+
+        let bundleInstalled = false;
+        try {
+            const resp = await API.getMapCurrent();
+            bundleInstalled = resp && resp.status === 'installed';
+        } catch (err) {
+            console.warn('[map] /api/maps/current failed, assuming no bundle:', err);
+        }
+
+        if (!bundleInstalled) {
+            this.initNoMapDataState();
+            return;
+        }
+
+        try {
+            await this.loadMapLibre();
+            this.registerPmtilesProtocol();
+            this.initMap();
+            this.setupThemeListener();
+        } catch (err) {
+            console.error('[map] MapLibre/PMTiles init failed, falling back to no-data state:', err);
+            this.initNoMapDataState();
+        }
+    }
+
+    // Wire the pmtiles:// protocol into MapLibre. The pmtiles UMD bundle
+    // creates a top-level `pmtiles` global; `Protocol` handles Range-based
+    // reads against the static PMTiles file served by nginx.
+    registerPmtilesProtocol() {
+        if (this._pmtilesRegistered) return;
+        if (!window.pmtiles || !window.maplibregl) {
+            throw new Error('pmtiles or maplibregl not loaded');
+        }
+        const protocol = new window.pmtiles.Protocol();
+        window.maplibregl.addProtocol('pmtiles', protocol.tile);
+        this._pmtilesRegistered = true;
+    }
+
+    // Watch for data-theme flips on <html>. The button in app-shell.js
+    // toggles the attribute, which used to require a full page reload
+    // to switch the map style. MutationObserver + setStyle gives us
+    // instant swaps.
+    setupThemeListener() {
+        if (this._themeObserver) return;
+        this._themeObserver = new MutationObserver((mutations) => {
+            for (const m of mutations) {
+                if (m.attributeName === 'data-theme') {
+                    this.applyThemeStyle();
+                    return;
+                }
+            }
+        });
+        this._themeObserver.observe(document.documentElement, {
+            attributes: true,
+            attributeFilter: ['data-theme']
+        });
+    }
+
+    // Swap the MapLibre style JSON to match the current data-theme without
+    // tearing down the map (preserves camera, layers we added, etc.).
+    applyThemeStyle() {
+        if (!this.map) return;
+        const styleUrl = this.currentStyleUrl();
+        // Preserve our added sources/layers (user-location, search-result)
+        // across the style change — MapLibre wipes them when setStyle runs.
+        // Re-add them on the next `style.load` event.
+        this.map.once('style.load', () => {
+            this.addLocationLayers();
+        });
+        this.map.setStyle(styleUrl);
+    }
+
+    currentStyleUrl() {
+        const theme = document.documentElement.getAttribute('data-theme') || 'dark';
+        const styleName = theme === 'dark' ? '3d-dark' : '3d';
+        return `/maps-static/styles/${styleName}/style.json`;
     }
 
     initNoMapDataState() {
@@ -104,28 +182,36 @@ export class MapDisplay {
     }
 
     async loadMapLibre() {
-        if (this.maplibreLoaded || window.maplibregl) {
-            this.maplibreLoaded = true;
-            return;
-        }
+        if (this.maplibreLoaded && window.pmtiles) return;
 
-        return new Promise((resolve, reject) => {
-            // Load MapLibre GL CSS from local bundle
+        // Load MapLibre CSS + JS + PMTiles adapter. Order matters:
+        // pmtiles registers into maplibregl.addProtocol at map-init time,
+        // so both scripts must be present before initMap runs.
+        const loadScript = (src) => new Promise((resolve, reject) => {
+            // Reuse an existing tag if the script is already in the DOM
+            // (defends against duplicate loads across page transitions).
+            if (document.querySelector(`script[src="${src}"]`)) { resolve(); return; }
+            const s = document.createElement('script');
+            s.src = src;
+            s.onload = () => resolve();
+            s.onerror = () => reject(new Error(`Failed to load ${src}`));
+            document.head.appendChild(s);
+        });
+
+        if (!document.querySelector('link[href="/libs/maplibre/maplibre-gl.css"]')) {
             const link = document.createElement('link');
             link.rel = 'stylesheet';
             link.href = '/libs/maplibre/maplibre-gl.css';
             document.head.appendChild(link);
+        }
 
-            // Load MapLibre GL JS from local bundle
-            const script = document.createElement('script');
-            script.src = '/libs/maplibre/maplibre-gl.js';
-            script.onload = () => {
-                this.maplibreLoaded = true;
-                resolve();
-            };
-            script.onerror = reject;
-            document.head.appendChild(script);
-        });
+        if (!window.maplibregl) {
+            await loadScript('/libs/maplibre/maplibre-gl.js');
+        }
+        if (!window.pmtiles) {
+            await loadScript('/libs/pmtiles/pmtiles.js');
+        }
+        this.maplibreLoaded = true;
     }
 
     initMap() {
@@ -139,13 +225,10 @@ export class MapDisplay {
         const defaultCenter = [-98.5795, 39.8283]; // MapLibre uses [lng, lat]
         const defaultZoom = 4;
 
-        // Get the theme-appropriate style from tileserver-gl
-        const theme = document.documentElement.getAttribute('data-theme') || 'dark';
-        // Map themes to tileserver styles: '3d-dark' for dark mode, '3d' for light mode
-        const styleName = theme === 'dark' ? '3d-dark' : '3d';
-
-        // Use the tileserver-gl style endpoint for vector tiles
-        const styleUrl = `/styles/${styleName}/style.json`;
+        // Style JSON is a static asset baked into the frontend container.
+        // The `pmtiles://` source URL inside the JSON is resolved by the
+        // adapter we registered in registerPmtilesProtocol.
+        const styleUrl = this.currentStyleUrl();
 
         // Initialize the map
         this.map = new maplibregl.Map({
@@ -634,6 +717,13 @@ export class MapDisplay {
 
         if (this.unsubStaleLatlon) this.unsubStaleLatlon();
         if (this.unsubStaleGnss) this.unsubStaleGnss();
+
+        // Stop watching data-theme; otherwise a stale observer keeps firing
+        // setStyle on a destroyed map after the page navigates away.
+        if (this._themeObserver) {
+            this._themeObserver.disconnect();
+            this._themeObserver = null;
+        }
 
         // Destroy map
         if (this.map) {

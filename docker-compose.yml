@@ -9,6 +9,11 @@ services:
     volumes:
       - ./data/keys/server.crt:/etc/nginx/certs/server.crt:ro
       - ./data/keys/server.key:/etc/nginx/certs/server.key:ro
+      # Read-only view of the map data volume so nginx can serve
+      # tiles.pmtiles from the currently-applied bundle via /maps/. The
+      # `current` symlink is relative (versions/<name>), so it resolves
+      # correctly inside the container without following out of the mount.
+      - ./data/maps:/data/maps:ro
     ports:
       - "443:443"
     restart: unless-stopped # Import for reboots
