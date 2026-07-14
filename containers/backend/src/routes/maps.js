@@ -269,6 +269,30 @@ module.exports = (db) => {
         }
     });
 
+    // POST /api/maps/confirm/:id
+    //
+    // User agreed to a pending cross-region apply. Publishes MAPS_CONFIRM
+    // on the local bus; map-watcher resumes the paused apply. No 404 on
+    // unknown id — the watcher owns the pending state and will simply
+    // no-op if it doesn't recognize the id.
+    router.post('/confirm/:id', async (req, res) => {
+        const { id } = req.params;
+        if (!id) return res.status(400).json({ error: 'id required' });
+        mqttService.publishLocalMapsConfirm(id);
+        res.json({ status: 'confirmed', id });
+    });
+
+    // POST /api/maps/cancel/:id
+    //
+    // User rejected a pending cross-region apply. Publishes MAPS_CANCEL;
+    // map-watcher deletes the staged zip and drops the pending state.
+    router.post('/cancel/:id', async (req, res) => {
+        const { id } = req.params;
+        if (!id) return res.status(400).json({ error: 'id required' });
+        mqttService.publishLocalMapsCancel(id);
+        res.json({ status: 'canceled', id });
+    });
+
     // POST /api/maps/rollback
     //
     // Flips `current` back to the most-recent-non-current version. 409 if

@@ -70,3 +70,6 @@ PLANS/
 build/maps/work/
 build/maps/dist/
 
+
+# Stray mktemp-style temp files from deployment package generation
+zi[A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9]

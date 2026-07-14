@@ -95,15 +95,21 @@ function haversineKm(lat1, lon1, lat2, lon2) {
 // Compose a human-readable single-line display string from Photon's split
 // address fields. Nominatim's `display_name` came pre-composed; Photon
 // exposes structured fields, so the frontend gets an equivalent line.
+//
+// Deduping notes:
+// - Photon sometimes sets `name` to the literal address ("10 Downing
+//   Street"). In that case do NOT append the housenumber+street again —
+//   just use the name once.
+// - Sometimes `city` equals `name` (a settlement's own entry); skip.
+// - Sometimes `state` equals `city` (city-state); skip.
 function composeDisplayName(p) {
     const parts = [];
+    const address = p.housenumber && p.street
+        ? `${p.housenumber} ${p.street}`
+        : (p.street || null);
     if (p.name) parts.push(p.name);
-    if (p.housenumber && p.street && p.street !== p.name) {
-        parts.push(`${p.housenumber} ${p.street}`);
-    } else if (p.street && p.street !== p.name) {
-        parts.push(p.street);
-    }
-    if (p.city && p.city !== p.name) parts.push(p.city);
+    if (address && address !== p.name) parts.push(address);
+    if (p.city && p.city !== p.name && p.city !== address) parts.push(p.city);
     if (p.state && p.state !== p.city) parts.push(p.state);
     if (p.country && p.country !== p.state) parts.push(p.country);
     return parts.join(', ');
@@ -140,9 +146,25 @@ function flattenFeature(feature) {
         region: p.state || null,
         country: p.country || null,
         cc: p.countrycode || null,
+        // Structured fields — kept alongside the flat display_name so the
+        // frontend can render per-field UI (e.g. an "(approximate)" hint
+        // when the query asked for a housenumber the OSM data doesn't have).
+        housenumber: p.housenumber || null,
+        street: p.street || null,
+        city: p.city || null,
         osm_type: p.osm_type,
         osm_id: p.osm_id
     };
+}
+
+// If the user's query started with a numeric token, they were almost
+// certainly looking for a specific house address. When Photon can only
+// give us a street/POI/city (no housenumber in the result), the returned
+// coordinate is a centroid — near but not at the address. Annotate the
+// result so the frontend can surface that honestly.
+function requestedHousenumber(q) {
+    const m = /^\s*(\d+)\s+\S/.exec(q || '');
+    return m ? m[1] : null;
 }
 
 module.exports = () => {
@@ -212,20 +234,42 @@ module.exports = () => {
             `lang=en`
         ];
 
-        // Location bias: vehicle GPS if we have one.
+        // Location bias precedence:
+        //   1. Vehicle GPS from Bearing over MQTT (this.currentPosition on the
+        //      client → mqttService.lastGpsLatLon on the backend). Best signal:
+        //      "where the RV actually is right now."
+        //   2. Center of the viewbox the frontend just sent. When a user has
+        //      panned to New York on their laptop and searches "500 5th Ave",
+        //      the viewbox is roughly Manhattan — biasing to that center
+        //      surfaces the Manhattan match instead of "500 Fifth Avenue,
+        //      Owego, NY" or "Fifth Ave, some other tiny town."
+        //   3. Nothing — Photon's default global ranking.
+        // Photon uses the coordinates for RANKING bias only; distant matches
+        // are still returned. "Berlin" searched from Colorado still finds
+        // Berlin, Germany — just after any Berlin nearby.
+        let biasLat = null, biasLon = null;
         const gps = mqttService.lastGpsLatLon;
         if (gps && typeof gps.latitude === 'number' && typeof gps.longitude === 'number') {
-            qs.push(`lat=${encodeURIComponent(gps.latitude)}`);
-            qs.push(`lon=${encodeURIComponent(gps.longitude)}`);
+            biasLat = gps.latitude;
+            biasLon = gps.longitude;
+        } else if (viewbox && typeof viewbox === 'string') {
+            const vparts = viewbox.split(',').map(Number);
+            if (vparts.length === 4 && vparts.every(n => !Number.isNaN(n))) {
+                const [w, n, e, s] = vparts;
+                biasLat = (n + s) / 2;
+                biasLon = (w + e) / 2;
+            }
+        }
+        if (biasLat !== null && biasLon !== null) {
+            qs.push(`lat=${encodeURIComponent(biasLat)}`);
+            qs.push(`lon=${encodeURIComponent(biasLon)}`);
         }
 
-        // Optional bbox restriction (kept as a Nominatim-compat surface).
-        // Photon accepts `bbox=minLon,minLat,maxLon,maxLat`.
+        // Optional hard bbox restriction (kept as a Nominatim-compat surface).
+        // Photon accepts `bbox=minLon,minLat,maxLon,maxLat`. Only kicks in
+        // when the caller explicitly asks for bounded=1 — the location bias
+        // above is a soft rank push, this is a hard filter.
         if (viewbox && typeof viewbox === 'string') {
-            // Nominatim viewbox format is "w,n,e,s"; convert to Photon bbox
-            // "minLon,minLat,maxLon,maxLat" = "w,s,e,n". Preserved literally
-            // if caller already passes Photon-format (contains 4 comma-
-            // separated numbers either way — we assume Nominatim style).
             const parts = viewbox.split(',').map(Number);
             if (parts.length === 4 && parts.every(n => !Number.isNaN(n))) {
                 const [w, n, e, s] = parts;
@@ -240,7 +284,19 @@ module.exports = () => {
             if (status !== 200 || !body || !Array.isArray(body.features)) {
                 return res.status(status || 502).json({ error: 'photon error', body });
             }
-            const results = body.features.map(flattenFeature);
+            // If the user's query started with a housenumber, mark any result
+            // that DIDN'T come back with a matching housenumber as approximate
+            // so the frontend can render "(approximate — street center)"
+            // instead of pretending the pin is exact. This is data-driven —
+            // when OSM has the address, results include it; when it doesn't,
+            // Photon degrades to the street/POI and we flag that honestly.
+            const askedHn = requestedHousenumber(q);
+            const results = body.features.map(flattenFeature).map((r) => {
+                if (askedHn && !r.housenumber) {
+                    return { ...r, approximate: true, requested_housenumber: askedHn };
+                }
+                return r;
+            });
             return res.status(200).json({ results });
         } catch (err) {
             console.error('[geocode] photon search error:', err.message);

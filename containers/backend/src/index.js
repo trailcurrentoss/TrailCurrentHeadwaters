@@ -27,6 +27,7 @@ const osRoutes = require('./routes/os');
 const systemStatsRoutes = require('./routes/system-stats');
 const deploymentsRoutes = require('./routes/deployments');
 const mapsRoutes = require('./routes/maps');
+const routeRoutes = require('./routes/route');
 const playbillRoutes = require('./routes/playbill');
 const peregrineRoutes = require('./routes/peregrine');
 const alarmsRoutes = require('./routes/alarms');
@@ -93,6 +94,7 @@ async function startServer() {
         app.use('/api/system-stats', systemStatsRoutes());
         app.use('/api/deployments', deploymentsRoutes(db));
         app.use('/api/maps', mapsRoutes(db));
+        app.use('/api/route', routeRoutes());
         app.use('/api/playbill', playbillRoutes());
         app.use('/api/peregrine', peregrineRoutes(db));
         app.use('/api/alarms', alarmsRoutes(db));

@@ -29,7 +29,8 @@ function formatStatus(status) {
         extracting:  'Extracting',
         applied:     'Applied',
         failed:      'Failed',
-        'rolled-back': 'Rolled back'
+        'rolled-back': 'Rolled back',
+        'awaiting-confirmation': 'Waiting for confirmation'
     };
     return labels[status] || status;
 }
@@ -38,7 +39,14 @@ function statusClass(status) {
     if (!status) return '';
     if (status === 'applied' || status === 'rolled-back') return 'status-success';
     if (status === 'failed') return 'status-danger';
+    if (status === 'awaiting-confirmation') return 'status-warning';
     return 'status-active';
+}
+
+function escapeHtml(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }[c]));
 }
 
 export const mapsPage = {
@@ -210,22 +218,66 @@ export const mapsPage = {
             return;
         }
 
-        listEl.innerHTML = uploadsList.map(u => `
-            <div class="deployment-list-item">
-                <div class="deployment-info">
-                    <div class="deployment-header-row">
-                        <span class="deployment-version">${u.filename || u.id}</span>
-                        ${u.status ? `<span class="deployment-status ${statusClass(u.status)}">${formatStatus(u.status)}</span>` : ''}
+        listEl.innerHTML = uploadsList.map(u => {
+            // Cross-region confirmation prompt (Phase 5). map-watcher stalls
+            // apply when the incoming bundle's region differs from what's
+            // installed; user picks Confirm to proceed or Cancel to drop.
+            const awaitingConf = u.status === 'awaiting-confirmation';
+            const confirmBar = awaitingConf ? `
+                <div class="map-upload-confirm-bar">
+                    <div class="map-upload-confirm-message">
+                        ${escapeHtml(u.statusReason || 'This upload declares a different region than what is installed.')}
                     </div>
-                    <span class="deployment-meta">${formatFileSize(u.size)} &middot; ${(u.sha256 || '').substring(0, 12)}${u.sha256 ? '...' : ''}</span>
-                    <span class="deployment-meta">
-                        ${formatDate(u.uploadedAt)}
-                        ${u.statusUpdatedAt ? ` &middot; ${formatStatus(u.status)}: ${formatDate(u.statusUpdatedAt)}` : ''}
-                        ${u.statusReason ? ` &middot; ${u.statusReason}` : ''}
-                    </span>
+                    <div class="map-upload-confirm-actions">
+                        <button type="button" class="password-submit-btn map-upload-cancel-btn" data-id="${escapeHtml(u.id)}">Cancel</button>
+                        <button type="button" class="password-submit-btn map-upload-confirm-btn" data-id="${escapeHtml(u.id)}">Confirm &amp; apply</button>
+                    </div>
                 </div>
-            </div>
-        `).join('');
+            ` : '';
+            return `
+                <div class="deployment-list-item${awaitingConf ? ' deployment-list-item--attention' : ''}">
+                    <div class="deployment-info">
+                        <div class="deployment-header-row">
+                            <span class="deployment-version">${u.filename || u.id}</span>
+                            ${u.status ? `<span class="deployment-status ${statusClass(u.status)}">${formatStatus(u.status)}</span>` : ''}
+                        </div>
+                        <span class="deployment-meta">${formatFileSize(u.size)} &middot; ${(u.sha256 || '').substring(0, 12)}${u.sha256 ? '...' : ''}</span>
+                        <span class="deployment-meta">
+                            ${formatDate(u.uploadedAt)}
+                            ${u.statusUpdatedAt ? ` &middot; ${formatStatus(u.status)}: ${formatDate(u.statusUpdatedAt)}` : ''}
+                            ${u.statusReason && !awaitingConf ? ` &middot; ${u.statusReason}` : ''}
+                        </span>
+                        ${confirmBar}
+                    </div>
+                </div>
+            `;
+        }).join('');
+
+        // Wire confirm / cancel buttons on any awaiting-confirmation rows.
+        listEl.querySelectorAll('.map-upload-confirm-btn').forEach((btn) => {
+            btn.addEventListener('click', async () => {
+                const id = btn.dataset.id;
+                btn.disabled = true;
+                try {
+                    await API.confirmMapUpload(id);
+                } catch (err) {
+                    console.error('[maps] confirm failed:', err);
+                    btn.disabled = false;
+                }
+            });
+        });
+        listEl.querySelectorAll('.map-upload-cancel-btn').forEach((btn) => {
+            btn.addEventListener('click', async () => {
+                const id = btn.dataset.id;
+                btn.disabled = true;
+                try {
+                    await API.cancelMapUpload(id);
+                } catch (err) {
+                    console.error('[maps] cancel failed:', err);
+                    btn.disabled = false;
+                }
+            });
+        });
     },
 
     setupUploadForm() {

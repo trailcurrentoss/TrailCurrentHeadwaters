@@ -82,6 +82,8 @@ const TOPICS = {
     MAPS_AVAILABLE: `${MQTT_ROOT}/${MQTT_MAPS}/available`,
     MAPS_STATUS: `${MQTT_ROOT}/${MQTT_MAPS}/${MSG_STATUS}`,
     MAPS_ROLLBACK: `${MQTT_ROOT}/${MQTT_MAPS}/rollback`,
+    MAPS_CONFIRM: `${MQTT_ROOT}/${MQTT_MAPS}/confirm`,
+    MAPS_CANCEL: `${MQTT_ROOT}/${MQTT_MAPS}/cancel`,
     PROXIMITY_EVENT: `${MQTT_ROOT}/proximity/event`,
     PROXIMITY_STATUS: `${MQTT_ROOT}/proximity/status`,
     WIRELESS_DISCOVERY_TRIGGER: 'local/discovery/trigger',
@@ -975,7 +977,7 @@ class MqttService {
         const { id, status } = payload;
         if (!id || !status) return;
 
-        const validStatuses = ['uploaded', 'verifying', 'extracting', 'applied', 'failed', 'rolled-back'];
+        const validStatuses = ['uploaded', 'verifying', 'extracting', 'applied', 'failed', 'rolled-back', 'awaiting-confirmation'];
         if (!validStatuses.includes(status)) return;
 
         if (this.db) {
@@ -1040,6 +1042,32 @@ class MqttService {
         const topic = TOPICS.MAPS_ROLLBACK;
         console.log(`[Maps] Publishing rollback to ${topic}: ${data.targetVersion}`);
         this.client.publish(topic, JSON.stringify(data), { qos: 1 });
+        return true;
+    }
+
+    // Publish user's confirm-cross-region-apply. map-watcher resumes the
+    // paused apply for that upload id.
+    publishLocalMapsConfirm(id) {
+        if (!this.connected) {
+            console.warn('MQTT not connected, cannot publish local maps confirm');
+            return false;
+        }
+        const topic = TOPICS.MAPS_CONFIRM;
+        console.log(`[Maps] Publishing confirm to ${topic}: ${id}`);
+        this.client.publish(topic, JSON.stringify({ id }), { qos: 1 });
+        return true;
+    }
+
+    // Publish user's cancel-cross-region-apply. map-watcher deletes the
+    // staged zip and drops the pending state.
+    publishLocalMapsCancel(id) {
+        if (!this.connected) {
+            console.warn('MQTT not connected, cannot publish local maps cancel');
+            return false;
+        }
+        const topic = TOPICS.MAPS_CANCEL;
+        console.log(`[Maps] Publishing cancel to ${topic}: ${id}`);
+        this.client.publish(topic, JSON.stringify({ id }), { qos: 1 });
         return true;
     }
 

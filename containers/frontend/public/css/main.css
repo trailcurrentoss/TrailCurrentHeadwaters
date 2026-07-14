@@ -2666,6 +2666,44 @@ body {
     color: var(--text-muted, var(--text-secondary));
 }
 
+/* "Restrict search to current map view" toggle. Sits inline with the
+   search input's trailing controls. Two visual states: inactive
+   (subtle icon) and active (primary color background). */
+.map-search-bounded {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    margin-right: 4px;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: background 0.1s ease, color 0.1s ease, border-color 0.1s ease;
+    flex-shrink: 0;
+}
+.map-search-bounded:hover {
+    color: var(--text-primary);
+    background: var(--bg-secondary);
+}
+.map-search-bounded--active {
+    color: #ffffff;
+    background: var(--primary);
+    border-color: var(--primary);
+}
+.map-search-bounded--active:hover {
+    background: var(--primary);
+    color: #ffffff;
+    filter: brightness(1.08);
+}
+.map-search-bounded svg {
+    width: 16px;
+    height: 16px;
+}
+
 .map-search-clear {
     background: transparent;
     border: none;
@@ -2752,6 +2790,28 @@ body {
     color: var(--text-secondary);
     font-size: 0.875rem;
     text-align: center;
+}
+
+/* Approximate hint on search rows where the query asked for a housenumber
+   that OSM doesn't have. The row itself is left visually normal; the hint
+   is a small line that reads like a caption. */
+.map-search-result-approx {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 4px;
+    color: var(--warning, #b45309);
+    font-size: 0.75rem;
+    line-height: 1.25;
+    font-style: italic;
+}
+.map-search-result-approx svg {
+    width: 12px;
+    height: 12px;
+    flex-shrink: 0;
+}
+.map-search-result--approximate .map-search-result-icon {
+    color: var(--warning, #b45309);
 }
 
 .location-status {
@@ -2873,6 +2933,568 @@ body {
     .map-btn svg {
         width: 18px;
         height: 18px;
+    }
+}
+
+/* ===== Routing UI (Phase 4) ===== */
+
+/* Trailing "Directions" chevron button on each search result row. */
+.map-search-result-route {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    padding: 0;
+    margin-left: 6px;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: background 0.1s ease, color 0.1s ease;
+}
+.map-search-result-route:hover {
+    background: var(--bg-secondary);
+    color: var(--primary);
+}
+.map-search-result-route svg {
+    width: 16px;
+    height: 16px;
+}
+
+/* Long-press / right-click popup near the click position. */
+.map-context-menu {
+    position: absolute;
+    z-index: 20;
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+    padding: 4px;
+    min-width: 160px;
+    transform: translate(-8px, 8px);
+}
+.map-context-menu[hidden] { display: none !important; }
+.map-context-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 8px 10px;
+    background: transparent;
+    border: none;
+    border-radius: 6px;
+    color: var(--text-primary);
+    font-size: 0.9rem;
+    text-align: left;
+    cursor: pointer;
+}
+.map-context-menu-item:hover {
+    background: var(--bg-secondary);
+}
+.map-context-menu-item svg {
+    width: 16px;
+    height: 16px;
+    color: var(--primary);
+    flex-shrink: 0;
+}
+
+/* Next-maneuver banner — pinned near the top of the map while a route
+   is active. Distance on the left, instruction + street on the right. */
+.next-maneuver-banner {
+    position: absolute;
+    top: 12px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 16;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 10px 16px;
+    max-width: min(600px, calc(100% - 24px));
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+    pointer-events: auto;
+}
+.next-maneuver-banner[hidden] { display: none !important; }
+.next-maneuver-distance {
+    color: var(--primary);
+    font-size: 1.15rem;
+    font-weight: 700;
+    min-width: 56px;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+.next-maneuver-text {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+.next-maneuver-instruction {
+    color: var(--text-primary);
+    font-size: 0.95rem;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.next-maneuver-detail {
+    color: var(--text-secondary);
+    font-size: 0.8rem;
+    margin-top: 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.next-maneuver-voice {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    padding: 0;
+    margin-left: 8px;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: background 0.1s ease, color 0.1s ease;
+}
+.next-maneuver-voice:hover {
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+}
+.next-maneuver-voice--muted {
+    color: var(--danger, #e94b3c);
+}
+.next-maneuver-voice svg { width: 18px; height: 18px; }
+@media (max-width: 640px) {
+    .next-maneuver-banner {
+        top: 8px;
+        max-width: calc(100% - 16px);
+        padding: 8px 12px;
+    }
+    .next-maneuver-distance { font-size: 1rem; min-width: 46px; }
+    .next-maneuver-instruction { font-size: 0.9rem; }
+}
+
+/* Turn-list panel — slides in from the right when a route is active. */
+.turn-list-slot {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 320px;
+    max-width: 90vw;
+    z-index: 15;
+    pointer-events: none;   /* wrapper is inert; the panel itself opts in */
+}
+.turn-list {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    bottom: 12px;
+    left: 12px;
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    pointer-events: auto;
+    transform: translateX(0);
+    opacity: 1;
+    transition: transform 0.25s ease, opacity 0.25s ease;
+}
+.turn-list--hidden {
+    transform: translateX(calc(100% + 24px));
+    opacity: 0;
+    pointer-events: none;
+}
+.turn-list-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 12px 12px 12px 16px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-secondary);
+    flex-shrink: 0;
+}
+.turn-list-title {
+    flex: 1;
+    min-width: 0;
+    color: var(--text-primary);
+    font-size: 1.05rem;
+    font-weight: 600;
+}
+.turn-list-summary-primary {
+    color: var(--text-primary);
+    font-size: 1.1rem;
+    font-weight: 600;
+}
+.turn-list-summary-secondary {
+    color: var(--text-secondary);
+    font-size: 0.875rem;
+    margin-top: 2px;
+}
+/* Close button — deliberately loud so users don't miss it. */
+.turn-list-close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: background 0.1s ease, border-color 0.1s ease, color 0.1s ease;
+}
+.turn-list-close:hover {
+    background: var(--danger, #e94b3c);
+    border-color: var(--danger, #e94b3c);
+    color: #ffffff;
+}
+.turn-list-close svg {
+    width: 20px;
+    height: 20px;
+}
+.turn-list-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 6px 0;
+}
+.turn-list-steps {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+/* Setup form — Origin / Destination picker (no-GPS or "change starting point") */
+.tl-route-form {
+    padding: 14px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+.tl-row {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+.tl-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--text-secondary);
+    font-size: 0.8rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+.tl-dot {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+}
+.tl-dot--origin { background: #2ecc71; }
+.tl-dot--dest   { background: #e94b3c; }
+.tl-input-wrap {
+    position: relative;
+}
+.tl-input {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    font-size: 0.95rem;
+    outline: none;
+    transition: border-color 0.1s ease;
+    box-sizing: border-box;
+}
+.tl-input:focus {
+    border-color: var(--primary);
+}
+.tl-origin-results {
+    list-style: none;
+    padding: 4px 0;
+    margin: 4px 0 0 0;
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    max-height: 240px;
+    overflow-y: auto;
+}
+.tl-origin-result {
+    padding: 8px 12px;
+    cursor: pointer;
+    transition: background 0.1s ease;
+}
+.tl-origin-result:hover {
+    background: var(--bg-secondary);
+}
+.tl-origin-result-primary {
+    color: var(--text-primary);
+    font-size: 0.9rem;
+    font-weight: 500;
+}
+.tl-origin-result-secondary {
+    color: var(--text-secondary);
+    font-size: 0.78rem;
+    margin-top: 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.tl-origin-empty {
+    padding: 10px 12px;
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+    text-align: center;
+}
+.tl-picked {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    font-size: 0.95rem;
+}
+.tl-picked > span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.tl-picked-clear {
+    background: transparent;
+    border: none;
+    color: var(--primary);
+    cursor: pointer;
+    font-size: 0.85rem;
+    padding: 4px 8px;
+    border-radius: 4px;
+}
+.tl-picked-clear:hover {
+    background: var(--bg-secondary);
+}
+.tl-btn {
+    padding: 10px 16px;
+    border: 1px solid var(--primary);
+    border-radius: 8px;
+    background: var(--bg-primary);
+    color: var(--primary);
+    font-size: 0.95rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.1s ease, color 0.1s ease;
+}
+.tl-btn:hover:not([disabled]) {
+    background: var(--primary);
+    color: #ffffff;
+}
+.tl-btn[disabled] {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+/* Segmented mode picker — Drive / RV / Bike / Walk. Radio group, one
+   active pill at a time. */
+.tl-mode-picker {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 6px;
+}
+.tl-mode-btn {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    padding: 8px 4px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg-primary);
+    color: var(--text-secondary);
+    font-size: 0.75rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.1s ease, border-color 0.1s ease, color 0.1s ease;
+}
+.tl-mode-btn:hover:not(.tl-mode-btn--active) {
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+}
+.tl-mode-btn--active {
+    background: var(--primary);
+    border-color: var(--primary);
+    color: #ffffff;
+}
+.tl-mode-btn svg {
+    width: 20px;
+    height: 20px;
+}
+
+.tl-btn--go {
+    margin-top: 4px;
+    background: var(--primary);
+    color: #ffffff;
+    border-color: var(--primary);
+}
+.tl-btn--go:hover:not([disabled]) {
+    filter: brightness(1.08);
+}
+.tl-btn--danger {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    width: 100%;
+    background: var(--danger, #e94b3c);
+    color: #ffffff;
+    border-color: var(--danger, #e94b3c);
+}
+.tl-btn--danger:hover:not([disabled]) {
+    background: transparent;
+    color: var(--danger, #e94b3c);
+}
+.tl-btn--danger svg {
+    width: 16px;
+    height: 16px;
+}
+
+/* Actions bar at the top of the trip body (holds "End Route"). Sticks to
+   the top of the scrollable step list so it's always in view. */
+.turn-list-actions {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    padding: 10px 14px;
+    background: var(--bg-primary);
+    border-bottom: 1px solid var(--border);
+}
+.tl-hint {
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+    margin-top: 2px;
+}
+
+/* Loading state */
+.tl-loading {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    padding: 30px 16px;
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+}
+.tl-spinner {
+    width: 32px;
+    height: 32px;
+    border: 3px solid var(--border);
+    border-top-color: var(--primary);
+    border-radius: 50%;
+    animation: tl-spin 0.8s linear infinite;
+}
+@keyframes tl-spin {
+    to { transform: rotate(360deg); }
+}
+
+/* Error state */
+.tl-error {
+    padding: 20px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+.tl-error-msg {
+    color: var(--text-primary);
+    font-size: 0.95rem;
+    line-height: 1.4;
+}
+.turn-list-step {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+    transition: background 0.1s ease;
+}
+.turn-list-step:hover {
+    background: var(--bg-secondary);
+}
+.turn-list-step:last-child {
+    border-bottom: none;
+}
+.turn-list-step-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    background: var(--primary);
+    color: #ffffff;
+    font-size: 0.8rem;
+    font-weight: 600;
+    flex-shrink: 0;
+    margin-top: 1px;
+}
+.turn-list-step-body {
+    flex: 1;
+    min-width: 0;
+}
+.turn-list-step-primary {
+    color: var(--text-primary);
+    font-size: 0.9rem;
+    font-weight: 500;
+}
+.turn-list-step-secondary {
+    color: var(--text-secondary);
+    font-size: 0.8rem;
+    margin-top: 2px;
+}
+.turn-list-step-meta {
+    color: var(--text-muted);
+    font-size: 0.75rem;
+    margin-top: 4px;
+    font-family: monospace;
+}
+
+/* Narrow screens: full-width panel that slides up from the bottom */
+@media (max-width: 640px) {
+    .turn-list-slot {
+        width: 100%;
+        top: auto;
+        height: 55%;
+    }
+    .turn-list {
+        top: 0;
+        right: 0;
+        bottom: 0;
+        left: 0;
+        border-radius: 12px 12px 0 0;
+    }
+    .turn-list--hidden {
+        transform: translateY(calc(100% + 24px));
     }
 }
 
@@ -4380,6 +5002,53 @@ body {
 .deployment-status.status-active {
     color: var(--primary);
     background: color-mix(in srgb, var(--primary) 15%, transparent);
+}
+
+.deployment-status.status-warning {
+    color: var(--warning, #b45309);
+    background: color-mix(in srgb, var(--warning, #b45309) 15%, transparent);
+}
+
+/* Cross-region confirmation prompt (Phase 5). Sits inside the upload row
+   when the incoming bundle's region differs from what's installed and the
+   watcher is paused waiting for user Confirm/Cancel. */
+.deployment-list-item--attention {
+    border-left: 3px solid var(--warning, #b45309);
+    background: color-mix(in srgb, var(--warning, #b45309) 6%, transparent);
+}
+.map-upload-confirm-bar {
+    margin-top: 10px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--warning, #b45309) 12%, var(--bg-primary));
+    border: 1px solid color-mix(in srgb, var(--warning, #b45309) 40%, transparent);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+.map-upload-confirm-message {
+    color: var(--text-primary);
+    font-size: 0.9rem;
+    line-height: 1.35;
+}
+.map-upload-confirm-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+}
+.map-upload-confirm-actions .password-submit-btn {
+    width: auto;
+    padding: 6px 12px;
+    font-size: 0.85rem;
+}
+.map-upload-cancel-btn {
+    background: transparent !important;
+    color: var(--text-secondary) !important;
+    border: 1px solid var(--border) !important;
+}
+.map-upload-cancel-btn:hover {
+    color: var(--danger) !important;
+    border-color: var(--danger) !important;
 }
 
 /* ─── Playbill remote-control page ─────────────────────────────────────── */

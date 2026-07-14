@@ -452,6 +452,41 @@ class API {
     static async rollbackMap() {
         return this.request('/maps/rollback', { method: 'POST' });
     }
+
+    // Cross-region confirmation (Phase 5). When a bundle uploaded declares
+    // a different region than what's installed, map-watcher pauses and
+    // publishes an 'awaiting-confirmation' status. The user picks Confirm
+    // or Cancel from the Maps page.
+    static async confirmMapUpload(id) {
+        return this.request(`/maps/confirm/${encodeURIComponent(id)}`, { method: 'POST' });
+    }
+
+    static async cancelMapUpload(id) {
+        return this.request(`/maps/cancel/${encodeURIComponent(id)}`, { method: 'POST' });
+    }
+
+    // Routing (Valhalla via backend proxy)
+    //
+    // locations: [{lat, lon, name?, type?}, ...] — at least two.
+    // costing:   'auto' (default) | 'pedestrian' | 'bicycle' | 'truck' | ...
+    //
+    // Returns Valhalla's `/route` response envelope:
+    //   { trip: { summary, legs: [{maneuvers, shape, summary}], ... } }
+    static async getRoute(locations, costing = 'auto', extra = {}) {
+        return this.request('/route', {
+            method: 'POST',
+            body: JSON.stringify({ locations, costing, ...extra })
+        });
+    }
+
+    // Sources-to-targets matrix. Useful for "which of these N stops is
+    // closest by driving time" — kept as a hook, no consumer yet.
+    static async getRouteMatrix(sources, targets, costing = 'auto') {
+        return this.request('/route/matrix', {
+            method: 'POST',
+            body: JSON.stringify({ sources, targets, costing })
+        });
+    }
 }
 
 // WebSocket connection for real-time updates

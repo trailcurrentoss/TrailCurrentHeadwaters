@@ -127,7 +127,7 @@ for device_info in "${DEVICES[@]}"; do
                 download_url="https://github.com/$GITHUB_ORG/$repo_name/releases/download/$VERSION/$variant_binary"
                 temp_file=$(mktemp)
 
-                if curl -s -L -f -o "$temp_file" "$download_url" 2>/dev/null; then
+                if curl -s -L -f --connect-timeout 15 --max-time 60 --retry 2 --retry-delay 3 --retry-connrefused -o "$temp_file" "$download_url" 2>/dev/null; then
                     mv "$temp_file" "$device_dir/$variant_binary"
                     file_size=$(du -h "$device_dir/$variant_binary" | cut -f1)
                     echo "  ${target} addr $addr: Downloaded ($file_size)"
@@ -152,7 +152,7 @@ for device_info in "${DEVICES[@]}"; do
             download_url="https://github.com/$GITHUB_ORG/$repo_name/releases/download/$VERSION/$addr_binary"
             temp_file=$(mktemp)
 
-            if curl -s -L -f -o "$temp_file" "$download_url" 2>/dev/null; then
+            if curl -s -L -f --connect-timeout 15 --max-time 60 --retry 2 --retry-delay 3 --retry-connrefused -o "$temp_file" "$download_url" 2>/dev/null; then
                 mv "$temp_file" "$device_dir/$addr_binary"
                 file_size=$(du -h "$device_dir/$addr_binary" | cut -f1)
                 echo "  addr $addr: Downloaded ($file_size)"
@@ -173,7 +173,7 @@ for device_info in "${DEVICES[@]}"; do
         temp_file=$(mktemp)
         download_url="https://github.com/$GITHUB_ORG/$repo_name/releases/download/$VERSION/$binary_name"
 
-        if curl -s -L -f -o "$temp_file" "$download_url" 2>/dev/null; then
+        if curl -s -L -f --connect-timeout 15 --max-time 60 --retry 2 --retry-delay 3 --retry-connrefused -o "$temp_file" "$download_url" 2>/dev/null; then
             mv "$temp_file" "$device_dir/$binary_name"
             file_size=$(du -h "$device_dir/$binary_name" | cut -f1)
             echo "Downloaded ($file_size)"

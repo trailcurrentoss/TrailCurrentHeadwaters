@@ -63,6 +63,11 @@ services:
   # bind-mount-source-missing error. map-watcher.py explicitly starts photon
   # via `docker compose up -d photon` after a bundle apply.
   photon:
+    # Intentionally NOT digest-pinned. Every `build-and-save-images.sh` run
+    # pulls whatever this tag resolves to at that moment; the resulting
+    # image tarball is what ships. QA on the produced CM5 image is the gate
+    # that catches upstream regressions BEFORE release — see
+    # PLANS/Offline-Maps-Migration.md Phase 6 for the design tradeoff.
     image: rtuszik/photon-docker:2.3
     profiles: [maps]
     restart: unless-stopped
@@ -82,7 +87,54 @@ services:
       - ./data/maps/current:/photon/data
     # Not exposed on host — backend reaches it via the compose bridge only.
 
+  # Valhalla routing engine — serves /api/route (and /api/route/matrix).
+  # Reads pre-built routing tiles bind-mounted from the currently-applied
+  # map bundle at data/maps/current/valhalla_tiles/. Image is the community-
+  # maintained gis-ops/nilsnolde build (both Valhalla itself and this
+  # packaging are MIT-licensed).
+  #
+  # `profiles: [maps]` keeps this out of the default compose bring-up so
+  # virgin devices (no data/maps/current symlink) don't try to bind a
+  # missing path. map-watcher.py's restart_data_consumers() brings it up
+  # explicitly after a successful bundle apply.
+  #
+  # NOTE: the plan called out `ghcr.io/gis-ops/docker-valhalla/valhalla` —
+  # that repo has been archived and moved. `ghcr.io/nilsnolde/docker-valhalla`
+  # is the active successor; source tree and behaviour identical.
+  valhalla:
+    # Intentionally NOT digest-pinned. Same policy as photon — QA the
+    # produced CM5 image catches upstream regressions. Note that the
+    # upstream `:latest` tag is rebuilt every Saturday from Valhalla master,
+    # so image builds days apart can pull materially different Valhallas —
+    # image QA is where we discover if an env-var contract changed.
+    image: ghcr.io/nilsnolde/docker-valhalla/valhalla:latest
+    profiles: [maps]
+    restart: unless-stopped
+    environment:
+      # Use the tiles we shipped in the bundle, don't try to rebuild from PBF.
+      - use_tiles_ignore_pbf=True
+      - force_rebuild=False
+      - serve_tiles=True
+      # Skip auxiliary DB builds — the bundle's tiles were built with these
+      # already merged in on the build machine (per build/maps/build.sh).
+      - build_admins=False
+      - build_time_zones=False
+      # We deleted valhalla_tiles.tar during the map-watcher tar-extract step
+      # to save disk. Directory-mode loading is fine for our data volume.
+      - build_tar=False
+      # Refresh missing config keys in an existing valhalla.json if a prior
+      # container version wrote a stale one into the bundle dir.
+      - update_existing_config=True
+    volumes:
+      # Writable so the entrypoint can create/update valhalla.json inside
+      # the bundle dir. Ownership of the underlying directory is guaranteed
+      # by the deploy.sh bind-mount preflight.
+      - ./data/maps/current:/custom_files
+    # Not exposed on host — backend reaches it via the compose bridge on
+    # port 8002 only.
+
   mongodb:
+    # Intentionally NOT digest-pinned; same policy as photon/valhalla.
     image: mongo:7
     restart: unless-stopped
     volumes:

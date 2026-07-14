@@ -77,6 +77,8 @@ if not MQTT_USERNAME or not MQTT_PASSWORD:
 MAPS_AVAILABLE_TOPIC = 'local/maps/available'
 MAPS_STATUS_TOPIC = 'local/maps/status'
 MAPS_ROLLBACK_TOPIC = 'local/maps/rollback'
+MAPS_CONFIRM_TOPIC = 'local/maps/confirm'      # user OK'd a cross-region apply
+MAPS_CANCEL_TOPIC = 'local/maps/cancel'        # user rejected a pending apply
 
 # Paths
 HOME_DIR = os.path.expanduser('~')
@@ -98,6 +100,12 @@ DATA_CONSUMER_SERVICES = ['photon', 'valhalla']
 
 mqtt_client = None
 shutting_down = False
+
+# Pending cross-region-confirmation uploads. Keyed by upload_id; each entry
+# is the original MAPS_AVAILABLE payload so we can resume the apply exactly
+# where we paused when the user confirms. In-memory only — a watcher
+# restart drops the pending set (user re-uploads or re-triggers).
+pending_confirmations = {}
 
 
 def log(msg):
@@ -320,6 +328,24 @@ def extract_tar_artifacts(target_dir):
     return True, None
 
 
+def current_bundle_region():
+    """Read data/maps/current/manifest.json's region field. Returns
+    (region, display_name) or (None, None) if there's no current bundle
+    or it's missing/corrupt."""
+    try:
+        target = os.path.realpath(CURRENT_LINK)
+        if not os.path.isdir(target):
+            return (None, None)
+        manifest_path = os.path.join(target, 'manifest.json')
+        if not os.path.isfile(manifest_path):
+            return (None, None)
+        with open(manifest_path) as f:
+            m = json.load(f)
+        return (m.get('region'), m.get('region_display_name') or m.get('region'))
+    except Exception:
+        return (None, None)
+
+
 def migrate_current_bundle_tars():
     """One-shot self-healing on watcher start. If the currently-applied
     bundle still has .tar artifacts (i.e. it was applied by a pre-tar-
@@ -438,6 +464,25 @@ def handle_available(payload_bytes):
             report_status(upload_id, 'failed', reason='no derivable version')
             return
 
+        # Cross-region confirmation gate. If a bundle is already installed
+        # and the incoming bundle's region differs, pause the apply and
+        # wait for an explicit MAPS_CONFIRM (or MAPS_CANCEL) from the PWA.
+        # The `data` dict already includes the confirmation marker if the
+        # user has previously confirmed, so we don't loop.
+        if not data.get('confirmed'):
+            new_region = manifest.get('region')
+            new_region_display = manifest.get('region_display_name') or new_region
+            cur_region, cur_region_display = current_bundle_region()
+            if cur_region and new_region and cur_region != new_region:
+                log(f"Region change detected: {cur_region} -> {new_region} — pausing apply, awaiting confirmation.")
+                pending_confirmations[upload_id] = data  # remember payload for resume
+                report_status(
+                    upload_id, 'awaiting-confirmation',
+                    reason=f'Region change: {cur_region_display} → {new_region_display}',
+                    region=new_region
+                )
+                return
+
         version = next_available_version_dir(raw_version)
         staging_target = os.path.join(VERSIONS_DIR, f"{version}-staging")
         final_target = os.path.join(VERSIONS_DIR, version)
@@ -540,6 +585,56 @@ def handle_available(payload_bytes):
         release_lock()
 
 
+def handle_confirm(payload_bytes):
+    """User confirmed a cross-region apply. Look up the paused payload
+    and resume handle_available with a `confirmed` marker set so the
+    region gate lets it through."""
+    try:
+        data = json.loads(payload_bytes)
+    except json.JSONDecodeError as e:
+        log(f"Invalid MAPS_CONFIRM payload: {e}")
+        return
+    upload_id = data.get('id')
+    if not upload_id:
+        log("MAPS_CONFIRM missing id")
+        return
+    original = pending_confirmations.pop(upload_id, None)
+    if not original:
+        log(f"MAPS_CONFIRM for {upload_id} but no pending state — ignoring")
+        return
+    log(f"User confirmed cross-region apply for {upload_id}, resuming.")
+    original['confirmed'] = True
+    handle_available(json.dumps(original).encode('utf-8'))
+
+
+def handle_cancel(payload_bytes):
+    """User rejected a pending cross-region apply. Delete the staged zip
+    and drop from pending. Publishes 'failed' with a canceled-reason."""
+    try:
+        data = json.loads(payload_bytes)
+    except json.JSONDecodeError as e:
+        log(f"Invalid MAPS_CANCEL payload: {e}")
+        return
+    upload_id = data.get('id')
+    if not upload_id:
+        log("MAPS_CANCEL missing id")
+        return
+    original = pending_confirmations.pop(upload_id, None)
+    if not original:
+        log(f"MAPS_CANCEL for {upload_id} but no pending state — ignoring")
+        return
+    filename = original.get('filename')
+    if filename:
+        zip_path = os.path.join(STAGING_DIR, filename)
+        try:
+            if os.path.isfile(zip_path):
+                os.remove(zip_path)
+                log(f"Deleted staged zip {zip_path} (user canceled)")
+        except OSError as e:
+            log(f"Warning: could not delete {zip_path}: {e}")
+    report_status(upload_id, 'failed', reason='canceled by user')
+
+
 def handle_rollback(payload_bytes):
     try:
         data = json.loads(payload_bytes)
@@ -600,6 +695,10 @@ def setup_mqtt():
             log(f"Subscribed to {MAPS_AVAILABLE_TOPIC}")
             client.subscribe(MAPS_ROLLBACK_TOPIC, qos=1)
             log(f"Subscribed to {MAPS_ROLLBACK_TOPIC}")
+            client.subscribe(MAPS_CONFIRM_TOPIC, qos=1)
+            log(f"Subscribed to {MAPS_CONFIRM_TOPIC}")
+            client.subscribe(MAPS_CANCEL_TOPIC, qos=1)
+            log(f"Subscribed to {MAPS_CANCEL_TOPIC}")
         else:
             log(f"Failed to connect to local MQTT: {reason_code}")
 
@@ -615,6 +714,20 @@ def setup_mqtt():
             log(f"MAPS_ROLLBACK received ({len(msg.payload)} bytes)")
             threading.Thread(
                 target=handle_rollback,
+                args=(msg.payload,),
+                daemon=True
+            ).start()
+        elif msg.topic == MAPS_CONFIRM_TOPIC:
+            log(f"MAPS_CONFIRM received ({len(msg.payload)} bytes)")
+            threading.Thread(
+                target=handle_confirm,
+                args=(msg.payload,),
+                daemon=True
+            ).start()
+        elif msg.topic == MAPS_CANCEL_TOPIC:
+            log(f"MAPS_CANCEL received ({len(msg.payload)} bytes)")
+            threading.Thread(
+                target=handle_cancel,
                 args=(msg.payload,),
                 daemon=True
             ).start()

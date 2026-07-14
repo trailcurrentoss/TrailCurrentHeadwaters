@@ -102,11 +102,10 @@ else
     exit 1
 fi
 
-# Save Photon (rtuszik/photon-docker:2.3) — third-party geocoder image
-# used by Phase 3 of the offline-maps migration. Same "pull-and-save"
-# pattern as mongo:7 so an airgapped CM5 can `docker load` it during a
-# deploy.sh run without touching the internet. Tag pinned; when Phase 6
-# formalizes registry mirroring, replace with a digest.
+# Save Photon — third-party geocoder image used by Phase 3 of the offline-
+# maps migration. Pulled from upstream (Docker Hub) at every run of this
+# script. NOT digest-pinned by design — QA on the produced CM5 image is
+# the gate that catches upstream regressions before release.
 echo "=========================================="
 echo "Saving rtuszik/photon-docker:2.3 (linux/arm64)..."
 echo "=========================================="
@@ -122,6 +121,31 @@ then
     echo "  Saved to images/photon.tar ($SIZE)"
 else
     echo "  Failed to save rtuszik/photon-docker:2.3"
+    cat /tmp/build.log
+    exit 1
+fi
+
+# Save Valhalla — routing engine for Phase 4. The image ships with a
+# tile-serving entrypoint that consumes our pre-built valhalla_tiles/
+# directory from data/maps/current/. Same policy as Photon — pulled fresh
+# on every run, QA catches upstream drift. Note: the `:latest` tag is
+# rebuilt every Saturday from Valhalla master, so runs days apart may
+# produce materially different Valhallas.
+echo "=========================================="
+echo "Saving ghcr.io/nilsnolde/docker-valhalla/valhalla:latest (linux/arm64)..."
+echo "=========================================="
+
+if docker buildx build --builder "$BUILDER_NAME" --platform linux/arm64 \
+    -t ghcr.io/nilsnolde/docker-valhalla/valhalla:latest \
+    --output "type=docker,dest=images/valhalla.tar" \
+    - <<'DOCKERFILE' > /tmp/build.log 2>&1
+FROM ghcr.io/nilsnolde/docker-valhalla/valhalla:latest
+DOCKERFILE
+then
+    SIZE=$(du -h "images/valhalla.tar" | cut -f1)
+    echo "  Saved to images/valhalla.tar ($SIZE)"
+else
+    echo "  Failed to save ghcr.io/nilsnolde/docker-valhalla/valhalla:latest"
     cat /tmp/build.log
     exit 1
 fi

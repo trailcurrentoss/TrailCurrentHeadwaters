@@ -91,6 +91,16 @@ Notable direct dependencies (see `containers/backend/package.json` for the full 
 
 ---
 
+## On-device routing — Valhalla
+
+- **Software:** [Valhalla](https://github.com/valhalla/valhalla) — MIT License — © Valhalla contributors (Mapzen/Kevin Kreiser lineage).
+- **Container image:** [`ghcr.io/nilsnolde/docker-valhalla/valhalla`](https://github.com/nilsnolde/docker-valhalla) — MIT License — a community-maintained Docker packaging of the Valhalla software (successor to the archived `gis-ops/docker-valhalla` referenced in earlier design docs). Multi-arch (amd64 + arm64).
+- **Role:** Runs on the CM5 as the `valhalla` compose service; serves `/api/route` and `/api/route/matrix` via the backend proxy.
+- **Tile data:** pre-built routing tiles derived from OpenStreetMap. See [OpenStreetMap data (ODbL)](#openstreetmap-data-odbl) for attribution + share-alike obligations that apply to any Valhalla tileset shipped in a map bundle.
+- **How we ship it:** the image tarball is baked into the deployment package by `build-and-save-images.sh` (as `images/valhalla.tar`) for airgap `docker load`. The `valhalla_tiles/` directory rides inside the map bundle at `data/maps/current/valhalla_tiles/`.
+
+---
+
 ## OpenStreetMap data (ODbL)
 
 Every map bundle (`build/maps/dist/maps-<date>.zip`) contains data derived from OpenStreetMap:
@@ -115,7 +125,7 @@ Not bundled into any shipped artifact; used only on the developer's build machin
 | --- | --- | --- |
 | [Planetiler](https://github.com/onthegomap/planetiler) | Apache-2.0 | PBF → PMTiles conversion |
 | [Photon global dumps from photon.komoot.io](https://github.com/komoot/photon) | Apache-2.0 | Pre-built global geocoding index; the tarball is fetched by `build/maps/build.sh` and embedded into the map bundle. Runtime usage of Photon itself is documented in the [On-device geocoding — Photon](#on-device-geocoding--photon) section above. |
-| [gis-ops/docker-valhalla](https://github.com/gis-ops/docker-valhalla) | Apache-2.0 | Valhalla tile build container — **will be listed under runtime once Phase 4 lands** |
+| [nilsnolde/docker-valhalla](https://github.com/nilsnolde/docker-valhalla) | MIT | Build-time Valhalla tile generation container used by `build/maps/build.sh` to produce `valhalla_tiles.tar`. Runtime usage of the same image is documented in the [On-device routing — Valhalla](#on-device-routing--valhalla) section above. |
 | [osmium](https://osmcode.org/osmium-tool/) | GPL-3.0 (used at build time only, not linked or bundled) | PBF utility invoked by build.sh |
 | [pyosmium](https://osmcode.org/pyosmium/) | BSL-1.0 | PBF diff / update — build-time only |
 

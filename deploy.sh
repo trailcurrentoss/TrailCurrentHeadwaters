@@ -344,39 +344,55 @@ docker compose up -d --no-build --remove-orphans
 # --------------------------------------
 # Services behind `profiles: [...]` in docker-compose.yml are deliberately
 # omitted from the plain `up` above so they don't start on virgin devices
-# where their bind sources aren't ready (e.g. photon needs data/maps/current
-# to exist). Once a bundle is installed, though, they MUST be recreated on
-# every deploy so config changes (image tag, mount mode, env vars) take
-# effect. Without this step, `docker compose up` would happily leave a
-# stale-config profile-gated container running from a prior deploy — which
-# is exactly the trap we hit with photon's :ro→writable fix.
+# where their bind sources aren't ready (e.g. photon and valhalla need
+# data/maps/current to exist). Once a bundle IS applied, though, we want
+# ALL profile-gated services to be running with their current config:
 #
-# We recreate ONE running profile-gated container at a time, force-recreate
-# so any compose config drift is reconciled. If the container isn't running
-# (virgin device, or bundle not applied yet) we don't touch it — map-watcher
-# will start it explicitly when it applies its first bundle.
-RUNNING_PROFILE_SERVICES=""
-for p in $COMPOSE_PROFILES; do
-    # shellcheck disable=SC2086
-    for svc in $(docker compose --profile "$p" config --services 2>/dev/null); do
-        if ! docker compose config --services 2>/dev/null | grep -qx "$svc"; then
-            # Service ONLY appears under a profile — it's profile-gated.
-            if [ -n "$(docker compose --profile "$p" ps -q "$svc" 2>/dev/null)" ]; then
-                RUNNING_PROFILE_SERVICES="$RUNNING_PROFILE_SERVICES $svc:$p"
-            fi
-        fi
+#   1. Newly-added services on first appearance (e.g. valhalla the first
+#      deploy after Phase 4 lands) must be STARTED — a bare `docker compose
+#      up` doesn't touch profile-gated services at all, so a new one just
+#      sits dormant unless we do this.
+#   2. Already-running services must be RECREATED so config drift (image
+#      tag, mount mode, env vars) is reconciled. `up -d --force-recreate`
+#      handles this.
+#
+# Gate on data/maps/current existing so we don't try to start these on a
+# virgin device (their bind mounts would fail against a nonexistent path).
+if [ -L data/maps/current ] && [ -e data/maps/current ]; then
+    # Enumerate all profile-gated services (services only visible under a
+    # --profile flag, not in the default `config --services` output).
+    PROFILE_ONLY_SERVICES=""
+    DEFAULT_SERVICES="$(docker compose config --services 2>/dev/null | tr '\n' ' ')"
+    for p in $COMPOSE_PROFILES; do
+        # shellcheck disable=SC2086
+        for svc in $(docker compose --profile "$p" config --services 2>/dev/null); do
+            case " $DEFAULT_SERVICES " in
+                *" $svc "*) ;;   # not profile-gated (also in default)
+                *)
+                    PROFILE_ONLY_SERVICES="$PROFILE_ONLY_SERVICES $svc:$p"
+                    ;;
+            esac
+        done
     done
-done
 
-if [ -n "$RUNNING_PROFILE_SERVICES" ]; then
+    if [ -n "$PROFILE_ONLY_SERVICES" ]; then
+        echo ""
+        echo "Step 4.1: Starting/recreating profile-gated services (bundle installed)..."
+        for entry in $PROFILE_ONLY_SERVICES; do
+            svc="${entry%:*}"
+            profile="${entry#*:}"
+            if [ -n "$(docker compose --profile "$profile" ps -q "$svc" 2>/dev/null)" ]; then
+                echo "  recreating $svc (profile: $profile) — config drift reconcile"
+                docker compose --profile "$profile" up -d --no-deps --force-recreate "$svc"
+            else
+                echo "  starting $svc (profile: $profile) — first appearance on this device"
+                docker compose --profile "$profile" up -d --no-deps "$svc"
+            fi
+        done
+    fi
+else
     echo ""
-    echo "Step 4.1: Sweeping profile-gated services (config drift reconcile)..."
-    for entry in $RUNNING_PROFILE_SERVICES; do
-        svc="${entry%:*}"
-        profile="${entry#*:}"
-        echo "  recreating $svc (profile: $profile)"
-        docker compose --profile "$profile" up -d --no-deps --force-recreate "$svc"
-    done
+    echo "Step 4.1: Skipping profile-gated services — data/maps/current not present (virgin device)."
 fi
 
 # Step 5: Ensure local_code is deployed to the user's home directory
