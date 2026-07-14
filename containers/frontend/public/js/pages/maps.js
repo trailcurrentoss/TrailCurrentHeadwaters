@@ -182,7 +182,7 @@ export const mapsPage = {
             detailsEl.innerHTML = '';
         } else {
             const m = currentBundle.manifest || {};
-            const region = m.display_name || m.region || 'unknown';
+            const region = m.region_display_name || m.display_name || m.region || 'unknown';
             const built = m.build_date || currentBundle.version || 'unknown';
             summaryEl.textContent = `${region} · built ${built}`;
             detailsEl.innerHTML = `

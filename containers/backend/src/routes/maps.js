@@ -213,7 +213,7 @@ module.exports = (db) => {
                     version: name,
                     isCurrent: name === currentVersion,
                     region: manifest?.region || null,
-                    displayName: manifest?.display_name || null,
+                    displayName: manifest?.region_display_name || manifest?.display_name || null,
                     buildDate: manifest?.build_date || null
                 };
             });

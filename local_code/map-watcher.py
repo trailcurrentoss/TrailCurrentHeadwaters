@@ -240,6 +240,28 @@ def prune_versions():
             log(f"Warning: could not prune {name}: {e}")
 
 
+def derive_version(original_name, manifest):
+    """Return the target versions/<name>/ directory name (before same-day
+    suffixing). Prefers the zip filename's date portion — matches
+    build.sh's `maps-<date>.zip` convention — then falls back to a stripped
+    manifest build_date, and only if both fail uses the raw build_date.
+
+    Examples:
+        maps-2026.07.12.zip         -> 2026.07.12
+        maps-2026.07.12.2.zip       -> 2026.07.12.2
+        build_date 2026-07-12T...   -> 2026.07.12  (fallback)
+    """
+    if original_name:
+        m = re.match(r'maps-(\d{4}\.\d{2}\.\d{2}(?:\.\d+)?)\.zip$', original_name)
+        if m:
+            return m.group(1)
+    bd = (manifest or {}).get('build_date') or ''
+    m = re.match(r'(\d{4})-(\d{2})-(\d{2})', bd)
+    if m:
+        return '.'.join(m.groups())
+    return bd or (manifest or {}).get('version') or 'unknown'
+
+
 def handle_available(payload_bytes):
     try:
         data = json.loads(payload_bytes)
@@ -249,6 +271,7 @@ def handle_available(payload_bytes):
 
     upload_id = data.get('id')
     filename = data.get('filename')
+    original_name = data.get('originalName') or ''
     sha256 = data.get('sha256')
 
     if not upload_id or not filename or not sha256:
@@ -298,12 +321,12 @@ def handle_available(payload_bytes):
             report_status(upload_id, 'failed', reason='not a valid zip')
             return
 
-        raw_version = manifest.get('build_date') or manifest.get('version')
-        if not raw_version:
-            log("Manifest missing build_date/version")
+        raw_version = derive_version(original_name, manifest)
+        if raw_version == 'unknown':
+            log("Cannot derive version from zip filename or manifest.build_date")
             try: os.remove(zip_path)
             except OSError: pass
-            report_status(upload_id, 'failed', reason='manifest missing build_date')
+            report_status(upload_id, 'failed', reason='no derivable version')
             return
 
         version = next_available_version_dir(raw_version)
