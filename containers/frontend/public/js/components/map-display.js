@@ -100,6 +100,11 @@ export class MapDisplay {
             this.registerPmtilesProtocol();
             this.initMap();
             this.setupThemeListener();
+            // Wire search-input events → /api/geocode/search. Must fire only
+            // in the bundle-installed path — in the no-bundle path the input
+            // is disabled by initNoMapDataState() and the geocode endpoint
+            // returns 503, so there's no point attaching listeners.
+            this.setupSearch();
         } catch (err) {
             console.error('[map] MapLibre/PMTiles init failed, falling back to no-data state:', err);
             this.initNoMapDataState();

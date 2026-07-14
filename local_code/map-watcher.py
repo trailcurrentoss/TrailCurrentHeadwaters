@@ -184,29 +184,61 @@ def atomic_symlink(target_rel, link_path):
 
 
 def restart_data_consumers():
-    """Restart photon + valhalla via docker compose. Best-effort; if the
-    service isn't defined in compose (early phases) we log and move on."""
+    """Bring photon + valhalla up against the freshly-applied bundle.
+
+    Both services are behind `profiles: [maps]` in docker-compose.yml so they
+    don't start on virgin devices where data/maps/current is absent. This
+    function is the single point in the codebase that owns their lifecycle:
+    `up -d` starts them if they weren't running, then an explicit `restart`
+    forces Photon/Valhalla to re-read their bind-mounted index (they cache
+    at startup, so a bind-mount change alone isn't enough).
+
+    Silently skips any service the current compose file doesn't define
+    (e.g. Phase 3 shipped photon but Phase 4 valhalla hasn't landed yet).
+    """
+    try:
+        cfg = subprocess.run(
+            ['docker', 'compose', 'config', '--services'],
+            capture_output=True, text=True, timeout=15,
+            cwd=HOME_DIR
+        )
+        # `config --services` doesn't emit services that are behind an
+        # inactive profile. Use `config --profiles` awareness: run with
+        # every relevant profile so we see the full service catalog.
+        cfg_all = subprocess.run(
+            ['docker', 'compose', '--profile', 'maps', 'config', '--services'],
+            capture_output=True, text=True, timeout=15,
+            cwd=HOME_DIR
+        )
+        defined = set(cfg.stdout.split()) | set(cfg_all.stdout.split())
+    except Exception as e:
+        log(f"Warning: could not list compose services: {e}")
+        defined = set()
+
     for svc in DATA_CONSUMER_SERVICES:
+        if svc not in defined:
+            log(f"Service '{svc}' not defined in compose; skipping")
+            continue
         try:
-            check = subprocess.run(
-                ['docker', 'compose', 'ps', '-q', svc],
-                capture_output=True, text=True, timeout=15,
+            up = subprocess.run(
+                ['docker', 'compose', '--profile', 'maps', 'up', '-d', '--no-deps', svc],
+                capture_output=True, text=True, timeout=180,
                 cwd=HOME_DIR
             )
-            if not check.stdout.strip():
-                log(f"Service '{svc}' not in compose; skipping restart")
+            if up.returncode != 0:
+                log(f"Warning: up '{svc}' exit {up.returncode}: {up.stderr.strip()}")
                 continue
-            r = subprocess.run(
+            rst = subprocess.run(
                 ['docker', 'compose', 'restart', svc],
-                capture_output=True, text=True, timeout=120,
+                capture_output=True, text=True, timeout=180,
                 cwd=HOME_DIR
             )
-            if r.returncode == 0:
+            if rst.returncode == 0:
                 log(f"Restarted service '{svc}'")
             else:
-                log(f"Warning: restart '{svc}' exit {r.returncode}: {r.stderr.strip()}")
+                log(f"Warning: restart '{svc}' exit {rst.returncode}: {rst.stderr.strip()}")
         except Exception as e:
-            log(f"Warning: could not restart '{svc}': {e}")
+            log(f"Warning: could not manage '{svc}': {e}")
 
 
 def prune_versions():
@@ -238,6 +270,83 @@ def prune_versions():
             log(f"Pruned old version {name}")
         except Exception as e:
             log(f"Warning: could not prune {name}: {e}")
+
+
+def extract_tar_artifacts(target_dir):
+    """Extract any .tar artifacts inside `target_dir` in place, verify the
+    expected directory appeared (basename without .tar), and delete the
+    tarball. Photon and Valhalla containers bind-mount the extracted
+    directories directly; keeping tars around costs ~90 GB and blocks
+    consumer startup.
+
+    Returns (ok, error_message). Never raises.
+
+    Convention: `photon_data.tar` MUST unpack a top-level `photon_data/`
+    directory; `valhalla_tiles.tar` MUST unpack `valhalla_tiles/`. If the
+    tar produces a different layout that's a build-side violation and we
+    fail loudly rather than silently leaving broken state.
+    """
+    for name in sorted(os.listdir(target_dir)):
+        if not name.endswith('.tar'):
+            continue
+        tar_path = os.path.join(target_dir, name)
+        expected_dir = os.path.join(target_dir, name[:-len('.tar')])
+        if os.path.isdir(expected_dir):
+            # A previous run already extracted this tar. Idempotent: remove
+            # the leftover tar and move on.
+            log(f"{name}: extracted dir already exists, removing tar")
+            try: os.remove(tar_path)
+            except OSError as e: log(f"  warn: could not remove {tar_path}: {e}")
+            continue
+        log(f"Extracting {name} in place...")
+        try:
+            subprocess.run(
+                ['tar', '--no-same-owner', '-xf', tar_path, '-C', target_dir],
+                check=True, capture_output=True, text=True
+            )
+        except subprocess.CalledProcessError as e:
+            return False, f'tar extract failed for {name}: {e.stderr.strip() or e.returncode}'
+        except FileNotFoundError:
+            return False, "tar binary not on PATH (should never happen on the CM5 rootfs)"
+        if not os.path.isdir(expected_dir):
+            return False, f'{name} did not produce expected directory {os.path.basename(expected_dir)}/'
+        try:
+            os.remove(tar_path)
+            log(f"  removed {name} after successful extract")
+        except OSError as e:
+            # Non-fatal: extraction succeeded, leftover tar wastes space
+            # but consumers can still start. Log and continue.
+            log(f"  warn: could not remove {tar_path}: {e}")
+    return True, None
+
+
+def migrate_current_bundle_tars():
+    """One-shot self-healing on watcher start. If the currently-applied
+    bundle still has .tar artifacts (i.e. it was applied by a pre-tar-
+    extraction watcher build), extract them in place so Photon/Valhalla
+    can consume the extracted directories on next start.
+
+    Silent no-op when there's no current bundle or the tars are already
+    extracted.
+    """
+    if not os.path.islink(CURRENT_LINK):
+        return
+    try:
+        target = os.path.realpath(CURRENT_LINK)
+    except OSError:
+        return
+    if not os.path.isdir(target):
+        return
+    leftover_tars = [n for n in os.listdir(target) if n.endswith('.tar')]
+    if not leftover_tars:
+        return
+    log(f"Startup migration: extracting {len(leftover_tars)} leftover tar(s) in {target}")
+    ok, err = extract_tar_artifacts(target)
+    if ok:
+        log("Startup migration complete; restarting data consumers")
+        restart_data_consumers()
+    else:
+        log(f"Startup migration FAILED (non-fatal — device continues serving prior state): {err}")
 
 
 def derive_version(original_name, manifest):
@@ -383,6 +492,18 @@ def handle_available(payload_bytes):
                               reason=f'artifact checksum mismatch: {artifact_name}')
                 return
         log("All artifact checksums verified")
+
+        # --- Extract .tar artifacts in place ---
+        # Photon and Valhalla containers bind-mount the extracted directories
+        # (photon_data/, valhalla_tiles/), not the tarballs. Extract now,
+        # while we're still in staging — a failure here means we leave the
+        # existing `current` symlink untouched and abort the apply.
+        ok, err = extract_tar_artifacts(staging_target)
+        if not ok:
+            log(f"Tar extract failed: {err}")
+            shutil.rmtree(staging_target, ignore_errors=True)
+            report_status(upload_id, 'failed', reason=err)
+            return
 
         # --- Atomically promote staging_target -> final_target ---
         # os.rename on same filesystem is atomic. If a prior attempt left
@@ -539,6 +660,14 @@ def main():
             log(f"ERROR: required directory {required} does not exist")
             log("Phase 6 bake hook did not run; refusing to start.")
             sys.exit(1)
+
+    # Self-heal any currently-applied bundle that predates tar-extraction
+    # support. Runs before MQTT connect so a fresh bundle arriving during
+    # startup can't race with the migration.
+    try:
+        migrate_current_bundle_tars()
+    except Exception as e:
+        log(f"Startup tar migration raised (non-fatal, continuing): {e}")
 
     setup_mqtt()
     log("Map watcher running. Waiting for MAPS_AVAILABLE notifications...")

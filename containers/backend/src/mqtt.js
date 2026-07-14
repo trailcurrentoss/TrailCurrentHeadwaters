@@ -106,6 +106,7 @@ class MqttService {
         this.db = null;
         this.broadcast = null;
         this.connected = false;
+        this.lastGpsLatLon = null;  // most recent {latitude, longitude, at} from Bearing; used by Photon location-bias.
         this.lightNameCache = {};  // lightId → name (PDM + Switchback). Refreshed on startup and on config edits — NEVER on a CAN-frame hot path.
         this.lightStateCache = {};  // lightId → last known state from CAN bus
         // Global SMS throttle — sliding window of recent send timestamps
@@ -799,6 +800,17 @@ class MqttService {
     // Handle GPS lat/lon update from GPS module
     handleGpsStatus(payload) {
         debugLog('Received GPS lat/lon:', payload);
+
+        // Cache the most recent fix so /api/geocode/search can bias Photon
+        // results toward the vehicle's current location without a MongoDB
+        // round-trip. Stays null until Bearing publishes something.
+        if (typeof payload.latitude === 'number' && typeof payload.longitude === 'number') {
+            this.lastGpsLatLon = {
+                latitude: payload.latitude,
+                longitude: payload.longitude,
+                at: Date.now()
+            };
+        }
 
         // Broadcast GPS data directly via WebSocket (no database storage needed)
         if (this.broadcast) {

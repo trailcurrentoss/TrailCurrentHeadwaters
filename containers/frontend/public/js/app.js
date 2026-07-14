@@ -112,7 +112,13 @@ class App {
         console.log('Showing normal app UI...');
         this.showAppUI();
 
-        // Initialize router — bound to #main-content owned by AppShell
+        // Initialize router — bound to #main-content owned by AppShell.
+        // NOTE ordering: AppShell.mount() (called from showAppUI() above)
+        // triggers _applyMode → router.navigate() during boot, BEFORE
+        // router.init has been called with the content element. That
+        // initial navigate bails out with "contentElement is null" (logged
+        // but harmless). We re-navigate below to actually render the
+        // initial page now that the router is fully wired.
         router
             .init(document.getElementById('main-content'))
             .register('home', homePage)
@@ -128,6 +134,10 @@ class App {
             .register('peregrine', peregrinePage)
             .register('alarms', alarmsPage)
             .register('settings', settingsPage);
+
+        // Render the initial page now that the router is bound + populated.
+        // If a hash is present in the URL, honor it; otherwise home.
+        router.navigate(router.getPageFromHash() || 'home');
 
         // Sync theme buttons to the persisted theme
         const currentTheme = document.documentElement.getAttribute('data-theme') || 'dark';

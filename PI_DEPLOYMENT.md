@@ -303,5 +303,4 @@ ping trailcurrent01.local
 - **Firmware Integration**: [FIRMWARE_SETUP.md](FIRMWARE_SETUP.md)
 - **OTA System Details**: [OTA_DEPLOYMENT_IMPLEMENTATION.md](OTA_DEPLOYMENT_IMPLEMENTATION.md) (includes MCU firmware OTA and cloud-to-Pi deployment watcher)
 - **Development**: [README.md](README.md)
-- **Map Tiles**: [DOCS/UpdatingMapTiles.md](DOCS/UpdatingMapTiles.md)
-- **Search Dataset (Nominatim)**: [DOCS/UpdatingNominatim.md](DOCS/UpdatingNominatim.md)
+- **Maps (tiles, search, routing)**: [DOCS/UpdatingMapTiles.md](DOCS/UpdatingMapTiles.md) (during the offline-maps migration, tiles/search/routing all ship as one map bundle uploaded via the PWA Maps page — Nominatim is no longer used)

@@ -102,6 +102,30 @@ else
     exit 1
 fi
 
+# Save Photon (rtuszik/photon-docker:2.3) — third-party geocoder image
+# used by Phase 3 of the offline-maps migration. Same "pull-and-save"
+# pattern as mongo:7 so an airgapped CM5 can `docker load` it during a
+# deploy.sh run without touching the internet. Tag pinned; when Phase 6
+# formalizes registry mirroring, replace with a digest.
+echo "=========================================="
+echo "Saving rtuszik/photon-docker:2.3 (linux/arm64)..."
+echo "=========================================="
+
+if docker buildx build --builder "$BUILDER_NAME" --platform linux/arm64 \
+    -t rtuszik/photon-docker:2.3 \
+    --output "type=docker,dest=images/photon.tar" \
+    - <<'DOCKERFILE' > /tmp/build.log 2>&1
+FROM rtuszik/photon-docker:2.3
+DOCKERFILE
+then
+    SIZE=$(du -h "images/photon.tar" | cut -f1)
+    echo "  Saved to images/photon.tar ($SIZE)"
+else
+    echo "  Failed to save rtuszik/photon-docker:2.3"
+    cat /tmp/build.log
+    exit 1
+fi
+
 echo ""
 echo "=========================================="
 echo "Build Complete!"

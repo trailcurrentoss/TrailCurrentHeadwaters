@@ -70,6 +70,22 @@ module.exports = (db) => {
             const hash = crypto.createHash('sha256');
             const writeStream = fs.createWriteStream(filePath);
 
+            // Chown the staging file to trailcurrent immediately — BEFORE
+            // any data has been piped. If the upload is aborted mid-stream
+            // (browser closed, network dropped, Node HTTP requestTimeout
+            // fires — theoretically eliminated but defense-in-depth), the
+            // leftover partial is already trailcurrent-owned and map-watcher
+            // can delete it as part of its own housekeeping without needing
+            // sudo. This is the second layer of defense; the first is the
+            // deploy.sh bind-mount preflight that reclaims any straggler.
+            if (targetUid !== null && targetGid !== null) {
+                try {
+                    fs.chownSync(filePath, targetUid, targetGid);
+                } catch (err) {
+                    console.warn(`[maps] initial chown on ${filePath} failed: ${err.message}`);
+                }
+            }
+
             file.on('data', (chunk) => {
                 fileSize += chunk.length;
                 hash.update(chunk);

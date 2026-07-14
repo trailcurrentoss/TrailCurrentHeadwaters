@@ -81,6 +81,16 @@ Notable direct dependencies (see `containers/backend/package.json` for the full 
 
 ---
 
+## On-device geocoding — Photon
+
+- **Software:** [Photon](https://github.com/komoot/photon) — Apache License 2.0 — © komoot GmbH and contributors.
+- **Container image:** [`rtuszik/photon-docker:2.3`](https://github.com/rtuszik/photon-docker) — Apache License 2.0 — an unofficial community-maintained Docker packaging of the Photon software. Multi-arch (amd64 + arm64).
+- **Role:** Runs on the CM5 as the `photon` compose service; serves `/api/geocode/search` and `/api/geocode/reverse` via the backend proxy.
+- **Index data:** derived from OpenStreetMap. See [OpenStreetMap data (ODbL)](#openstreetmap-data-odbl) — the same attribution/share-alike obligations apply to any Photon index shipped in a map bundle.
+- **How we ship it:** the image tarball is baked into the deployment package by `build-and-save-images.sh` (as `images/photon.tar`) so it can be `docker load`-ed on the CM5 without internet access. The `photon_data/` search index rides inside the map bundle at `data/maps/current/photon_data/`.
+
+---
+
 ## OpenStreetMap data (ODbL)
 
 Every map bundle (`build/maps/dist/maps-<date>.zip`) contains data derived from OpenStreetMap:
@@ -104,7 +114,7 @@ Not bundled into any shipped artifact; used only on the developer's build machin
 | Tool | License | Role |
 | --- | --- | --- |
 | [Planetiler](https://github.com/onthegomap/planetiler) | Apache-2.0 | PBF → PMTiles conversion |
-| [Photon dumps](https://github.com/komoot/photon) — used at runtime | Apache-2.0 | Global geocoding index (downloaded pre-built) — **will be listed under runtime once Phase 3 lands** |
+| [Photon global dumps from photon.komoot.io](https://github.com/komoot/photon) | Apache-2.0 | Pre-built global geocoding index; the tarball is fetched by `build/maps/build.sh` and embedded into the map bundle. Runtime usage of Photon itself is documented in the [On-device geocoding — Photon](#on-device-geocoding--photon) section above. |
 | [gis-ops/docker-valhalla](https://github.com/gis-ops/docker-valhalla) | Apache-2.0 | Valhalla tile build container — **will be listed under runtime once Phase 4 lands** |
 | [osmium](https://osmcode.org/osmium-tool/) | GPL-3.0 (used at build time only, not linked or bundled) | PBF utility invoked by build.sh |
 | [pyosmium](https://osmcode.org/pyosmium/) | BSL-1.0 | PBF diff / update — build-time only |

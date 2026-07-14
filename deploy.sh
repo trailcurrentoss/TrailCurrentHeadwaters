@@ -223,6 +223,114 @@ fi
 echo "  Root .env: MQTT_BROKER_URL=mqtts://mosquitto:8883 (for Docker)"
 echo "  local_code/.env: MQTT_BROKER_URL=mqtts://${TLS_HOSTNAME}:8883 (for host scripts)"
 
+# Step 3.9: Bind-mount preflight
+# ------------------------------
+# Guarantee every host bind-mount source in docker-compose.yml exists AS
+# trailcurrent:trailcurrent, mode 0755, BEFORE any container starts. If we
+# skip this and let Docker auto-create a missing bind source, Docker creates
+# it as root, and every subsequent write from a non-root process (map-watcher,
+# a container running with `user: 1000`, this script itself when not sudo'd)
+# fails with permission-denied. That failure mode has bitten us multiple
+# times; this step makes it structurally impossible.
+#
+# The preflight enumerates EVERY bind mount across EVERY profile in the
+# resolved compose config — no per-service code, no hardcoded list. Any
+# future service that adds a bind mount is automatically covered.
+echo ""
+echo "Step 3.9: Bind-mount preflight (every host bind source: exists + ownership + mode)..."
+
+TARGET_UID="$(id -u)"
+TARGET_GID="$(id -g)"
+
+# Discover every profile the compose file declares, so `config --format json`
+# yields the full service catalog (photon lives behind `profiles: [maps]`,
+# valhalla will follow the same pattern).
+COMPOSE_PROFILES="$(docker compose config --profiles 2>/dev/null | tr '\n' ' ')"
+PROFILE_ARGS=""
+for p in $COMPOSE_PROFILES; do
+    PROFILE_ARGS="$PROFILE_ARGS --profile $p"
+done
+
+# shellcheck disable=SC2086  # PROFILE_ARGS is intentionally word-split
+COMPOSE_JSON="$(docker compose $PROFILE_ARGS config --format json 2>/dev/null)"
+
+if [ -z "$COMPOSE_JSON" ]; then
+    echo "  WARNING: docker compose config produced no output — falling back to legacy hardcoded skeleton."
+    mkdir -p data/keys data/firmware data/deployments data/maps/versions data/maps/staging
+    chmod 0755 data/maps data/maps/versions data/maps/staging
+else
+    # Emit every bind source as one path per line. Filter to paths inside the
+    # working tree — we don't touch /var/run/avahi-daemon/socket etc.
+    BIND_SOURCES="$(printf '%s' "$COMPOSE_JSON" | python3 -c '
+import json, os, sys
+cfg = json.load(sys.stdin)
+for svc in (cfg.get("services") or {}).values():
+    for vol in svc.get("volumes") or []:
+        if vol.get("type") == "bind":
+            src = vol.get("source")
+            if src:
+                print(src)
+' | sort -u)"
+
+    PWD_ABS="$(pwd)"
+    while IFS= read -r src; do
+        [ -n "$src" ] || continue
+
+        # Only preflight paths inside our working tree. Anything under /var,
+        # /sys, /proc, /run, /etc etc. is host-owned and not ours to manage.
+        case "$src" in
+            "$PWD_ABS"/*|"$PWD_ABS") ;;
+            *) continue ;;
+        esac
+
+        # Symlink (e.g. data/maps/current, which is managed by map-watcher):
+        # never create or rewrite. Silently correct the link's own ownership
+        # if wrong; the target may not exist yet on a virgin device — that's
+        # fine, map-watcher creates it on first successful bundle apply.
+        if [ -L "$src" ]; then
+            current_owner="$(stat -c '%u:%g' "$src" 2>/dev/null || echo "?")"
+            if [ "$current_owner" != "$TARGET_UID:$TARGET_GID" ]; then
+                echo "  fixing symlink ownership on $src (was $current_owner)"
+                sudo chown -h "$TARGET_UID:$TARGET_GID" "$src"
+            fi
+            continue
+        fi
+
+        # Regular file (TLS certs, ca.pem, socket): leave alone. If missing,
+        # something upstream is broken and we don't want to paper over it by
+        # creating an empty stub.
+        if [ -f "$src" ]; then
+            continue
+        fi
+
+        # Directory case: create if missing, fix ownership if wrong.
+        if [ ! -e "$src" ]; then
+            echo "  creating $src (was missing)"
+            sudo mkdir -p "$src"
+        fi
+
+        current_owner="$(stat -c '%u:%g' "$src" 2>/dev/null || echo "?")"
+        if [ "$current_owner" != "$TARGET_UID:$TARGET_GID" ]; then
+            echo "  fixing ownership on $src (was $current_owner, wanted $TARGET_UID:$TARGET_GID)"
+            sudo chown "$TARGET_UID:$TARGET_GID" "$src"
+        fi
+        sudo chmod 0755 "$src"
+    done <<< "$BIND_SOURCES"
+
+    # Reclaim any root-owned leftovers under data/maps/staging (partial
+    # uploads that died before the backend's fs.chownSync handoff ran).
+    # This lets map-watcher clean up its own staging dir on the next apply
+    # without needing sudo.
+    if [ -d data/maps/staging ]; then
+        find data/maps/staging -mindepth 1 \! -user "$TARGET_UID" -print 2>/dev/null | while IFS= read -r stray; do
+            echo "  reclaiming $stray from wrong ownership"
+            sudo chown -h "$TARGET_UID:$TARGET_GID" "$stray"
+        done
+    fi
+fi
+
+echo "  Bind-mount preflight complete."
+
 # Step 4: Start Docker services
 echo ""
 echo "Step 4: Starting Docker services..."
@@ -230,15 +338,46 @@ echo "Step 4: Starting Docker services..."
 # --remove-orphans: clean up containers from services removed in newer versions
 #   (including tileserver-gl, nominatim, geocoder — killed in the offline-maps
 #   migration; --remove-orphans lets an in-flight upgrade sweep them away).
-# Pre-create all Docker bind-mount directories as the current user before Docker
-# starts. If Docker creates them first it does so as root, causing permission
-# denied errors when the deploy script or backend tries to write into them.
-# data/maps/ skeleton is required for the new map-upload path; see
-# PLANS/Offline-Maps-Migration.md "Overarching principle → 4. Ownership invariant".
-mkdir -p data/keys data/firmware data/deployments data/maps/versions data/maps/staging
-chmod 0755 data/maps data/maps/versions data/maps/staging
-
 docker compose up -d --no-build --remove-orphans
+
+# Step 4.1: Sweep profile-gated services
+# --------------------------------------
+# Services behind `profiles: [...]` in docker-compose.yml are deliberately
+# omitted from the plain `up` above so they don't start on virgin devices
+# where their bind sources aren't ready (e.g. photon needs data/maps/current
+# to exist). Once a bundle is installed, though, they MUST be recreated on
+# every deploy so config changes (image tag, mount mode, env vars) take
+# effect. Without this step, `docker compose up` would happily leave a
+# stale-config profile-gated container running from a prior deploy — which
+# is exactly the trap we hit with photon's :ro→writable fix.
+#
+# We recreate ONE running profile-gated container at a time, force-recreate
+# so any compose config drift is reconciled. If the container isn't running
+# (virgin device, or bundle not applied yet) we don't touch it — map-watcher
+# will start it explicitly when it applies its first bundle.
+RUNNING_PROFILE_SERVICES=""
+for p in $COMPOSE_PROFILES; do
+    # shellcheck disable=SC2086
+    for svc in $(docker compose --profile "$p" config --services 2>/dev/null); do
+        if ! docker compose config --services 2>/dev/null | grep -qx "$svc"; then
+            # Service ONLY appears under a profile — it's profile-gated.
+            if [ -n "$(docker compose --profile "$p" ps -q "$svc" 2>/dev/null)" ]; then
+                RUNNING_PROFILE_SERVICES="$RUNNING_PROFILE_SERVICES $svc:$p"
+            fi
+        fi
+    done
+done
+
+if [ -n "$RUNNING_PROFILE_SERVICES" ]; then
+    echo ""
+    echo "Step 4.1: Sweeping profile-gated services (config drift reconcile)..."
+    for entry in $RUNNING_PROFILE_SERVICES; do
+        svc="${entry%:*}"
+        profile="${entry#*:}"
+        echo "  recreating $svc (profile: $profile)"
+        docker compose --profile "$profile" up -d --no-deps --force-recreate "$svc"
+    done
+fi
 
 # Step 5: Ensure local_code is deployed to the user's home directory
 echo ""

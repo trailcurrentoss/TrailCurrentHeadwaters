@@ -54,6 +54,34 @@ services:
     depends_on:
       - mosquitto
       - mongodb
+  # Photon geocoder — serves /api/geocode/search + /reverse.
+  # Reads a pre-built index bind-mounted from the currently-applied map bundle
+  # at data/maps/current/photon_data/. rtuszik/photon-docker is a community-
+  # maintained image around github.com/komoot/photon (both Apache-2.0).
+  # `profiles: [maps]` keeps this service out of the default `docker compose up`
+  # bring-up so virgin devices (no data/maps/current symlink yet) don't hit a
+  # bind-mount-source-missing error. map-watcher.py explicitly starts photon
+  # via `docker compose up -d photon` after a bundle apply.
+  photon:
+    image: rtuszik/photon-docker:2.3
+    profiles: [maps]
+    restart: unless-stopped
+    environment:
+      - INITIAL_DOWNLOAD=FALSE   # we ship the index in the map bundle
+      - UPDATE_STRATEGY=DISABLED # map bundles are the update mechanism
+      - PHOTON_LISTEN_IP=0.0.0.0
+      - LOG_LEVEL=INFO
+    volumes:
+      # NOTE: writable (not :ro). Photon's embedded OpenSearch/Lucene needs
+      # to write NodeLock, transaction logs, and _state/ files at startup,
+      # even though our actual pre-built index inside `photon_data/` is
+      # never modified. A :ro mount produced a Lucene lock failure in a
+      # restart loop. See PLANS/Offline-Maps-Migration.md Phase 3 for the
+      # Photon-lifecycle contract. Ownership of the underlying directory
+      # is guaranteed by the deploy.sh bind-mount preflight.
+      - ./data/maps/current:/photon/data
+    # Not exposed on host — backend reaches it via the compose bridge only.
+
   mongodb:
     image: mongo:7
     restart: unless-stopped
