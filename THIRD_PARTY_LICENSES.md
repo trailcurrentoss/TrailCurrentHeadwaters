@@ -1,0 +1,116 @@
+# Third-Party Licenses and Attribution
+
+TrailCurrent In-Vehicle Compute is MIT-licensed (see [LICENSE](LICENSE)). It bundles and depends on a number of third-party components. Each is redistributed under its own upstream license, listed below.
+
+This file is a living document. When we add a new runtime dependency, container image, or data source, it gets a row here.
+
+> **Runtime data — OpenStreetMap:** the map bundles produced by [`build/maps/build.sh`](build/maps/) and installed on a device are derived from OpenStreetMap data. See the [OpenStreetMap data (ODbL)](#openstreetmap-data-odbl) section for the attribution and share-alike requirements that apply to anyone redistributing a bundle.
+
+---
+
+## Frontend runtime (bundled into the frontend container image)
+
+### MapLibre GL JS
+
+- **Version:** 4.7.1
+- **License:** BSD-3-Clause
+- **Copyright:** © MapLibre contributors. Portions © Mapbox (pre-fork).
+- **Source:** <https://github.com/maplibre/maplibre-gl-js>
+- **Role:** Renders the offline vector map in the PWA.
+- **How we ship it:** downloaded from npm at Docker build time and baked into the frontend container at `/usr/share/nginx/html/libs/maplibre/`. See [`containers/frontend/Dockerfile`](containers/frontend/Dockerfile).
+
+### PMTiles.js
+
+- **Version:** 3.2.0
+- **License:** BSD-3-Clause
+- **Copyright:** © Protomaps LLC and PMTiles contributors.
+- **Source:** <https://github.com/protomaps/PMTiles>
+- **Role:** Registers the `pmtiles://` protocol with MapLibre so the offline PMTiles archive can be read via HTTP Range requests against a static file.
+- **How we ship it:** downloaded from npm at Docker build time and baked into the frontend container at `/usr/share/nginx/html/libs/pmtiles/`.
+
+### OpenMapTiles style JSONs
+
+- **Version:** OpenMapTiles v3.x (derived styles: `3d` and `3d-dark`).
+- **License:** BSD-3-Clause (styles are hand-authored derivatives of the OpenMapTiles reference style).
+- **Copyright:** © OpenMapTiles project and contributors, plus TrailCurrent modifications.
+- **Source:** <https://github.com/openmaptiles/openmaptiles>
+- **Role:** Defines the visual appearance of the map (layers, colors, typography, 3D building extrusions).
+- **How we ship it:** [`containers/frontend/public/maps-static/styles/{3d,3d-dark}/style.json`](containers/frontend/public/maps-static/styles/) — the source `sources.openmaptiles.url` field has been rewritten to point at our PMTiles endpoint.
+
+### Font glyph atlases (PBFs)
+
+- **License notice bundled at:** [`containers/frontend/public/maps-static/fonts/LICENSE`](containers/frontend/public/maps-static/fonts/LICENSE)
+- **Source of the PBF glyph format:** <https://github.com/openmaptiles/fonts> v2.0 (MIT).
+- **Included font families:**
+  - **Noto Sans** (Regular, Bold, Italic) — SIL Open Font License 1.1 — © Google Inc. — <https://fonts.google.com/noto>
+  - **Roboto** (Regular, Medium, Condensed Italic) — Apache License 2.0 — © Google Inc. — <https://fonts.google.com/specimen/Roboto>
+  - **Metropolis** (Regular, Light, Light Italic, Medium Italic) — Unlicense (Public Domain) — Chris Simpson — <https://fontsarena.com/metropolis-by-chris-simpson/>
+- **How we ship it:** committed to the repo (pre-generated PBFs; regenerating from source `.ttf` files would require a font-atlas build step). They land in the frontend container at `/usr/share/nginx/html/maps-static/fonts/`.
+
+### Sprite atlas
+
+- **Source of sprite artwork:** OpenMapTiles reference sprites.
+- **License:** BSD-3-Clause (bundled alongside the styles).
+- **Where:** [`containers/frontend/public/maps-static/sprites/`](containers/frontend/public/maps-static/sprites/)
+
+### Node/npm transitive frontend deps
+
+The frontend `package.json` is intentionally minimal — MapLibre and PMTiles are the only npm-sourced runtime bundles. Add an entry here if that changes.
+
+---
+
+## Backend runtime (bundled into the backend container image)
+
+The backend container is a Node.js application. Its transitive dependency licenses are captured in [`containers/backend/package.json`](containers/backend/package.json) and their upstream licenses ship inside `node_modules/` at container build time (standard npm behavior — each package retains its own LICENSE file).
+
+Notable direct dependencies (see `containers/backend/package.json` for the full list):
+
+| Package | License | Role |
+| --- | --- | --- |
+| `express` | MIT | HTTP server |
+| `mongodb` | Apache-2.0 | MongoDB driver |
+| `mqtt` | MIT | Local MQTT broker client |
+| `busboy` | MIT | Streamed multipart upload parser |
+| `paho-mqtt` (via Python watchers) | EPL-2.0 or EDL-1.0 | MQTT client used by `deployment-watcher.py` and `map-watcher.py` |
+
+---
+
+## On-device Python (systemd services under `local_code/`)
+
+- **paho-mqtt** — Eclipse Public License 2.0 (EPL) or Eclipse Distribution License 1.0 (BSD-3-Clause). We use it as a library, no source changes; either license permits redistribution as-is.
+
+---
+
+## OpenStreetMap data (ODbL)
+
+Every map bundle (`build/maps/dist/maps-<date>.zip`) contains data derived from OpenStreetMap:
+
+- **License:** Open Database License (ODbL) v1.0.
+- **URL:** <https://opendatacommons.org/licenses/odbl/>
+- **Copyright:** © OpenStreetMap contributors.
+
+**Attribution:** the running PWA displays "© OpenStreetMap contributors" via MapLibre's `AttributionControl` in every map view, in both light and dark themes. This satisfies the ODbL attribution requirement for the interactive product.
+
+**Share-alike:** anyone who redistributes a bundle (or a derivative of the underlying OSM data extracted from a bundle) must comply with ODbL 4.4 — the produced database must itself be available under ODbL. This obligation is on the redistributor of the data, not on the TrailCurrent code (which is MIT-licensed and separate from the OSM data).
+
+Each bundle's `manifest.json` includes an `odbl_notice` field summarizing this in-band, so the requirement is visible to anyone who unpacks a bundle.
+
+---
+
+## Build-time only tools
+
+Not bundled into any shipped artifact; used only on the developer's build machine to produce map bundles. Listed for transparency.
+
+| Tool | License | Role |
+| --- | --- | --- |
+| [Planetiler](https://github.com/onthegomap/planetiler) | Apache-2.0 | PBF → PMTiles conversion |
+| [Photon dumps](https://github.com/komoot/photon) — used at runtime | Apache-2.0 | Global geocoding index (downloaded pre-built) — **will be listed under runtime once Phase 3 lands** |
+| [gis-ops/docker-valhalla](https://github.com/gis-ops/docker-valhalla) | Apache-2.0 | Valhalla tile build container — **will be listed under runtime once Phase 4 lands** |
+| [osmium](https://osmcode.org/osmium-tool/) | GPL-3.0 (used at build time only, not linked or bundled) | PBF utility invoked by build.sh |
+| [pyosmium](https://osmcode.org/pyosmium/) | BSL-1.0 | PBF diff / update — build-time only |
+
+---
+
+## Reporting a license gap
+
+If you spot a runtime component in the repo or the shipped containers that isn't listed here, please open an issue. This file is authoritative for what we distribute — if it doesn't cover something, that's a bug.

@@ -13,6 +13,7 @@ Dockerized edge gateway with MQTT broker, tile server, and local dashboards. Par
 | Flash and set up a new CM5 device | [CM5/SETUP.md](CM5/SETUP.md) |
 | Update an existing device | [PI_DEPLOYMENT.md](PI_DEPLOYMENT.md) |
 | Understand cloud OTA updates | [OTA_DEPLOYMENT_IMPLEMENTATION.md](OTA_DEPLOYMENT_IMPLEMENTATION.md#cloud-to-pi-ota-deployment-deployment-watcher) |
+| See third-party licenses & attribution | [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) |
 
 ## Prerequisites
 
@@ -581,4 +582,12 @@ The debugging setup is configured in `.vscode/launch.json`:
 4. **CAN bridge debugging** via breakpoints in `src/services/can-bridge.js`
 5. **Conditional breakpoints**: Right-click a breakpoint to set conditions
 6. **Logpoints**: Right-click line number to log values without pausing
+
+## License and Attribution
+
+TrailCurrent In-Vehicle Compute is released under the [MIT License](LICENSE).
+
+The repo bundles and ships a number of third-party components — MapLibre GL JS, PMTiles.js, OpenMapTiles styles, Noto Sans / Roboto / Metropolis font glyphs, and (for map bundles) OpenStreetMap data under the ODbL. See [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) for each component's upstream license and attribution.
+
+Anyone redistributing a map bundle (`build/maps/dist/maps-<date>.zip`) must comply with the ODbL — the running PWA already displays the required "© OpenStreetMap contributors" attribution.
 
