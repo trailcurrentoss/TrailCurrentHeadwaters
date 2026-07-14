@@ -166,6 +166,7 @@ docker compose up -d --no-build --remove-orphans
 sudo systemctl restart cantomqtt.service 2>/dev/null || true
 sudo systemctl restart discovery-mdns.service 2>/dev/null || true
 sudo systemctl restart deployment-watcher.service 2>/dev/null || true
+sudo systemctl restart os-settings.service 2>/dev/null || true
 echo "  systemd services restarted"
 
 echo ""

@@ -16,7 +16,7 @@ Dockerized edge gateway with MQTT broker, tile server, and local dashboards. Par
 
 ## Prerequisites
 
-- **Hardware:** Raspberry Pi Compute Module 5 (CM5) on a standard carrier board with Waveshare RS485 CAN HAT (B) — no custom components or soldering required. The CM5 + carrier board replaces the previous Pi 5 + NVME Base + custom CAN HAT stack: it's more compact, more readily available, cheaper, and can be fully assembled from off-the-shelf parts.
+- **Hardware:** Raspberry Pi Compute Module 5 (CM5), **WiFi variant required**, on a standard carrier board with Waveshare RS485 CAN HAT (B) — no custom components or soldering required. The CM5 + carrier board replaces the previous Pi 5 + NVME Base + custom CAN HAT stack: it's more compact, more readily available, cheaper, and can be fully assembled from off-the-shelf parts. The WiFi variant of the CM5 is mandatory — out-of-box setup runs over a captive-portal WiFi access point served by the module, and there is no fallback setup path (no SSH, no keyboard, no monitor, no serial console).
 - **Docker Engine** (or Docker Desktop) with the `compose` plugin and `buildx`
 - **Git**
 
@@ -62,40 +62,27 @@ Copy the value into `ENCRYPTION_KEY` in `.env`.
 
 See [SSL Certificate Generation](#ssl-certificate-generation) for details.
 
-### Step 5: Obtain map tiles
+### Step 5: (Optional) Build a map bundle
 
-The tileserver requires a pre-generated mbtiles file to serve map data.
+Map data no longer lives in the repo. Bundles are built separately using the
+[build/maps/](build/maps/README.md) pipeline, per region, and are uploaded to
+running devices via the PWA Maps page after first boot. For dev iteration you
+can skip this step — the PWA will show a "Map Data not Loaded" placeholder in
+the map area until a bundle is installed.
 
-```bash
-mkdir -p data/tileserver
-# Place your tiles file at: data/tileserver/map.mbtiles
-```
-
-**How to get tiles:**
-- **Download from OpenStreetMap:** Use the [PbfTileConverter](https://github.com/onthegomap/planetiler) utility or a service like [Protomaps](https://protomaps.com/) to generate tiles from OSM data (see [DOCS/UpdatingMapTiles.md](DOCS/UpdatingMapTiles.md))
-- **Copy from a team member:** Copy `map.mbtiles` from an existing machine
-
-A single US state (~200 MB - 2 GB) works fine for development. Full US coverage is ~10-25 GB.
-
-### Step 6: Obtain the search dataset (Nominatim PBF)
-
-The nominatim service powers the map's search box. It needs a raw OpenStreetMap
-`.osm.pbf` extract at `data/nominatim/map.osm.pbf`. **No conversion is needed** —
-Nominatim imports the PBF directly.
+If you want a bundle for development or to upload to a device, follow
+[build/maps/README.md](build/maps/README.md):
 
 ```bash
-mkdir -p data/nominatim
-# Place your PBF file at: data/nominatim/map.osm.pbf
+cd build/maps
+./bootstrap.sh                    # install system deps
+./build.sh --region california    # ~90 GB California bundle, fastest smoke-test region
 ```
 
-**How to get the PBF:**
-- **Reuse the PbfTileConverter cache:** If you already ran `Utilities/PbfTileConverter/convert.sh` for map tiles, the cached `<region>-latest.osm.pbf` is the same file — copy or symlink it into `data/nominatim/map.osm.pbf` (no re-download).
-- **Download directly from Geofabrik:** e.g. `curl -O https://download.geofabrik.de/north-america/us/colorado-latest.osm.pbf && mv colorado-latest.osm.pbf data/nominatim/map.osm.pbf`
-- **Copy from a team member:** Copy their `map.osm.pbf` from an existing machine
+The bundle lands at `build/maps/dist/maps-<date>.zip`. Upload it via the PWA
+Maps page (post first-boot) to install.
 
-Full details, region sizing, and import expectations: [DOCS/UpdatingNominatim.md](DOCS/UpdatingNominatim.md). First-run import into PostgreSQL takes hours for a small state and days for a continent.
-
-### Step 7: Build and start in development mode
+### Step 6: Build and start in development mode
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
@@ -105,35 +92,27 @@ The `--build` flag ensures all images are built from local Dockerfiles for your 
 - Hot-reload for frontend and backend code changes
 - Node.js debug port (9229) for VSCode debugger attachment
 - MongoDB accessible on localhost:27017
-- Tileserver styles hot-reload
 
 Containers will automatically:
 - Create the mosquitto password file from your credentials
 - Initialize all services with consistent credentials
 - Mount the SSL certificates for HTTPS/MQTTS communication
-- Load map tiles from the mbtiles file
 
 ### Verification Checklist
 
 After startup, verify all services are healthy:
 
 ```bash
-# All 7 containers should be running
+# All containers should be running (frontend, backend, mosquitto, mongodb)
 docker compose ps
 
 # Frontend loads
 curl -k https://localhost/
-
-# Tileserver healthy
-curl http://localhost:8080/health
-
-# Map style served
-curl -s http://localhost:8080/styles/3d-dark/style.json | head -5
-
-# Font glyphs available
-curl -s -o /dev/null -w "%{http_code}" "http://localhost:8080/fonts/Noto%20Sans%20Regular/0-255.pbf"
-# Expected: 200
 ```
+
+The PWA loads to a map area showing "Map Data not Loaded" — this is the
+expected state until a map bundle is uploaded via the PWA Maps page (or built
+locally via [build/maps/](build/maps/README.md)).
 
 **Access the web UI:** https://localhost (accept the self-signed certificate warning)
 
@@ -152,33 +131,45 @@ There are two ways to get the application onto a CM5 device:
 
 ### Option A: Build a Complete CM5 Image (Recommended for New Devices)
 
-The CM5 image includes everything — OS, Docker, application containers, map
-tiles, and configuration. After flashing, the user just sets passwords via
-an interactive wizard on first SSH login.
+The CM5 image includes everything the device needs to boot into a healthy
+map-less state: OS, Docker, application containers, and configuration. After
+flashing, the customer completes setup entirely from a phone: the device
+brings up a `Headwaters-XXXX` WiFi access point on first boot, the phone
+auto-opens a branded captive-portal setup page, the customer enters
+passwords and installs the CA certificate, and the device tears down the AP
+and starts services. **No SSH, keyboard, or monitor is used or required at
+any point** — the WiFi variant of the CM5 is mandatory for this reason.
+
+Map data is **not** baked into the image. Users upload their region's map
+bundle via the PWA Maps page after first boot — see
+[build/maps/README.md](build/maps/README.md) for how to build a bundle and
+[PLANS/Offline-Maps-Migration.md](PLANS/Offline-Maps-Migration.md) for the
+architectural reasoning.
 
 **Prerequisites (files not in the repo that you must provide):**
 
 | File | How to get it |
 |------|---------------|
 | `images/*.tar` | Run `./build-and-save-images.sh` (builds ARM64 Docker images) |
-| `data/tileserver/map.mbtiles` | Download from OSM data or copy from a team member (see [DOCS/UpdatingMapTiles.md](DOCS/UpdatingMapTiles.md)) |
-| `data/nominatim/map.osm.pbf` | Raw OSM extract for the search service — same PBF that PbfTileConverter downloads, or grab from [Geofabrik](https://download.geofabrik.de/) (see [DOCS/UpdatingNominatim.md](DOCS/UpdatingNominatim.md)) |
 
-**Build the image:**
+**Build the images (both variants in one shot):**
 ```bash
 # 1. Build ARM64 Docker images (~10 min first time)
 ./build-and-save-images.sh
 
-# 2. Ensure map.mbtiles exists at data/tileserver/map.mbtiles
-# 3. Ensure map.osm.pbf exists at data/nominatim/map.osm.pbf
-
-# 4. Build the CM5 image (bakes in Docker images, map data, app code, configs)
+# 2. Build BOTH CM5 image variants (base + wireless-base) sequentially
 cd CM5/image
 sudo ./build.sh myuser mypassword
 ```
 
-The output image (~28 GB) is flashed to NVMe via `dd`. See [CM5/SETUP.md](CM5/SETUP.md)
-for the full flashing and setup procedure.
+The output is **two** `.img` files — one for each carrier variant —
+plus a `verify-image.sh` report proving each contains the current
+source. End users flash whichever matches their carrier board; see
+[CM5/SETUP.md](CM5/SETUP.md) for the full flashing procedure.
+
+TrailCurrent distributes the resulting `.img` files as release
+artifacts. Only developers build; end users flash a pre-built image
+and complete setup from a phone over the captive-portal WiFi AP.
 
 ### Option B: Build a Deployment Package (For Updating Existing Devices)
 
@@ -191,7 +182,7 @@ deployment zip:
 ```
 
 This will:
-1. Build all 5 local service images for `linux/arm64` (plus pull `mongo:7` and `mediagis/nominatim:4.5`)
+1. Build the local service images (frontend, backend, mosquitto) for `linux/arm64` and save `mongo:7`
 2. Save images as `.tar` files in `images/`
 3. Fetch MCU firmware from GitHub releases (if available)
 4. Package everything into `trailcurrent-deployment-1.0.0.zip`
@@ -218,7 +209,7 @@ See [PI_DEPLOYMENT.md](PI_DEPLOYMENT.md) for detailed deployment instructions.
 
 ### Services
 
-The application runs 7 Docker containers:
+The application runs 4 Docker containers:
 
 | Service | Purpose |
 |---------|---------|
@@ -226,9 +217,11 @@ The application runs 7 Docker containers:
 | **backend** | Node.js Express API with MQTT, CAN bridge, and cloud bridge |
 | **mosquitto** | Eclipse Mosquitto MQTT broker (TLS on port 8883) |
 | **mongodb** | MongoDB 7 document database |
-| **tileserver** | Custom vector tile server with styles, fonts, and sprites |
-| **geocoder** | Offline reverse-geocode service (GeoNames cities1000) |
-| **nominatim** | Offline forward-geocode / search service (OSM PBF → PostgreSQL) |
+
+Additional services for tile serving (PMTiles), geocoding (Photon), and
+routing (Valhalla) are being added as part of the offline-maps migration
+(see [PLANS/Offline-Maps-Migration.md](PLANS/Offline-Maps-Migration.md)) and
+will be introduced via OTA in Phases 2–4 of that plan.
 
 ### CAN Bus Bridge
 
@@ -360,19 +353,20 @@ containers/          Dockerfiles for each service
   frontend/          nginx + MapLibre GL web UI
   backend/           Node.js Express API + CAN bridge + cloud bridge
   mosquitto/         Eclipse Mosquitto MQTT broker
-  tileserver/        Custom tile server (styles, fonts, sprites)
-  geocoder/          Offline reverse-geocode service
-  nominatim/         Marker only — image is mediagis/nominatim:4.5, no custom Dockerfile
+  mongodb/           Marker only — image is mongo:7, no custom Dockerfile
 config/              Version-controlled service configurations
   mosquitto/         mosquitto.conf
 data/                Runtime data (gitignored)
   keys/              TLS certificates
-  tileserver/        map.mbtiles (~25 GB, not in repo)
-  nominatim/         map.osm.pbf (OSM extract for search, not in repo)
+  maps/              Map bundles uploaded via PWA (versions/, staging/, current symlink)
+  firmware/          Peripheral firmware payloads
+  deployments/       OTA deployment package staging
 images/              ARM64 Docker image tarballs (gitignored, built by build-and-save-images.sh)
 local_code/          Python host services (CAN-to-MQTT bridge, deployment watcher, OTA helpers)
 scripts/             Utility scripts (cert generation)
+build/maps/          Map bundle build pipeline (produces the zips users upload)
 CM5/                 CM5 image build system, flashing tools, setup guide
+PLANS/               Internal migration and validation plans
 ```
 
 **Docker Compose files:**
@@ -484,8 +478,9 @@ Docker containers use service names for inter-container communication.
 The `data/` directory contains all persistent application data:
 
 - **SSL certificates** (`data/keys/`) — Generated once, valid for 10 years
-- **Map tiles** (`data/tileserver/map.mbtiles`) — Set up once, rarely updated
-- **Search dataset** (`data/nominatim/map.osm.pbf`) — Set up once, rarely updated (imported into the `nominatim-data` PostgreSQL volume on first run)
+- **Map bundles** (`data/maps/versions/<version>/`) — Uploaded via the PWA Maps page after first boot; one current + one previous version retained for rollback
+- **Firmware payloads** (`data/firmware/`) — Peripheral module OTA payloads
+- **OTA deployment staging** (`data/deployments/`) — Applied deployment packages
 - **MongoDB** — Named volume `mongodb-data`, persists across rebuilds
 
 **Never delete `data/` during updates** unless performing a complete reset. All data persists across container rebuilds.

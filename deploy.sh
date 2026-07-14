@@ -228,24 +228,17 @@ echo ""
 echo "Step 4: Starting Docker services..."
 # --no-build: use pre-loaded images, don't try to build from source
 # --remove-orphans: clean up containers from services removed in newer versions
+#   (including tileserver-gl, nominatim, geocoder — killed in the offline-maps
+#   migration; --remove-orphans lets an in-flight upgrade sweep them away).
 # Pre-create all Docker bind-mount directories as the current user before Docker
 # starts. If Docker creates them first it does so as root, causing permission
 # denied errors when the deploy script or backend tries to write into them.
-mkdir -p data/keys data/tileserver data/firmware data/deployments data/nominatim
+# data/maps/ skeleton is required for the new map-upload path; see
+# PLANS/Offline-Maps-Migration.md "Overarching principle → 4. Ownership invariant".
+mkdir -p data/keys data/firmware data/deployments data/maps/versions data/maps/staging
+chmod 0755 data/maps data/maps/versions data/maps/staging
 
-# Nominatim's PBF mount is a file, not a directory — if the file is missing,
-# Docker will silently create an empty directory in its place and the container
-# will fail with a cryptic import error. Fail fast with a helpful message.
-if [ ! -f data/nominatim/map.osm.pbf ]; then
-    echo ""
-    echo "  WARNING: data/nominatim/map.osm.pbf is missing."
-    echo "  The nominatim search service will not start until you place a"
-    echo "  regional .osm.pbf extract at that path. See DOCS/UpdatingNominatim.md."
-    echo "  Continuing without nominatim..."
-    docker compose up -d --no-build --remove-orphans --scale nominatim=0
-else
-    docker compose up -d --no-build --remove-orphans
-fi
+docker compose up -d --no-build --remove-orphans
 
 # Step 5: Ensure local_code is deployed to the user's home directory
 echo ""

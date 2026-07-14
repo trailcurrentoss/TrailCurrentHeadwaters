@@ -48,45 +48,6 @@ services:
     depends_on:
       - mosquitto
       - mongodb
-      - tileserver
-      - geocoder
-      - nominatim
-  geocoder:
-    # Offline reverse-geocode service (GeoNames cities1000).
-    # Backend proxies /api/geocode/reverse to this container so the browser
-    # never talks to it directly. Fully offline once built.
-    image: trailcurrent-in-vehicle-geocoder:latest
-    build:
-      context: ./containers/geocoder
-      dockerfile: Dockerfile
-    restart: unless-stopped
-  nominatim:
-    # Offline forward-geocode / search service (Nominatim + PostgreSQL).
-    # Backend proxies /api/geocode/search to this container on the Docker
-    # bridge; the browser never talks to it directly.
-    #
-    # FIRST-RUN: this imports data/nominatim/map.osm.pbf into PostgreSQL,
-    # which for a large regional PBF can take many hours and tens of GB of
-    # disk. Progress shows in `docker compose logs -f nominatim`. Data
-    # persists in the nominatim-data volume across restarts.
-    #
-    # See DOCS/UpdatingNominatim.md for how to obtain / regenerate the
-    # map.osm.pbf file for a different region.
-    image: mediagis/nominatim:4.5
-    environment:
-      - PBF_PATH=/nominatim/data/map.osm.pbf
-      - NOMINATIM_PASSWORD=${NOMINATIM_PASSWORD:-trailcurrent}
-      - IMPORT_WIKIPEDIA=false
-      - IMPORT_US_POSTCODES=false
-      - IMPORT_GB_POSTCODES=false
-      - THREADS=4
-    volumes:
-      # NOT :ro — mediagis/nominatim's init.sh chowns /nominatim recursively
-      # on first run, which fails on read-only mounts.
-      - ./data/nominatim/map.osm.pbf:/nominatim/data/map.osm.pbf
-      - nominatim-data:/var/lib/postgresql/16/main
-    shm_size: 1gb
-    restart: unless-stopped
   mongodb:
     image: mongo:7
     restart: unless-stopped
@@ -109,25 +70,8 @@ services:
       - "8883:8883"
     hostname: mosquitto
     restart: always
-  tileserver:
-    image: trailcurrent/trailcurrent-tile-server:latest
-    build:
-      context: ./containers/tileserver
-      dockerfile: Dockerfile
-    volumes:
-      - ./data/tileserver/map.mbtiles:/data/tiles/map.mbtiles:ro
-    ports:
-      - "8080:80"
-    healthcheck:
-      test: ["CMD-SHELL", "node /usr/src/app/src/healthcheck.js"]
-      interval: 30s
-      timeout: 3s
-      retries: 3
-      start_period: 10s
-    restart: unless-stopped
 
 volumes:
   mongodb-data:
   mosquitto-data:
   mosquitto-log:
-  nominatim-data:

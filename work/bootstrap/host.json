@@ -1,0 +1,58 @@
+{
+  "argv": [],
+  "build_dir": null,
+  "config_file": "/media/dave/extstorage/TrailCurrent/Product/TrailCurrentHeadwaters/CM5/image/config/trailcurrent-cm5-wireless-base.yaml",
+  "igroot": "/media/dave/extstorage/TrailCurrent/Product/TrailCurrentHeadwaters/CM5/rpi-image-gen",
+  "interactive": false,
+  "only_fs": false,
+  "only_image": false,
+  "overrides": [],
+  "paths": {
+    "config": "/media/dave/extstorage/TrailCurrent/Product/TrailCurrentHeadwaters/CM5/image/config:/media/dave/extstorage/TrailCurrent/Product/TrailCurrentHeadwaters/CM5/rpi-image-gen/config",
+    "exec": [
+      "/media/dave/extstorage/TrailCurrent/Product/TrailCurrentHeadwaters/CM5/rpi-image-gen/bin",
+      "/media/dave/extstorage/TrailCurrent/Product/TrailCurrentHeadwaters/CM5/rpi-image-gen/bin/generators"
+    ],
+    "layer": [
+      {
+        "path": "/media/dave/extstorage/TrailCurrent/Product/TrailCurrentHeadwaters/CM5/image/layer",
+        "tag": "SRClayer"
+      },
+      {
+        "path": "/media/dave/extstorage/TrailCurrent/Product/TrailCurrentHeadwaters/CM5/rpi-image-gen/device",
+        "tag": "IGdevice"
+      },
+      {
+        "path": "/media/dave/extstorage/TrailCurrent/Product/TrailCurrentHeadwaters/CM5/rpi-image-gen/image",
+        "tag": "IGimage"
+      },
+      {
+        "path": "/media/dave/extstorage/TrailCurrent/Product/TrailCurrentHeadwaters/CM5/rpi-image-gen/layer",
+        "tag": "IGlayer"
+      }
+    ]
+  },
+  "srcroot": "/media/dave/extstorage/TrailCurrent/Product/TrailCurrentHeadwaters/CM5/image",
+  "system": {
+    "hostname": "trailcurrentdev",
+    "is_container": false,
+    "machine": "x86_64",
+    "os_release": {
+      "BUG_REPORT_URL": "https://bugs.launchpad.net/ubuntu/",
+      "HOME_URL": "https://www.ubuntu.com/",
+      "ID": "ubuntu",
+      "ID_LIKE": "debian",
+      "LOGO": "ubuntu-logo",
+      "NAME": "Ubuntu",
+      "PRETTY_NAME": "Ubuntu 24.04.4 LTS",
+      "PRIVACY_POLICY_URL": "https://www.ubuntu.com/legal/terms-and-policies/privacy-policy",
+      "SUPPORT_URL": "https://help.ubuntu.com/",
+      "UBUNTU_CODENAME": "noble",
+      "VERSION": "24.04.4 LTS (Noble Numbat)",
+      "VERSION_CODENAME": "noble",
+      "VERSION_ID": "24.04"
+    },
+    "platform": "Linux-6.17.0-35-generic-x86_64-with-glibc2.39",
+    "python": "3.12.3"
+  }
+}

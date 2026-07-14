@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://trailcurrent.com/schemas/map-bundle-manifest.schema.json",
+  "title": "Map bundle manifest",
+  "description": "Metadata for a map data bundle (PMTiles + Photon index + Valhalla tiles). Region name lives inside this file, not in any filesystem path.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "region",
+    "region_display_name",
+    "build_date",
+    "pbf_date",
+    "artifacts",
+    "odbl_notice"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1,
+      "description": "Manifest schema version. Bump when the manifest shape changes in a way that breaks parsers."
+    },
+    "region": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+      "description": "Region identifier matching the YAML filename in build/maps/regions/ (e.g. north-america, united-states, europe, california, japan). Consumed by UI for display and mismatch detection, never by scripts to compute a filesystem path."
+    },
+    "region_display_name": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Human-friendly label shown in the PWA (e.g. \"North America\")."
+    },
+    "build_date": {
+      "type": "string",
+      "format": "date-time",
+      "description": "UTC timestamp of when the build script finished, RFC 3339."
+    },
+    "pbf_date": {
+      "type": "string",
+      "format": "date",
+      "description": "Date of the underlying OSM PBF extract used as source. Users can tell how fresh the map data is."
+    },
+    "artifacts": {
+      "type": "object",
+      "required": ["tiles.pmtiles", "photon_data.tar", "valhalla_tiles.tar"],
+      "additionalProperties": false,
+      "properties": {
+        "tiles.pmtiles": { "$ref": "#/$defs/artifact" },
+        "photon_data.tar": { "$ref": "#/$defs/artifact" },
+        "valhalla_tiles.tar": { "$ref": "#/$defs/artifact" }
+      }
+    },
+    "odbl_notice": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Attribution + license notice for the OSM-derived data content. Included in the bundle so downstream consumers see it inside the artifact, not just in the repo."
+    },
+    "build_tool_versions": {
+      "type": "object",
+      "description": "Optional: versions of the build-time tools that produced this bundle. Aids reproducibility and debugging.",
+      "additionalProperties": { "type": "string" },
+      "properties": {
+        "planetiler": { "type": "string" },
+        "valhalla_build_tiles": { "type": "string" },
+        "photon_dump_source": { "type": "string" },
+        "build_sh": { "type": "string" }
+      }
+    }
+  },
+  "$defs": {
+    "artifact": {
+      "type": "object",
+      "required": ["sha256", "bytes"],
+      "additionalProperties": false,
+      "properties": {
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "Lowercase hex SHA-256 of the file as it sits inside the bundle zip."
+        },
+        "bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Uncompressed byte size of the file inside the bundle."
+        }
+      }
+    }
+  }
+}

@@ -49,11 +49,13 @@ fi
 # Create application data directories that Docker bind-mounts.
 # All must exist before docker.service starts (this service runs Before=docker.service)
 # so Docker uses the existing user-owned directories instead of creating root-owned ones.
+# The data/maps/ skeleton is also created by the rpi-image-gen bake hook;
+# this is defense-in-depth in case a future image ships without it.
 sudo -u "$TC_USER" mkdir -p "$TC_HOME/data/keys"
-sudo -u "$TC_USER" mkdir -p "$TC_HOME/data/tileserver"
-sudo -u "$TC_USER" mkdir -p "$TC_HOME/data/nominatim"
 sudo -u "$TC_USER" mkdir -p "$TC_HOME/data/firmware"
 sudo -u "$TC_USER" mkdir -p "$TC_HOME/data/deployments"
+sudo -u "$TC_USER" mkdir -p "$TC_HOME/data/maps/versions"
+sudo -u "$TC_USER" mkdir -p "$TC_HOME/data/maps/staging"
 sudo -u "$TC_USER" mkdir -p "$TC_HOME/local_code"
 
 # -------------------------------------------

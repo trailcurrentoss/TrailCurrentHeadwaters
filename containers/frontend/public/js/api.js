@@ -273,6 +273,17 @@ class API {
         });
     }
 
+    // Destructive: wipes .env and Docker volumes, then reboots. Device
+    // comes back up on the Headwaters-XXXX captive-portal WiFi AP.
+    // Caller must have already run a typed-confirmation modal — this
+    // token is a "definitely-not-a-stray-request" marker, not a secret.
+    static async factoryReset() {
+        return this.request('/os/factory-reset', {
+            method: 'POST',
+            body: JSON.stringify({ confirm: 'FACTORY_RESET' })
+        });
+    }
+
     // Modules
     static async getModules() {
         return this.request('/modules');

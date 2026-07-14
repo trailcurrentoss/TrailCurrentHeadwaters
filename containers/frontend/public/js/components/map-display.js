@@ -73,11 +73,34 @@ export class MapDisplay {
     }
 
     async init() {
-        await this.loadMapLibre();
-        this.initMap();
-        this.setupControls();
-        this.setupSearch();
+        // Freshly-flashed devices ship with no map data. Show the "Map Data
+        // not Loaded" state cleanly rather than initializing MapLibre against
+        // a nonexistent tile source. Post-live, the map-upload OTA will land
+        // and this can conditionally load MapLibre when data is present.
+        this.initNoMapDataState();
         this.setupWebSocket();
+    }
+
+    initNoMapDataState() {
+        const container = document.getElementById('map-container');
+        if (container) {
+            container.innerHTML = `
+                <div class="map-no-data">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+                        <path d="M9 20l-5.447-2.724A1 1 0 0 1 3 16.382V5.618a1 1 0 0 1 1.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0 0 21 18.382V7.618a1 1 0 0 0-.553-.894L15 4m0 13V4m0 0L9 7"></path>
+                    </svg>
+                    <h3>Map Data not Loaded</h3>
+                    <p>This device does not have a map bundle installed.</p>
+                </div>
+            `;
+        }
+        const controls = document.querySelector('.map-controls');
+        if (controls) controls.style.display = 'none';
+        const searchInput = document.getElementById('map-search-input');
+        if (searchInput) {
+            searchInput.disabled = true;
+            searchInput.placeholder = 'Search unavailable — no map data loaded';
+        }
     }
 
     async loadMapLibre() {

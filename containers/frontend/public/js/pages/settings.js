@@ -437,6 +437,22 @@ export const settingsPage = {
                 </button>
             </div>
 
+            <!-- Factory Reset -->
+            <div class="card settings-item">
+                <div>
+                    <span class="settings-label">Factory Reset</span>
+                    <p class="settings-description">Erase all device credentials and settings and reboot. The device restarts on the Headwaters-XXXX setup WiFi network — the same out-of-box setup process runs again from the beginning.</p>
+                </div>
+                <button class="settings-action-btn settings-action-btn-danger" id="factory-reset-btn">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20">
+                        <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+                        <line x1="12" y1="9" x2="12" y2="13"></line>
+                        <line x1="12" y1="17" x2="12.01" y2="17"></line>
+                    </svg>
+                    Factory Reset
+                </button>
+            </div>
+
             <!-- App Info -->
             <div class="card settings-item" style="flex-direction: column; align-items: flex-start; gap: 10px;">
                 <span class="settings-label">About</span>
@@ -959,6 +975,16 @@ export const settingsPage = {
             });
         }
 
+        // Factory Reset button — opens a typed-confirmation modal
+        // because this action is irreversible from the PWA (the device
+        // reboots into the setup AP and requires captive-portal
+        // re-provisioning). The Reset Configuration button above is a
+        // soft reset of the PWA wizard only.
+        const factoryResetBtn = document.getElementById('factory-reset-btn');
+        if (factoryResetBtn) {
+            factoryResetBtn.addEventListener('click', () => this.openFactoryResetModal());
+        }
+
         // Deployment button
         const deploymentBtn = document.getElementById('deployment-btn');
         if (deploymentBtn) {
@@ -968,6 +994,140 @@ export const settingsPage = {
                     router.navigate('deployment');
                 });
             });
+        }
+    },
+
+    // Factory Reset modal — force typed confirmation before enabling
+    // the destructive button. This is the industry-standard "type the
+    // magic word" pattern (GitHub delete-repo, AWS delete-account) —
+    // the only interaction that unambiguously demonstrates intent on a
+    // small touchscreen where accidental taps are easy.
+    openFactoryResetModal() {
+        // Remove any previous instance to avoid stale listeners.
+        const existing = document.getElementById('factory-reset-modal');
+        if (existing) existing.remove();
+
+        const modal = document.createElement('div');
+        modal.id = 'factory-reset-modal';
+        modal.className = 'modal';
+        modal.innerHTML = `
+            <div class="modal-backdrop" data-factory-reset-close></div>
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2>Factory Reset</h2>
+                    <button class="modal-close" data-factory-reset-close aria-label="Cancel">&times;</button>
+                </div>
+                <div class="module-form">
+                    <div class="form-group">
+                        <p style="margin: 0; color: var(--text-primary); line-height: 1.5;">
+                            This will <strong>permanently erase</strong> the following on this device:
+                        </p>
+                        <ul style="margin: 8px 0 0 0; padding-left: 20px; color: var(--text-secondary); line-height: 1.7;">
+                            <li>MQTT credentials, admin password, and encryption key</li>
+                            <li>All Farwatch cloud pairing information</li>
+                            <li>All discovered MCU modules and their custom names</li>
+                            <li>WiFi credentials configured for the MCU network</li>
+                            <li>All alarm rules and SMS notification settings</li>
+                        </ul>
+                        <p style="margin: 12px 0 0 0; color: var(--text-secondary); line-height: 1.5;">
+                            The device reboots and comes back up broadcasting the <strong>Headwaters-XXXX</strong> setup WiFi network — the same out-of-box setup process runs again from the beginning. Map data and TLS certificates are preserved.
+                        </p>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label" for="factory-reset-confirm-input">
+                            Type <code style="background: var(--bg-primary); padding: 2px 6px; border-radius: 4px;">FACTORY RESET</code> to enable the button
+                        </label>
+                        <input type="text"
+                               id="factory-reset-confirm-input"
+                               class="form-input"
+                               autocomplete="off"
+                               autocapitalize="characters"
+                               spellcheck="false"
+                               placeholder="FACTORY RESET">
+                    </div>
+                    <div id="factory-reset-error" class="password-message hidden"></div>
+                    <div style="display: flex; gap: 12px; justify-content: flex-end;">
+                        <button type="button"
+                                class="settings-action-btn"
+                                data-factory-reset-close>
+                            Cancel
+                        </button>
+                        <button type="button"
+                                class="settings-action-btn settings-action-btn-danger"
+                                id="factory-reset-confirm-btn"
+                                disabled>
+                            Reset Device
+                        </button>
+                    </div>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(modal);
+
+        const input = modal.querySelector('#factory-reset-confirm-input');
+        const confirmBtn = modal.querySelector('#factory-reset-confirm-btn');
+        const errorEl = modal.querySelector('#factory-reset-error');
+        const close = () => this.closeFactoryResetModal();
+
+        // Typed-confirmation gate. Uppercase-insensitive match so a
+        // touchscreen user tapping shift can still get through.
+        input.addEventListener('input', () => {
+            const match = input.value.trim().toUpperCase() === 'FACTORY RESET';
+            confirmBtn.disabled = !match;
+        });
+
+        modal.querySelectorAll('[data-factory-reset-close]').forEach(el => {
+            el.addEventListener('click', close);
+        });
+
+        confirmBtn.addEventListener('click', () => this.performFactoryReset(confirmBtn, errorEl));
+
+        // Focus the input so keyboard users are ready immediately.
+        setTimeout(() => input.focus(), 50);
+    },
+
+    closeFactoryResetModal() {
+        const modal = document.getElementById('factory-reset-modal');
+        if (modal) modal.remove();
+    },
+
+    async performFactoryReset(confirmBtn, errorEl) {
+        confirmBtn.disabled = true;
+        confirmBtn.textContent = 'Resetting…';
+        errorEl.classList.add('hidden');
+
+        try {
+            await API.factoryReset();
+
+            // Ack received. Device is rebooting — the connection will
+            // die within a couple seconds. Replace the modal body with
+            // a "rebooting" state that survives the connection drop.
+            const modal = document.getElementById('factory-reset-modal');
+            if (!modal) return;
+            modal.querySelector('.modal-content').innerHTML = `
+                <div class="modal-header">
+                    <h2>Device Rebooting</h2>
+                </div>
+                <div class="module-form">
+                    <p style="margin: 0; color: var(--text-primary); line-height: 1.5;">
+                        The device is powering back down and will restart on the
+                        <strong>Headwaters-XXXX</strong> setup WiFi network in about
+                        one minute.
+                    </p>
+                    <p style="margin: 0; color: var(--text-secondary); line-height: 1.5;">
+                        This browser will lose its connection now. When the setup
+                        WiFi network appears in your phone's WiFi list, connect to
+                        it and follow the setup portal.
+                    </p>
+                </div>
+            `;
+        } catch (error) {
+            console.error('Factory reset failed:', error);
+            errorEl.textContent = 'Factory reset failed: ' + (error.message || 'Unknown error');
+            errorEl.classList.remove('hidden');
+            errorEl.classList.add('error');
+            confirmBtn.disabled = false;
+            confirmBtn.textContent = 'Reset Device';
         }
     },
 

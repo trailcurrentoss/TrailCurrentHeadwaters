@@ -1,0 +1,24 @@
+# Japan.
+#
+# ./build.sh --region japan
+
+region: japan
+display_name: Japan
+description: All of Japan, including Okinawa and the outlying islands.
+
+pbf_sources:
+  - https://download.geofabrik.de/asia/japan-latest.osm.pbf
+
+# Photon search index is global for every bundle — see build.sh.
+
+bbox:
+  west: 122.9
+  south: 24.0
+  east: 146.0
+  north: 45.6
+
+estimated_footprint_gb:
+  pmtiles: 5
+  photon_data: 57   # global Photon dump — same across every region
+  valhalla_tiles: 7
+  bundle_zip: 65

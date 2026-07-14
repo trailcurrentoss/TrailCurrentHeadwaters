@@ -36,6 +36,12 @@ MQTT_TOPIC_TZ_REQUEST  = 'os/timezone/request'
 MQTT_TOPIC_TZ_RESPONSE = 'os/timezone/response'
 MQTT_TOPIC_TZ_CURRENT  = 'os/timezone/current'    # retained
 
+MQTT_TOPIC_FACTORY_RESET_REQUEST  = 'os/factory-reset/request'
+MQTT_TOPIC_FACTORY_RESET_RESPONSE = 'os/factory-reset/response'
+
+# Token the PWA must send to prove this isn't a stray/replayed request.
+FACTORY_RESET_CONFIRM_TOKEN = 'FACTORY_RESET'
+
 # ── Zoneinfo validation ────────────────────────────────────────────────
 ZONEINFO_DIR = '/usr/share/zoneinfo'
 # Belt-and-braces regex before we ever touch the filesystem, so a
@@ -191,11 +197,149 @@ def handle_timezone_request(client, msg):
             pass
 
 
+# ── Factory reset ──────────────────────────────────────────────────────
+# The PWA drives factory reset here so the on-device story matches the
+# out-of-box story: after reset, the device reboots into the same code
+# path a freshly flashed unit takes on first boot — captive-portal
+# WiFi AP (Headwaters-XXXX) if `.env` is absent, then PWA setup wizard
+# once the customer has completed the portal. See CM5/SETUP.md
+# "Recovery / Re-entering Setup Mode".
+#
+# The daemon owns this action (not the backend container) because:
+#   1. `.env` files live on the host filesystem (backend can't reach them)
+#   2. `docker compose down -v` would kill the backend container itself
+#   3. `systemctl reboot` requires host privilege
+# The daemon has passwordless sudo for exactly these commands via the
+# rig image build.
+#
+# Ordering matters: we ack the request BEFORE tearing anything down, so
+# the PWA can flip its UI to "rebooting" before the connection drops.
+def handle_factory_reset_request(client, msg):
+    reqId = None
+    try:
+        data = json.loads(msg.payload.decode('utf-8'))
+        reqId = data.get('reqId')
+        token = data.get('confirm')
+        if token != FACTORY_RESET_CONFIRM_TOKEN:
+            raise ValueError(
+                f"Missing or invalid confirm token — expected {FACTORY_RESET_CONFIRM_TOKEN!r}"
+            )
+
+        print(f"[FactoryReset] Request accepted (reqId={reqId})")
+
+        # Ack BEFORE we start tearing things down — the PWA needs this
+        # response to flip its UI to "rebooting" state. If we wait until
+        # after `docker compose down` the mosquitto container is gone
+        # and the response never gets through.
+        client.publish(
+            MQTT_TOPIC_FACTORY_RESET_RESPONSE,
+            json.dumps({'reqId': reqId, 'ok': True, 'phase': 'ack'}),
+            qos=1,
+        )
+        # Give paho a brief window to actually flush the ack over the
+        # socket before the mosquitto container disappears.
+        time.sleep(2)
+
+        # Kick off the destructive work in a background thread so the
+        # MQTT callback returns and paho's network loop can continue
+        # running (until docker takes mosquitto down under it).
+        threading.Thread(target=perform_factory_reset, daemon=True).start()
+    except Exception as e:
+        print(f"[FactoryReset] Request failed: {e}")
+        try:
+            client.publish(
+                MQTT_TOPIC_FACTORY_RESET_RESPONSE,
+                json.dumps({'reqId': reqId, 'ok': False, 'error': str(e)}),
+                qos=1,
+            )
+        except Exception:
+            pass
+
+
+def perform_factory_reset():
+    """Tear the device back to its post-flash / pre-setup state, then
+    reboot. Called from a background thread — the MQTT callback has
+    already returned by the time we get here.
+
+    What we clear (matches "starts back over at the beginning"):
+      - ~/.env and ~/local_code/.env — customer credentials, encryption key
+      - Docker named volumes (mongodb-data) — PWA wizard state, module list,
+        cloud config, alarm rules, etc.
+
+    What we DELIBERATELY DO NOT touch:
+      - TLS certificates in ~/data/keys/ — keyed to headwaters.local,
+        still valid, CA already trusted by the customer's phone
+      - Uploaded map bundles (~/data/maps/versions/, ~/data/maps/current) —
+        the user's region-specific bundles are large (91–129 GB) and
+        deliberately kept across factory resets; forcing a re-upload after
+        every reset would be user-hostile. If a user wants to wipe map
+        data, they do it explicitly via the Maps page.
+      - Python venv, Docker images, systemd units — regenerating them
+        buys nothing and adds minutes to the reset
+
+    On reboot:
+      - trailcurrent-firstboot re-runs its idempotent bits (no-ops:
+        partition is already expanded, EEPROM is already set, certs
+        already exist, venv already exists)
+      - Docker starts with fresh named volumes → MongoDB is empty →
+        PWA wizard is a clean slate
+      - Because .env is absent, trailcurrent-setup-ap comes up → the
+        Headwaters-XXXX captive-portal WiFi AP is broadcast → customer
+        redoes device setup exactly as they did out of the box
+    """
+    home = os.path.expanduser('~')
+    compose_file = os.path.join(home, 'docker-compose.yml')
+
+    print("[FactoryReset] Beginning reset sequence")
+
+    # Stop containers and drop named volumes. `down -v` removes only the
+    # named volumes declared in the compose file — bind-mounted paths
+    # (map tiles, keys) are untouched.
+    if os.path.isfile(compose_file):
+        print("[FactoryReset] Stopping containers and removing named volumes")
+        result = subprocess.run(
+            ['sudo', '-n', 'docker', 'compose', '-f', compose_file,
+             'down', '-v', '--remove-orphans'],
+            cwd=home,
+            capture_output=True, text=True,
+            timeout=180,
+        )
+        if result.returncode != 0:
+            # Log but keep going — leaving stale volumes is worse than
+            # a stuck container, and reboot will clean the containers up.
+            print(f"[FactoryReset] docker compose down warning "
+                  f"(rc={result.returncode}): {result.stderr.strip()}")
+    else:
+        print(f"[FactoryReset] Compose file not found at {compose_file} — "
+              "skipping container teardown")
+
+    # Delete .env files. Missing files are fine — we may be called on
+    # a partially-configured device.
+    for path in (os.path.join(home, '.env'),
+                 os.path.join(home, 'local_code', '.env')):
+        try:
+            if os.path.isfile(path):
+                os.remove(path)
+                print(f"[FactoryReset] Removed {path}")
+            else:
+                print(f"[FactoryReset] {path} already absent")
+        except Exception as e:
+            print(f"[FactoryReset] Failed to remove {path}: {e}")
+
+    # Reboot. The setup-ap service picks up on next boot because .env
+    # is now absent, and the customer walks the same out-of-box flow.
+    print("[FactoryReset] Rebooting now — device will come back up on the "
+          "setup access point")
+    subprocess.run(['sudo', '-n', 'systemctl', 'reboot'],
+                   timeout=10, check=False)
+
+
 # ── MQTT plumbing ──────────────────────────────────────────────────────
 def on_connect(client, _userdata, _flags, reason_code, _properties):
     if reason_code == 0:
         print("Connected to MQTT broker")
         client.subscribe(MQTT_TOPIC_TZ_REQUEST)
+        client.subscribe(MQTT_TOPIC_FACTORY_RESET_REQUEST)
         # Publish current state on (re)connect so the backend's cache
         # is populated even if the daemon was restarted after the
         # backend last subscribed.
@@ -215,6 +359,12 @@ def on_message(client, _userdata, msg):
     if msg.topic == MQTT_TOPIC_TZ_REQUEST:
         threading.Thread(
             target=handle_timezone_request,
+            args=(client, msg),
+            daemon=True,
+        ).start()
+    elif msg.topic == MQTT_TOPIC_FACTORY_RESET_REQUEST:
+        threading.Thread(
+            target=handle_factory_reset_request,
             args=(client, msg),
             daemon=True,
         ).start()

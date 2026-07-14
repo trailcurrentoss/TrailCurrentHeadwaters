@@ -1,0 +1,27 @@
+# Europe — whole-continent extract.
+# Larger than North America; expect long build times and a large bundle.
+#
+# ./build.sh --region europe
+
+region: europe
+display_name: Europe
+description: >
+  European continent as defined by the Geofabrik "europe" extract.
+  Includes EU member states, UK, Switzerland, Norway, Balkans, and European Russia.
+
+pbf_sources:
+  - https://download.geofabrik.de/europe-latest.osm.pbf
+
+# Photon search index is global for every bundle — see build.sh.
+
+bbox:
+  west: -25.0
+  south: 34.0
+  east: 45.0
+  north: 72.0
+
+estimated_footprint_gb:
+  pmtiles: 45
+  photon_data: 57   # global Photon dump — same across every region
+  valhalla_tiles: 55
+  bundle_zip: 140

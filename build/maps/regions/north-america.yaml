@@ -1,0 +1,45 @@
+# North America — default region shipped with the build pipeline.
+# Covers the United States, Canada, and Mexico.
+#
+# To build with this region:
+#   ./build.sh --region north-america
+#
+# To create your own region, copy this file to build/maps/regions/<your-region>.yaml,
+# edit the values below, and run:
+#   ./build.sh --region <your-region>
+# No script changes required.
+
+region: north-america
+display_name: North America
+description: >
+  United States (including territories), Canada, and Mexico.
+  The default region for TrailCurrent Headwaters builds.
+
+# Geofabrik PBF extracts to fetch and merge.
+# One entry per country/sub-region. build.sh feeds all of these into
+# Planetiler and Valhalla in a single build.
+pbf_sources:
+  - https://download.geofabrik.de/north-america/us-latest.osm.pbf
+  - https://download.geofabrik.de/north-america/canada-latest.osm.pbf
+  - https://download.geofabrik.de/north-america/mexico-latest.osm.pbf
+
+# Note: the Photon search index is NOT declared per-region. Every bundle ships
+# Photon's global dump (~50 GB). See build.sh (PHOTON_DUMP_URL) for the rationale
+# — global gives us search-anywhere-on-Earth in every bundle with zero variation
+# and zero decisions per region. The 50 GB is insignificant against the 512 GB /
+# 1 TB drive we recommend.
+
+# WGS84 bounding box used to crop PMTiles rendering and Valhalla admin data.
+bbox:
+  west: -168.0
+  south: 14.5
+  east: -52.0
+  north: 71.5
+
+# Rough sizing estimates in gigabytes. Updated by build.sh after the first
+# successful build with real measured values.
+estimated_footprint_gb:
+  pmtiles: 40
+  photon_data: 57   # global Photon dump — same across every region
+  valhalla_tiles: 50
+  bundle_zip: 130

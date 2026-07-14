@@ -1,0 +1,24 @@
+# Australia.
+#
+# ./build.sh --region australia
+
+region: australia
+display_name: Australia
+description: Australia. Excludes New Zealand.
+
+pbf_sources:
+  - https://download.geofabrik.de/australia-oceania/australia-latest.osm.pbf
+
+# Photon search index is global for every bundle — see build.sh.
+
+bbox:
+  west: 112.5
+  south: -44.0
+  east: 154.0
+  north: -9.0
+
+estimated_footprint_gb:
+  pmtiles: 4
+  photon_data: 57   # global Photon dump — same across every region
+  valhalla_tiles: 6
+  bundle_zip: 62

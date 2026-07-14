@@ -36,9 +36,15 @@ device:
 image:
   name: trailcurrent-cm5-wireless-base
   boot_part_size: 200%
-  # Image includes ~25GB map tiles + ~1GB Docker images. Keep the image
-  # compact (10% headroom) — first-boot expands root to fill the NVMe.
-  root_part_size: 110%
+  # Map tiles are NOT baked in (users upload bundles via PWA after boot);
+  # only Docker image tarballs and OS packages need to fit. The 16 KB block
+  # size (required for CM5's 16 KB page size) rounds every small file up to
+  # 16 KB, so tens of thousands of small files (docker service man pages,
+  # apt package lists, etc.) inflate on-disk usage substantially beyond
+  # `du -sk`. 200% (double the raw chroot size) gives generous headroom for
+  # that block-rounding overhead. First-boot still expands root to fill
+  # the entire NVMe, so the compact-image goal is preserved.
+  root_part_size: 200%
 
 layer:
   base: trailcurrent-base-wireless

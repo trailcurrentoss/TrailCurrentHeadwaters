@@ -34,14 +34,6 @@ if ! docker buildx inspect "$BUILDER_NAME" &>/dev/null; then
     docker buildx create --name "$BUILDER_NAME" --platform linux/amd64,linux/arm64
 fi
 
-# Verify tileserver fonts are present (committed to repo, should exist after clone)
-if [ ! -d "containers/tileserver/fonts" ] || [ -z "$(ls -A containers/tileserver/fonts/ 2>/dev/null)" ]; then
-    echo "Error: Tileserver font glyphs not found at containers/tileserver/fonts/"
-    echo "Fonts are committed to the repository. If missing, try:"
-    echo "  git checkout -- containers/tileserver/fonts/"
-    exit 1
-fi
-
 # Clean up any existing tar files from previous builds
 if [ -d "images" ] && [ "$(ls -A images/*.tar 2>/dev/null)" ]; then
     echo "Removing old tar files from previous build..."
@@ -59,8 +51,6 @@ SERVICES=(
     "containers/frontend|trailcurrent-in-vehicle-frontend"
     "containers/backend|trailcurrent-in-vehicle-backend"
     "containers/mosquitto|trailcurrent-in-vehicle-mosquitto"
-    "containers/tileserver|trailcurrent/trailcurrent-tile-server"
-    "containers/geocoder|trailcurrent-in-vehicle-geocoder"
 )
 
 # Build and save each service
@@ -108,28 +98,6 @@ then
     echo "  Saved to images/mongodb.tar ($SIZE)"
 else
     echo "  Failed to save mongo:7"
-    cat /tmp/build.log
-    exit 1
-fi
-
-# Save Nominatim for truly offline deployment (does NOT load into local Docker).
-# Tag must match docker-compose.yml exactly so `docker compose up --no-build`
-# on the Pi finds the loaded image.
-echo "=========================================="
-echo "Saving mediagis/nominatim:4.5 (linux/arm64)..."
-echo "=========================================="
-
-if docker buildx build --builder "$BUILDER_NAME" --platform linux/arm64 \
-    -t mediagis/nominatim:4.5 \
-    --output "type=docker,dest=images/nominatim.tar" \
-    - <<'DOCKERFILE' > /tmp/build.log 2>&1
-FROM mediagis/nominatim:4.5
-DOCKERFILE
-then
-    SIZE=$(du -h "images/nominatim.tar" | cut -f1)
-    echo "  Saved to images/nominatim.tar ($SIZE)"
-else
-    echo "  Failed to save mediagis/nominatim:4.5"
     cat /tmp/build.log
     exit 1
 fi

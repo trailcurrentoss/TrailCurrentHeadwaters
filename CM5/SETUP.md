@@ -9,10 +9,15 @@ the steps in order with no gaps.
 Two supported carrier boards, two image variants. Pick one — the flashing
 procedure and application stack are identical from Step 2 onward.
 
-| Variant | Carrier | CAN wiring | Build script | Image name |
-|---------|---------|-----------|--------------|------------|
-| Base | Any CM5 IO board + Waveshare **RS485 CAN HAT (B)** | MCP2515, SPI0/CE0, 16 MHz xtal, INT=**GPIO25** | `build.sh` | `trailcurrent-cm5-base.img` |
-| Wireless-Base | Waveshare **CM5-IO-Wireless-Base** (all-in-one) | Onboard isolated MCP2515, SPI0/CE0, 16 MHz xtal, INT=**GPIO17** | `build-wireless.sh` | `trailcurrent-cm5-wireless-base.img` |
+| Variant | Carrier | CAN wiring | Image name |
+|---------|---------|-----------|------------|
+| Base | Any CM5 IO board + Waveshare **RS485 CAN HAT (B)** | MCP2515, SPI0/CE0, 16 MHz xtal, INT=**GPIO25** | `trailcurrent-cm5-base.img` |
+| Wireless-Base | Waveshare **CM5-IO-Wireless-Base** (all-in-one) | Onboard isolated MCP2515, SPI0/CE0, 16 MHz xtal, INT=**GPIO17** | `trailcurrent-cm5-wireless-base.img` |
+
+Both variants are built by a single `build.sh` invocation so they can
+never drift out of sync -- see [Reproducible Builds](#reproducible-builds-what-the-build-does-and-how-to-verify)
+below. End users receive both `.img` files and flash whichever matches
+their carrier board.
 
 The **Wireless-Base** variant targets the Waveshare CM5-IO-Wireless-Base
 carrier board, which folds several parts of the stack onto one PCB:
@@ -32,34 +37,52 @@ The only functional difference between the two images is the MCP2515 interrupt
 GPIO (25 vs 17) and the overlay syntax used to declare it. Both use the same
 MCP2515 controller, the same 16 MHz crystal, the same SPI0/CE0 chip select,
 and the same 500 kbit/s bit timing. Everything else — Docker images, first-boot
-provisioning, TLS, mDNS, deployment watcher, tileserver, active-cooler
-thermal ramp — is identical.
+provisioning, TLS, mDNS, deployment watcher, active-cooler thermal ramp — is
+identical.
 
 ## Hardware Requirements
 
 ### Compute Module
 
-Raspberry Pi Compute Module 5 with **4 GB RAM** (required — Docker images
-alone use ~3.8 GB during first-boot loading).
+Raspberry Pi Compute Module 5 with **4 GB RAM** and **onboard WiFi**
+(both required).
 
 | Variant | Works? | Notes |
 |---------|--------|-------|
 | CM5 (with eMMC) | Yes | eMMC is present but unused — boots from NVMe only |
 | CM5 Lite (no eMMC) | Yes | Enters USB boot automatically — no jumper needed for flashing |
-| With WiFi | Yes | WiFi is disabled in config.txt for power savings, but the module works |
-| Without WiFi | Yes | Recommended — saves cost since WiFi is not used (Ethernet only) |
+| **With WiFi** | **Required** | The out-of-box setup runs a captive-portal WiFi access point so the user can configure the device from a phone. No SSH, keyboard, or monitor is used or supported for initial setup. |
+| Without WiFi | **Not supported** | The setup access point cannot come up, and there is no fallback interactive setup path |
 | 2 GB RAM | No | Insufficient for Docker image loading and container runtime |
 | 8 GB RAM | Yes | Works but unnecessary — typical runtime uses ~730 MB |
 
-**Recommended SKU:** CM5 Lite, 4 GB, without WiFi — lowest cost for this
-workload. Any 4 GB variant will work identically.
+**Recommended SKU:** CM5 or CM5 Lite, 4 GB, **with WiFi** — the WiFi radio
+is used only during first-boot setup, then powered down at the software
+level for the remainder of the device's life. There is no cost-savings
+path that omits WiFi.
 
 ### NVMe SSD
 
+Map data drives the sizing. Map bundles ship separately from the OS image
+(uploaded via the PWA Maps page after first boot) and are large — a North
+America bundle is ~130 GB, Europe ~135 GB, single US states ~92 GB. The
+device retains one previous version for rollback, so plan for **two** bundles
+on disk plus working state during an upload.
+
 | Capacity | Status | Notes |
 |----------|--------|-------|
-| 128 GB | Minimum | ~30 GB used by OS + Docker images + map tiles. Leaves limited headroom for logs and data growth |
-| 256 GB | Recommended | Comfortable headroom for long-term deployments |
+| 512 GB | **Recommended** | Comfortable: NA bundle + previous rollback version + OS + Docker + working state during upload, with ~150 GB free for logs and long-term growth |
+| 1 TB | Ideal | Multi-region flexibility (swap between bundles without losing rollback), plenty of headroom for years of logs/state |
+
+Rough disk budget on a 512 GB drive with a NA bundle installed:
+
+- OS + system packages + Docker engine: ~10 GB
+- Docker container images (frontend, backend, mongo, mosquitto, photon, valhalla): ~5 GB
+- Map bundle current (`data/maps/versions/<current>/`): ~130 GB
+- Map bundle previous / rollback (`data/maps/versions/<previous>/`): ~130 GB
+- Working state peak during upload (staging zip + extraction): ~150 GB (transient — reclaimed after apply)
+- MongoDB, mosquitto, deployments, firmware, logs: ~5 GB
+- Free headroom: ~80 GB
 
 The NVMe must be M.2 form factor matching the carrier board slot (typically
 2230 or 2242). For high-temperature deployments (enclosed trailers), consider
@@ -96,9 +119,19 @@ expanded to fill the entire drive on first boot.
 Application data directories:
 
 ```
-~/data           (keys, tileserver, nominatim)
-~/local_code     (Python venv, CAN-to-MQTT scripts)
+~/data/keys          TLS certificates (generated on first boot)
+~/data/maps/         Map bundles (uploaded via PWA Maps page after first boot)
+                     ├── versions/<version>/  applied bundles (current + one previous for rollback)
+                     ├── staging/             upload landing zone (transient)
+                     └── current              symlink to the active version
+~/data/firmware      Peripheral firmware payloads
+~/data/deployments   OTA deployment package staging
+~/local_code         Python venv, CAN-to-MQTT scripts
 ```
+
+Map bundles are user data, not system data. The image ships with the
+`data/maps/` directories present but empty; users upload their region's
+bundle via the PWA Maps page after the setup portal completes.
 
 Docker uses the default data-root (`/var/lib/docker`) since everything is on
 the NVMe.
@@ -127,10 +160,10 @@ carrier board between consecutive rpiboot operations.**
 The version from APT has known issues with CM5, so we build from source:
 
 ```bash
+# From the repo root — everything below stays at repo root thanks to the
+# subshell around the build commands.
 git clone https://github.com/raspberrypi/usbboot CM5/usbboot
-cd CM5/usbboot
-git submodule init && git submodule update
-make
+( cd CM5/usbboot && git submodule init && git submodule update && make )
 ```
 
 This produces the `rpiboot` binary in `CM5/usbboot/`. The submodule step
@@ -143,8 +176,8 @@ The EEPROM must be configured to boot from NVMe before a board will work.
 Build the EEPROM image once — it is reused for every board:
 
 ```bash
-cd CM5/usbboot/recovery5
-./update-pieeprom.sh
+# From the repo root
+( cd CM5/usbboot/recovery5 && ./update-pieeprom.sh )
 ```
 
 This bakes `boot.conf` (which sets `BOOT_ORDER=0xfe6` — NVMe only) into an
@@ -161,99 +194,80 @@ images first:
 ./build-and-save-images.sh
 ```
 
-This cross-compiles all 5 local service images for `linux/arm64` (plus
-`mongo:7` and `mediagis/nominatim:4.5`) and saves them as tar files in
-`images/`. Takes ~10 minutes on the first run.
+This cross-compiles the local service images (frontend, backend, mosquitto)
+for `linux/arm64` plus `mongo:7`, saving them as tar files in `images/`.
+Takes ~10 minutes on the first run.
 
 > **Requires:** Docker Engine with `buildx`. The script creates a
 > dedicated builder (`trailcurrent-arm64`) automatically.
 
-### 4. Obtain Map Tiles
+> **Note on map data:** No map bundle is baked into the CM5 image. Map
+> bundles are large (~130 GB for North America) and region-specific;
+> baking one would either force a NA default onto non-NA users or require
+> per-region image variants. Instead, users upload their region's bundle
+> via the PWA Maps page after first boot. See
+> [PLANS/Offline-Maps-Migration.md](../PLANS/Offline-Maps-Migration.md) for
+> the full architectural reasoning, and [build/maps/README.md](../build/maps/README.md)
+> for how to build a bundle for a specific region.
 
-The tileserver requires a pre-generated `.mbtiles` file (~25 GB for the
-US). This file is baked into the CM5 image so devices are ready to run
-immediately after flashing.
+### 4. Build the CM5 Image
 
-```bash
-mkdir -p data/tileserver
-# Place your tiles file at: data/tileserver/map.mbtiles
-```
-
-**How to get tiles:**
-- Copy from an existing team member's machine
-- Generate from OpenStreetMap data using the **PbfTileConverter** utility
-  (see [DOCS/UpdatingMapTiles.md](../DOCS/UpdatingMapTiles.md))
-
-### 5. Obtain the Search Dataset (Nominatim PBF)
-
-The nominatim service imports a raw OSM `.osm.pbf` extract to power the
-map's search box. Like the tiles, this file is baked into the CM5 image
-so a fresh flash is ready to run — no manual transfer to the device.
-
-```bash
-mkdir -p data/nominatim
-# Place your PBF file at: data/nominatim/map.osm.pbf
-```
-
-**How to get the PBF:**
-- Copy from an existing team member's machine
-- Reuse the cached PBF produced by PbfTileConverter (same file — copy or
-  symlink it to `data/nominatim/map.osm.pbf`)
-- Download directly from [Geofabrik](https://download.geofabrik.de/)
-  (see [DOCS/UpdatingNominatim.md](../DOCS/UpdatingNominatim.md))
-
-Nominatim does its own import on the device — no conversion is needed
-here. The first-boot import into PostgreSQL runs in the background and
-takes hours (US-scale) to days (continent-scale).
-
-### 6. Build the CM5 Image
-
-The image includes everything needed to run TrailCurrent: the OS, Docker,
-CAN bus configuration, power optimizations, all Docker container images,
-the Python local code, map tiles, and configuration files. After flashing,
-the only manual step is the first-login setup wizard (which sets passwords
-and generates encryption keys).
+The image includes everything needed to boot the device to a healthy
+map-less state: the OS, Docker, CAN bus configuration, power optimizations,
+all Docker container images, the Python local code, and configuration files.
+After flashing, the only manual step is completing the captive-portal setup
+from a phone over the device's built-in setup access point — no SSH,
+keyboard, or monitor required. Then users install a map bundle via the
+PWA Maps page whenever they're ready.
 
 **Prerequisites (build.sh will verify these exist):**
 
 | File | Source | Purpose |
 |------|--------|---------|
 | `images/*.tar` | Step 3 (`build-and-save-images.sh`) | Docker container images |
-| `data/tileserver/map.mbtiles` | Step 4 | Map tile data (~25 GB) |
-| `data/nominatim/map.osm.pbf` | Step 5 | OSM extract for the search service (~18 GB) |
 | `docker-compose.yml` | In repo | Service orchestration |
 | `config/` | In repo | Mosquitto configuration |
 | `local_code/` | In repo | Python CAN-to-MQTT bridge and helpers |
 | `scripts/` | In repo | Certificate generation scripts |
 
+**Both variants build from a single command:**
+
 ```bash
-cd CM5/image
-
-# Base variant (CM5 IO board + Waveshare RS485 CAN HAT (B), INT=GPIO25)
-sudo ./build.sh myuser mypassword
-
-# Wireless-Base variant (Waveshare CM5-IO-Wireless-Base, INT=GPIO17)
-sudo ./build-wireless.sh myuser mypassword
+# From the repo root
+( cd CM5/image && sudo ./build.sh myuser mypassword )
 ```
 
-Arguments (same for both scripts):
+This produces **both** `.img` files serially — Base first, then
+Wireless-Base — and verifies each against source before continuing.
+Building both from one script prevents the two variants from silently
+drifting: fixing a bug in the setup portal but forgetting to rebuild
+the wireless image is impossible now.
+
+Arguments:
 - First argument: login username (default: `trailcurrent`)
 - Second argument: login password (default: `trailcurrent`)
 
-The password is hashed with `openssl passwd -6` before being passed to
-rpi-image-gen, so there are no complexity restrictions — use whatever
-password you want.
+Both variants receive the same credentials. The password is hashed
+with `openssl passwd -6` before being passed to rpi-image-gen, so
+there are no complexity restrictions — use whatever password you want.
 
 The build configures **passwordless sudo** for the chosen user. This is
 required for unattended cloud deployments — `deploy.sh` uses `sudo` to
 manage systemd services, and the deployment-watcher runs
 non-interactively.
 
-The script will:
-1. Verify Docker image tars and map tiles exist
+For each variant the script will:
+1. Verify Docker image tars exist (once, before either variant builds)
 2. Clone `rpi-image-gen` from GitHub (first run only)
 3. Install build dependencies (first run only)
-4. Build the image (baking in all deployment artifacts)
+4. Clean this variant's chroot + image dir (self-cleaning; no manual `rm` needed)
+5. Build the image (baking in all deployment artifacts)
+6. Run [verify-image.sh](image/verify-image.sh) against the produced `.img`
+7. Fail loudly with a per-item report if anything's off
+
+If either variant's verification fails, the whole script exits non-zero
+and the operator has to fix the layer YAML / source and re-run. Both
+variants must succeed together or neither ships.
 
 Output (base variant):
 `CM5/rpi-image-gen/work/image-trailcurrent-cm5-base/trailcurrent-cm5-base.img`
@@ -274,6 +288,18 @@ Output (wireless-base variant):
 ## Per-Device Flashing Procedure
 
 Repeat these steps for each CM5 board. The order matters — do not skip steps.
+
+> **Working directory convention:** Every command in this section assumes
+> you are running it **from the repo root** (wherever you cloned this
+> repository — e.g., `~/TrailCurrentHeadwaters/`). Steps that need to run
+> in a subdirectory use the subshell pattern `( cd subdir && command )`,
+> which changes directory *inside the parentheses only* and returns you
+> to the repo root the moment the command finishes. You never need to
+> `cd` back between steps.
+>
+> If you get confused about where you are, run `pwd` — if it doesn't end
+> in `TrailCurrentHeadwaters`, run `cd ~/TrailCurrentHeadwaters` (or
+> whatever your clone path is) before the next command.
 
 ### Step 1: Prepare the Hardware
 
@@ -309,8 +335,8 @@ tries eMMC/SD before NVMe. **The board will not boot from NVMe until the
 EEPROM is updated.** This step must be done before flashing the NVMe image.
 
 ```bash
-cd CM5/usbboot/recovery5
-sudo ../rpiboot -d .
+# From the repo root
+( cd CM5/usbboot/recovery5 && sudo ../rpiboot -d . )
 ```
 
 Wait for the tool to complete (you'll see `Second stage boot server done`
@@ -327,8 +353,8 @@ only if you are certain the board has never been flashed before.
 Put the CM5 back into USB mass storage mode:
 
 ```bash
-cd CM5/usbboot
-sudo ./rpiboot -d mass-storage-gadget64
+# From the repo root
+( cd CM5/usbboot && sudo ./rpiboot -d mass-storage-gadget64 )
 ```
 
 Wait for `Second stage boot server done`, then check what appeared:
@@ -341,10 +367,19 @@ lsblk
 - **CM5 with eMMC:** Two new `sd*` devices appear. The NVMe is the **larger**
   one (e.g., 128+ GB vs 16/32 GB for eMMC).
 
+> **⚠ Substitute the actual letter for `sdX` before running these commands.**
+> Look at your `lsblk` output above — the CM5's device will be `sda`, `sdb`,
+> `sdc`, or similar. **Never run these commands with `sdX` literally** —
+> `/dev/sdX` doesn't exist as a block device, so `dd` will silently create
+> it as a regular file in tmpfs, appearing to succeed while writing nothing
+> to the NVMe.
+
 Unmount any auto-mounted partitions, then zero both devices (or just the NVMe
 if CM5 Lite):
 
 ```bash
+# From the repo root — replace sdX with the actual letter from lsblk
+
 # Unmount anything that auto-mounted
 sudo umount /dev/sdX* 2>/dev/null
 
@@ -365,8 +400,8 @@ and filesystem headers.
 Put the CM5 back into USB mass storage mode:
 
 ```bash
-cd CM5/usbboot
-sudo ./rpiboot -d mass-storage-gadget64
+# From the repo root
+( cd CM5/usbboot && sudo ./rpiboot -d mass-storage-gadget64 )
 ```
 
 Wait for `Second stage boot server done`, then identify the NVMe:
@@ -382,34 +417,46 @@ lsblk
 > **Be absolutely sure you have the right device.** `dd` will overwrite
 > whatever you point it at. Your host's NVMe drives show up as `nvme*`, not
 > `sd*`, so there is no risk of confusion with local drives.
-
-Unmount any auto-mounted partitions, then write the image:
+>
+> **⚠ Substitute the actual letter for `sdX`.** Never run the dd commands
+> below with `sdX` literally. `/dev/sdX` doesn't exist as a block device,
+> so dd will silently create it as a regular file in tmpfs, appearing to
+> succeed at multi-GB/s speeds while writing nothing to the NVMe. If you
+> accidentally do this: `sudo rm /dev/sdX` and re-run with the real letter.
 
 **NOTE!!!** This can take a really long time depending on NVME speed. Wait for it to complete and exit back to shell. Otherwise you will corrupt the NVME and have to start over **IMPORTANT**
 
-Pick the image that matches the carrier board you built for:
+#### 4a. Pick your carrier variant
 
-```bash
-# Change to the root of the repository before these commands
-sudo umount /dev/sdX* 2>/dev/null
-
-# Base variant (CM5 IO board + Waveshare RS485 CAN HAT (B), INT=GPIO25)
-sudo dd if=CM5/rpi-image-gen/work/image-trailcurrent-cm5-base/trailcurrent-cm5-base.img \
-    of=/dev/sdX bs=4M status=progress conv=fsync
-
-# -- or --
-
-# Wireless-Base variant (Waveshare CM5-IO-Wireless-Base, INT=GPIO17)
-sudo dd if=CM5/rpi-image-gen/work/image-trailcurrent-cm5-wireless-base/trailcurrent-cm5-wireless-base.img \
-    of=/dev/sdX bs=4M status=progress conv=fsync
-```
-
-Replace `/dev/sdX` with the NVMe device.
+**Flash exactly one of the following — do not run both.** Choose the block that matches the carrier board you built for:
 
 > **Flashing the wrong image on the wrong carrier will boot, but `can0` will
 > never come up** — the MCP2515 interrupt line is wired to GPIO25 on the CAN
 > HAT (B) and GPIO17 on the CM5-IO-Wireless-Base, and only the interrupt in
 > the flashed device tree will fire.
+
+**Option A — Base variant** (CM5 IO board + Waveshare RS485 CAN HAT (B), INT=GPIO25):
+
+```bash
+# From the repo root — replace sdX with the actual letter from lsblk
+sudo umount /dev/sdX* 2>/dev/null
+sudo dd if=CM5/rpi-image-gen/work/image-trailcurrent-cm5-base/trailcurrent-cm5-base.img \
+    of=/dev/sdX bs=4M status=progress conv=fsync
+```
+
+**Option B — Wireless-Base variant** (Waveshare CM5-IO-Wireless-Base, INT=GPIO17):
+
+```bash
+# From the repo root — replace sdX with the actual letter from lsblk
+sudo umount /dev/sdX* 2>/dev/null
+sudo dd if=CM5/rpi-image-gen/work/image-trailcurrent-cm5-wireless-base/trailcurrent-cm5-wireless-base.img \
+    of=/dev/sdX bs=4M status=progress conv=fsync
+```
+
+> **Check the image is fresh before flashing.** Run `ls -la` on the image
+> file first — if its date is older than your most recent `sudo ./build.sh`
+> run, the image is stale and reflects an older codebase. Rebuild before
+> flashing.
 
 > **Always use `conv=fsync`.** Without it, `dd` may return before data is
 > physically written, resulting in a corrupted image.
@@ -424,9 +471,11 @@ Replace `/dev/sdX` with the NVMe device.
 3. Connect Ethernet
 4. Power cycle the carrier board
 
-### Step 6: First Boot
+### Step 6: First Boot (Fully Automatic)
 
-The CM5 boots from NVMe. On the first boot, two services run automatically:
+The CM5 boots from NVMe. On the first boot, the following services run
+automatically — **no login, no keyboard, no monitor, and no SSH are used
+or required at any point**.
 
 **`trailcurrent-firstboot`** (runs before Docker starts):
 
@@ -451,82 +500,193 @@ The CM5 boots from NVMe. On the first boot, two services run automatically:
    into the Docker daemon, then deletes the tar files to reclaim ~1 GB
    of disk space.
 
-First boot takes 3-5 minutes. You can monitor progress via:
+**`trailcurrent-setup-ap`** (runs when no `.env` exists):
 
-```bash
-ssh myuser@headwaters.local
-journalctl -u trailcurrent-firstboot -f
-journalctl -u trailcurrent-load-images -f
-```
+6. **Setup access point** — Brings up a WPA2 WiFi access point named
+   `Headwaters-XXXX` (where `XXXX` is the last 4 hex digits of the CM5's
+   WiFi MAC address, printed on the device label), along with a DHCP
+   server and a small branded web app on `10.0.0.1`. The web app is the
+   setup portal used in Step 7.
 
-Replace `myuser` with the username you chose when building the image.
+First boot takes 3-5 minutes. Progress is not user-visible — the customer
+simply waits for the `Headwaters-XXXX` access point to appear in their
+phone's WiFi list. That is the signal that the device is ready.
 
-After first boot completes, **reboot once** for the EEPROM changes to take
-effect:
+### Step 7: Setup Portal (From Your Phone)
 
-```bash
-sudo reboot
-```
+**All initial configuration happens over the setup access point. No SSH,
+keyboard, monitor, or serial console is used, offered, or supported.**
 
-### Step 7: First Login (Interactive Setup Wizard)
+1. On your phone (or any device with WiFi and a browser), open the WiFi
+   settings and join the network **`Headwaters-XXXX`**. The SSID and
+   WPA2 password are printed on the label affixed to the device
+   enclosure.
 
-After reboot, SSH into the device. The first-login setup wizard runs
-automatically when no `.env` file exists:
+2. Your phone will detect a captive portal and automatically open the
+   branded TrailCurrent setup page. If it does not (some corporate
+   phone profiles suppress captive-portal auto-open), open a browser
+   and go to `http://10.0.0.1` or `http://headwaters.local`.
 
-```bash
-ssh myuser@headwaters.local
-```
+3. Complete the setup form:
+   - **MQTT username and password** — used by the local MQTT broker
+   - **Admin password** — used to sign into the web UI
+   - The `ENCRYPTION_KEY` is auto-generated and never displayed.
 
-Replace `myuser` with the username you chose when building the image.
+4. **Install the CA certificate.** The portal offers one-tap installers
+   for each platform:
+   - **iOS:** downloads a `.mobileconfig` profile. Follow the on-screen
+     prompt — the profile installs into **Settings > General > VPN &
+     Device Management** and Safari trusts the cert immediately.
+   - **Android:** downloads `ca.crt` and triggers the system
+     "Install certificate" dialog.
+   - **Desktop:** downloads `ca.pem` with per-OS install instructions.
 
-The wizard will prompt you for:
-- **MQTT username and password** (default username: `trailcurrent`)
-- **Admin password** (for the web UI)
+5. Tap **Complete Setup**. The device writes `.env`, starts all Docker
+   containers and systemd services, tears down the access point, and
+   powers down the WiFi radio via `rfkill`.
 
-The wizard **automatically generates** cryptographic secrets:
-- `ENCRYPTION_KEY` (WiFi credential encryption, 32 bytes)
+6. The final page instructs you to reconnect your phone to the
+   vehicle's normal network and open `https://headwaters.local`.
 
-After collecting your inputs, the wizard:
-1. Writes `.env` and `local_code/.env`
-2. Installs the CA certificate to the system trust store
-3. Starts all Docker containers
-4. Restarts systemd services (CAN-to-MQTT, deployment watcher, mDNS discovery)
+Once complete, the WiFi radio is powered down and the setup access point
+never comes back on its own. See the [Recovery / Re-entering Setup
+Mode](#recovery--re-entering-setup-mode) section below for how to
+re-enter setup mode if a customer forgets their admin password or wants
+to re-pair the device.
 
-> **To re-run the wizard** (e.g., after deleting `.env` to start fresh):
-> ```bash
-> rm ~/.env
-> /usr/local/bin/trailcurrent-first-login.sh
-> ```
+### Step 8: Verify the Application (No SSH Required)
 
-### Step 8: Verify the Application
+Open `https://headwaters.local` from a device on the same network as
+Headwaters. If you installed the CA in Step 7, the connection is trusted
+with no warnings. You should see the TrailCurrent PWA load and, once the
+map tiles finish initializing (a few seconds), an interactive vehicle
+dashboard.
 
-```bash
-# All containers running
-docker compose ps
+**Advanced diagnostics** — SSH is available on the standard port for
+developer diagnostics using the username and password baked into the
+image at build time, but is **not part of the normal setup or operation
+of the device.** End customers never need to SSH into a Headwaters unit.
+Field diagnostics for customers are performed via the PWA and the
+Farwatch cloud dashboard.
 
-# No errors in logs
-docker compose logs --tail=20
+### When Something Goes Wrong During Setup
 
-# API responding
-curl -k https://localhost/api/health
+The setup portal is the customer's only interface during initial setup,
+so every failure mode must surface an actionable, human-readable message
+in the portal itself — not a stack trace or an opaque HTTP code. The
+portal follows the same "detailed instructions for how to fix it"
+convention used by the map-build pipeline (`build/maps/` — see the
+`fix()` helper in [build.sh](../build/maps/build.sh) for the reference
+implementation), adapted for a customer-facing web UI.
 
-# Web UI accessible
-curl -k -o /dev/null -s -w "%{http_code}" https://localhost/
-```
+| Failure | What the portal shows | Recovery |
+|---|---|---|
+| Customer can't see `Headwaters-XXXX` in their WiFi list | (this is pre-portal) The device's setup access point never came up. Wait 4 minutes after first power-on; if still not visible, the WiFi radio is dead or `trailcurrent-setup-ap` failed. Ethernet is still up — a technician with SSH access can check `journalctl -u trailcurrent-setup-ap` for the fix. | Advertised on the customer-facing quick-start card: "If you don't see `Headwaters-XXXX` after 4 minutes, please contact support." |
+| MQTT / admin password fields left blank | Portal blocks form submit with an inline "This field is required" message under the empty field. No round-trip to the server. | Customer fills the field. |
+| CA cert install fails on iOS (profile install rejected) | Portal shows: **"iOS did not install the profile. This usually means an older TrailCurrent-CA profile is already installed."** Followed by exact steps: Settings → General → VPN & Device Management → remove existing TrailCurrent-CA → return here → tap Install again. | Customer follows the printed steps. |
+| Docker fails to bring up services after form submit | Portal shows: **"Setup failed while starting services."** Followed by: what stage failed (image load, container start, systemd restart), the last 10 lines of the relevant log, and the exact `journalctl -u <unit>` command a technician can run over SSH. `.env` is left in place so re-running the form is not required — a service restart is enough. | Technician diagnoses; customer retries via a "Try again" button once fixed. |
+| Customer forgets admin password after setup | Portal is no longer accessible (AP is torn down). The PWA on the vehicle network exposes a **Factory Reset** action in Settings that wipes `.env` + MongoDB and reboots. On next boot the setup AP comes back and the customer redoes Step 7. | PWA action is the primary path. Requires the customer to have typed `FACTORY RESET` in a confirmation modal — see the handler in [os-settings.py](../local_code/os-settings.py). |
 
-Access the web UI at `https://headwaters.local`.
+Failure messages in the portal are written in customer-facing language
+(no jargon, no exit codes, no filesystem paths). Failure messages in the
+underlying shell scripts (`trailcurrent-setup-ap.sh` and the setup-portal
+backend) follow the shell convention from `build/maps/` — platform-aware
+hints via a `fix()` helper, multi-line `printf … >&2` blocks that state
+what was expected and give copy-pasteable follow-up commands, and
+`journalctl -u <unit>` pointers so a technician has one place to look.
 
-### Step 9: Install CA Certificate on Client Devices (Optional)
+### Recovery / Re-entering Setup Mode
 
-TrailCurrent uses a self-signed TLS certificate. Browsers will let you
-tap through the certificate warning, but iOS requires the CA to be
-trusted at the OS level for the PWA "Add to Home Screen" icon to work.
+**From the PWA (primary path):** Settings → Factory Reset. The customer
+types `FACTORY RESET` in the confirmation modal and taps **Reset
+Device**. The device stops all containers, drops the `mongodb-data`
+Docker volume (so PWA wizard state is a clean slate), deletes `~/.env`
+and `~/local_code/.env`, then reboots. On next boot the setup access
+point comes back up because `.env` is absent — the customer redoes Step 7
+exactly as they did out of the box. Uploaded map bundles and the TLS CA
+are preserved (map bundles are large and user-specific, so wiping them
+on factory reset would be user-hostile).
 
-See [PI_DEPLOYMENT.md](../PI_DEPLOYMENT.md#install-the-ca-certificate)
-for instructions on installing the CA on iOS, Android, macOS, and Windows.
+**From SSH (technician path):** delete `~/.env` and reboot. The
+setup-ap service picks up on next boot the same way. `docker compose
+down -v` first if you want to also wipe MongoDB (recommended — otherwise
+the PWA wizard sees `wizard_completed: true` from the old state and
+skips).
+
+Both paths are the same code path as first boot — there is no separate
+"recovery mode."
 
 See [PI_DEPLOYMENT.md](../PI_DEPLOYMENT.md) for subsequent update
 procedures and troubleshooting.
+
+---
+
+## Reproducible Builds: What the Build Does and How to Verify
+
+Every invocation of `build.sh` runs each variant through three stages
+serially, and fails loudly if any of them misbehave:
+
+1. **Hardened clean.** Enumerates every mount inside `rpi-image-gen/work/`
+   and unmounts them (deepest-first, lazy fallback), then removes the
+   `chroot-v*` trees. If the `rm -rf` fails (typically: not running with
+   `sudo`, or a mount is still held open), the script **stops** with a
+   clear error rather than silently continuing on top of a stale chroot.
+   This is what previously produced "I edited the source but the image
+   still has the old script baked in" bakes.
+
+2. **Fresh mmdebstrap.** With no `chroot-v*` present, `rpi-image-gen`
+   rebuilds the entire rootfs from Debian packages. Every layer YAML
+   customize hook (including every `install -m 755 "$SRCROOT/layer/files/…"`)
+   runs against the fresh chroot, guaranteeing the current source of
+   every file lands in the image.
+
+3. **Post-build verify** — [verify-image.sh](image/verify-image.sh)
+   loop-mounts the produced `.img`, `diff -q`s every critical script
+   against the source under `layer/files/`, confirms each required
+   package (`hostapd`, `dnsmasq`, `rfkill`, `iw`) is installed,
+   confirms each expected systemd unit is present AND enabled at
+   `multi-user.target.wants/`, confirms `config.txt` does NOT have
+   `dtoverlay=disable-wifi`, and confirms Debian's default `hostapd` /
+   `dnsmasq` services are masked. If anything is off, the build fails
+   with a per-item report — the operator sees exactly what's wrong
+   before ever flashing.
+
+**Expected output on a good build:**
+```
+================================================
+  Verifying image against source
+================================================
+  Image:  .../trailcurrent-cm5-wireless-base.img
+  Source: .../CM5/image/layer/files/
+
+  OK:   usr/local/bin/trailcurrent-setup-ap.sh matches source
+  OK:   usr/local/bin/trailcurrent-firstboot.sh matches source
+  OK:   usr/local/bin/trailcurrent-first-login.sh matches source
+  OK:   usr/local/bin/trailcurrent-load-images.sh matches source
+  OK:   package present: hostapd
+  OK:   package present: dnsmasq
+  …
+  OK:   unit enabled: trailcurrent-setup-ap.service
+  OK:   config.txt does not disable WiFi
+  OK:   default hostapd.service is masked
+  OK:   default dnsmasq.service is masked
+
+================================================
+  IMAGE VERIFIED
+================================================
+```
+
+**If verification fails**, the output lists each failed check and
+common fixes. Most common:
+- **"baked … does not match source"** → a stale chroot survived cleanup.
+  Fix: `sudo rm -rf CM5/rpi-image-gen/work/chroot-v*` then rebuild.
+- **"package missing"** → the package name isn't in the layer YAML
+  `mmdebstrap.packages` list. Fix: add it.
+- **"unit installed but not enabled"** → the unit name is missing from
+  the trailing `enable-units` line in the layer YAML. Fix: append it.
+- **"config.txt has 'dtoverlay=disable-wifi'"** → the WiFi radio is
+  disabled at the kernel level, so the setup AP cannot come up. Fix:
+  remove that overlay line from the layer YAML's `config.txt` block.
 
 ---
 
@@ -535,34 +695,41 @@ procedures and troubleshooting.
 For experienced operators who have done this before. Refer to the full
 procedure above if anything is unclear.
 
+All commands below are run **from the repo root**. Subshells `( … )` keep
+your working directory at the repo root the whole time.
+
 ```
 One-time (build host):
-  1. ./build-and-save-images.sh                              # Build ARM64 Docker images
-  2. Place map.mbtiles in data/tileserver/                   # Obtain map tiles
-  3. Place map.osm.pbf in data/nominatim/                    # Obtain search dataset
-  4. cd CM5/image && sudo ./build.sh myuser mypassword       # Base variant (RS485 CAN HAT B, GPIO25)
-     # -- or --
-     cd CM5/image && sudo ./build-wireless.sh myuser mypassword  # Wireless-Base variant (onboard CAN, GPIO17)
+  1. ./build-and-save-images.sh                                                       # Build ARM64 Docker container images
+  2. ( cd CM5/image && sudo ./build.sh myuser mypassword )                             # Builds BOTH variants (base + wireless-base) sequentially, verifies each
+  (No map data step — bundles are uploaded via PWA after first boot.)
 
-For each board:
+For each board (all commands from the repo root; substitute the real sdX letter from lsblk):
   1. Install NVMe, fit EMMC_DISABLE jumper (if eMMC), connect USB, power on
-  2. cd CM5/usbboot/recovery5 && sudo ../rpiboot -d .       # Flash EEPROM
+  2. ( cd CM5/usbboot/recovery5 && sudo ../rpiboot -d . )                              # Flash EEPROM
   3. Power cycle
-  4. cd CM5/usbboot && sudo ./rpiboot -d mass-storage-gadget64  # Expose storage
-  5. lsblk                                                   # Identify NVMe (larger sd* device)
-  6. sudo dd if=...img of=/dev/sdX bs=4M status=progress conv=fsync  # Flash NVMe (~28GB)
-  7. Remove jumper, disconnect USB, connect Ethernet, power cycle
-  8. Wait for first boot (~3-5 min), then: sudo reboot
-  9. SSH in (ssh myuser@headwaters.local) — first-login wizard runs, set passwords
- 10. Verify: docker compose ps && curl -k https://localhost/api/health
+  4. ( cd CM5/usbboot && sudo ./rpiboot -d mass-storage-gadget64 )                     # Expose storage
+  5. lsblk                                                                             # Identify NVMe (larger sd* device — note the letter!)
+  6. Flash the image matching the variant you built (replace sdX with real letter):
+     sudo dd if=CM5/rpi-image-gen/work/image-trailcurrent-cm5-base/trailcurrent-cm5-base.img \
+             of=/dev/sdX bs=4M status=progress conv=fsync                              # Base variant
+     sudo dd if=CM5/rpi-image-gen/work/image-trailcurrent-cm5-wireless-base/trailcurrent-cm5-wireless-base.img \
+             of=/dev/sdX bs=4M status=progress conv=fsync                              # Wireless-Base variant
+  7. Remove jumper (or set Wireless-Base BOOT switch to OFF), disconnect USB, connect Ethernet, power cycle
+  8. Wait for the `Headwaters-XXXX` WiFi network to appear (~3-5 min)
+  9. From a phone: join `Headwaters-XXXX`, complete the captive-portal setup
+ 10. Reconnect phone to normal network, open https://headwaters.local to verify
 ```
+
+**No SSH, keyboard, monitor, or serial console is used in the per-device
+flow. The full setup path is: flash → wait → phone.**
 
 ---
 
 ## What's in the Image
 
 The CM5 image is a self-contained deployment. After flashing, the only
-manual step is the first-login setup wizard.
+manual step is completing the setup portal from a phone (Step 7 above).
 
 ### System Packages
 
@@ -589,8 +756,7 @@ These are copied into the chosen user's home directory during the image build:
 | `~/deploy.sh` | Repo root | For future OTA deployments |
 | `~/.env.example` | Repo root | Environment variable template (reference) |
 | `~/images/*.tar` | `images/` | Docker image tarballs (loaded on first boot, then deleted) |
-| `~/data/tileserver/map.mbtiles` | `data/tileserver/` | Map tile data (~25 GB) |
-| `~/data/nominatim/map.osm.pbf` | `data/nominatim/` | OSM extract for the search service (~18 GB) |
+| `~/data/maps/` | — (empty skeleton) | Map bundle target: `versions/`, `staging/` subdirs pre-created empty and `trailcurrent`-owned. First upload lands here via the PWA Maps page. |
 
 ### Boot Configuration (config.txt)
 
@@ -599,7 +765,7 @@ These are copied into the chosen user's home directory during the image build:
 | `dtparam=spi=on` **or** `dtoverlay=spi0-1cs,cs0_pin=8` | enabled | Base variant enables SPI via `dtparam=spi=on`; wireless-base variant uses `spi0-1cs,cs0_pin=8` per Waveshare's docs |
 | `dtoverlay=mcp2515-can0` (base) / `dtoverlay=mcp2515,spi0-0` (wireless-base) | 16 MHz xtal, GPIO25 INT (base) / GPIO17 INT (wireless-base), 1 MHz SPI | CAN bus hardware |
 | `dtoverlay=disable-bt` | disabled | Power savings |
-| `dtoverlay=disable-wifi` | disabled | Power savings (uses Ethernet) |
+| `dtoverlay=disable-wifi` | *not set* | WiFi is required for the setup access point. The radio is powered down via `rfkill block wifi` at the end of the setup portal — so the runtime power cost is equivalent to a fully disabled radio, but the module must be able to bring it back up if a factory reset is triggered. |
 | `dtoverlay=disable-hdmi0` | disabled | Power savings (headless) |
 | `dtoverlay=disable-hdmi1` | disabled | Power savings (headless) |
 | `dtparam=audio=off` | disabled | Power savings |
@@ -622,23 +788,25 @@ These are copied into the chosen user's home directory during the image build:
 |---------|---------|-------------|
 | `trailcurrent-firstboot` | One-time partition expansion/EEPROM/TLS/venv setup | Once (first boot only) |
 | `trailcurrent-load-images` | Loads Docker images from baked-in tarballs | Once (first boot, after Docker starts) |
+| `trailcurrent-setup-ap` | Runs hostapd + dnsmasq + captive-portal web app when `.env` does not exist. Tears itself down and blocks the WiFi radio once setup completes. | Yes (when `.env` is absent) |
 | `can0` | Brings up CAN bus at 500 kbps | Yes (when can0 device exists) |
 | `disable-usb` | Unbinds USB hub to save power | Yes |
 | `docker` | Container runtime | Yes |
-| `cantomqtt` | CAN-to-MQTT bridge | Yes (after .env exists via first-login) |
-| `discovery-mdns` | mDNS device discovery browser | Yes (after .env exists via first-login) |
-| `deployment-watcher` | Watches for OTA deployment updates | Yes (after .env exists via first-login) |
+| `cantomqtt` | CAN-to-MQTT bridge | Yes (after `.env` written by setup portal) |
+| `discovery-mdns` | mDNS device discovery browser | Yes (after `.env` written by setup portal) |
+| `deployment-watcher` | Watches for OTA deployment updates | Yes (after `.env` written by setup portal) |
 
-### First-Login Setup Scripts
+### Setup Scripts
 
 | File | Purpose |
 |------|---------|
-| `/usr/local/bin/trailcurrent-first-login.sh` | Interactive wizard — prompts for passwords, generates secrets, writes `.env`, starts services |
-| `/usr/local/bin/trailcurrent-firstboot.sh` | Automatic first-boot hardware setup (partition, EEPROM, TLS, venv) |
-| `/usr/local/bin/trailcurrent-load-images.sh` | Loads Docker images from tarballs, deletes tars to free space |
+| `/usr/local/bin/trailcurrent-firstboot.sh` | Automatic first-boot hardware setup (partition, EEPROM, TLS, venv). Runs once. |
+| `/usr/local/bin/trailcurrent-load-images.sh` | Loads Docker images from tarballs, deletes tars to free space. Runs once. |
+| `/usr/local/bin/trailcurrent-setup-ap.sh` | Brings up the captive-portal WiFi access point (`Headwaters-XXXX`) and the setup web app. Guarded by `ConditionPathExists=!/home/<user>/.env` so it only runs while the device is unconfigured. |
 
-The first-login script is triggered from `~/.bash_profile` when `.env`
-does not exist. It runs once — subsequent logins skip it.
+There is no interactive shell-based setup script. All device configuration
+is collected through the setup portal web app served over the captive-portal
+access point — never through SSH.
 
 ## Troubleshooting
 
@@ -811,8 +979,8 @@ CM5/
 │       ├── boot.conf        <- Boot order settings (BOOT_ORDER=0xfe6)
 │       └── update-pieeprom.sh <- Builds EEPROM image from boot.conf
 ├── image/                    <- Image build system
-│   ├── build.sh             <- Base variant build wrapper (RS485 CAN HAT B, INT=GPIO25)
-│   ├── build-wireless.sh    <- Wireless-Base variant build wrapper (onboard CAN, INT=GPIO17)
+│   ├── build.sh             <- Single script that builds BOTH variants serially
+│   ├── verify-image.sh      <- Called by build.sh once per variant; diffs image vs source
 │   ├── config/
 │   │   ├── trailcurrent-cm5-base.yaml           <- Base variant build configuration
 │   │   └── trailcurrent-cm5-wireless-base.yaml  <- Wireless-Base variant build configuration
@@ -822,8 +990,9 @@ CM5/
 │       └── files/
 │           ├── trailcurrent-firstboot.sh    <- First-boot hardware setup
 │           ├── trailcurrent-load-images.sh  <- Docker image loader (first boot)
-│           ├── trailcurrent-first-login.sh  <- Interactive setup wizard (first login)
-│           └── motd                         <- Console login banner
+│           ├── trailcurrent-setup-ap.sh     <- Captive-portal setup access point
+│           ├── setup-portal/                <- Branded setup web app (served by trailcurrent-setup-ap)
+│           └── motd                         <- Console banner (SSH is developer-only)
 └── rpi-image-gen/            <- Cloned automatically by build.sh (not committed)
 ```
 
@@ -832,8 +1001,6 @@ Files referenced by the image build but located elsewhere in the repo:
 ```
 (repo root)
 ├── images/*.tar              <- Docker image tarballs (from build-and-save-images.sh)
-├── data/tileserver/map.mbtiles <- Map tiles (~25 GB, not in repo)
-├── data/nominatim/map.osm.pbf <- OSM extract for search service (~18 GB, not in repo)
 ├── docker-compose.yml        <- Baked into image at ~/docker-compose.yml
 ├── config/                   <- Baked into image at ~/config/
 ├── local_code/               <- Baked into image at ~/local_code/
@@ -842,6 +1009,10 @@ Files referenced by the image build but located elsewhere in the repo:
 └── .env.example              <- Baked into image at ~/.env.example
 ```
 
+Map bundles are NOT part of the image build. They're built separately (see
+[build/maps/README.md](../build/maps/README.md)) and uploaded via the PWA
+Maps page after first boot.
+
 ### On the CM5 Device (After Flashing)
 
 Paths below use `~` for the chosen user's home directory (e.g.,
@@ -849,18 +1020,22 @@ Paths below use `~` for the chosen user's home directory (e.g.,
 
 ```
 ~/
-├── .env                      <- Created by first-login wizard (not baked in)
+├── .env                      <- Created by the captive-portal setup web app (not baked in)
 ├── .env.example              <- Reference template
 ├── docker-compose.yml        <- Service orchestration
 ├── deploy.sh                 <- For future OTA updates
 ├── config/                   <- Mosquitto configuration
 ├── scripts/                  <- Certificate generation
 ├── local_code/               <- Python scripts, systemd units
-│   ├── .env                  <- Created by first-login wizard (host-facing MQTT URL)
+│   ├── .env                  <- Created by the setup web app (host-facing MQTT URL)
 │   └── cantomqtt/            <- Python virtual environment (created by firstboot)
 ├── images/                   <- Docker tarballs (deleted after first-boot loading)
 └── data/
     ├── keys/                 <- TLS certificates (generated by firstboot)
-    ├── tileserver/map.mbtiles <- Map tiles (baked into image)
-    └── nominatim/map.osm.pbf <- Search dataset (baked into image, imported on first boot)
+    ├── firmware/             <- Peripheral firmware payloads (OTA)
+    ├── deployments/          <- OTA deployment package staging
+    └── maps/                 <- Map data (uploaded via PWA after first boot)
+        ├── versions/         <- Applied bundles (current + one previous for rollback)
+        ├── staging/          <- Upload landing zone (transient)
+        └── current           <- Symlink to the active version (created by map-watcher on first upload)
 ```

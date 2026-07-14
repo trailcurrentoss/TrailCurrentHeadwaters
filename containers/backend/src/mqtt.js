@@ -72,6 +72,9 @@ const TOPICS = {
     OS_TIMEZONE_REQUEST:  'os/timezone/request',
     OS_TIMEZONE_RESPONSE: 'os/timezone/response',
     OS_TIMEZONE_CURRENT:  'os/timezone/current',   // retained
+
+    OS_FACTORY_RESET_REQUEST:  'os/factory-reset/request',
+    OS_FACTORY_RESET_RESPONSE: 'os/factory-reset/response',
     SYSTEM_STATS: `${MQTT_ROOT}/system/stats`,
     DEPLOYMENT_AVAILABLE: `${MQTT_ROOT}/${MQTT_DEPLOYMENT}/available`,
     DEPLOYMENT_STATUS: `${MQTT_ROOT}/${MQTT_DEPLOYMENT}/${MSG_STATUS}`,
@@ -370,6 +373,13 @@ class MqttService {
                 console.log('Subscribed to OS timezone current topic');
             }
         });
+        this.client.subscribe(TOPICS.OS_FACTORY_RESET_RESPONSE, (err) => {
+            if (err) {
+                console.error('Failed to subscribe to OS factory-reset response:', err);
+            } else {
+                console.log('Subscribed to OS factory-reset response topic');
+            }
+        });
 
         // Subscribe to proximity events/status (bridged from Farwatch cloud)
         this.client.subscribe(TOPICS.PROXIMITY_EVENT, (err) => {
@@ -431,6 +441,10 @@ class MqttService {
             }
             if (topic === TOPICS.OS_TIMEZONE_RESPONSE) {
                 this.handleOsTimezoneResponse(payload);
+                return;
+            }
+            if (topic === TOPICS.OS_FACTORY_RESET_RESPONSE) {
+                this.handleOsFactoryResetResponse(payload);
                 return;
             }
             if (topic === TOPICS.OS_TIMEZONE_CURRENT) {
@@ -1445,6 +1459,31 @@ class MqttService {
         this.client.publish(
             TOPICS.OS_TIMEZONE_REQUEST,
             JSON.stringify({ reqId, tz }),
+            { qos: 1 },
+        );
+        return true;
+    }
+
+    // Factory reset: forward the response to routes/os.js — same
+    // pending-promise pattern as timezone. The daemon acks BEFORE it
+    // tears down docker (which kills this backend), so the ack arrives
+    // reliably; anything after is best-effort.
+    handleOsFactoryResetResponse(payload) {
+        const { handleFactoryResetResponse } = require('./routes/os');
+        if (typeof handleFactoryResetResponse === 'function') {
+            handleFactoryResetResponse(payload);
+        }
+    }
+
+    publishOsFactoryResetRequest(reqId, token) {
+        if (!this.connected) {
+            console.warn('MQTT not connected, cannot publish factory-reset request');
+            return false;
+        }
+        console.log(`[OS] Requesting factory reset (reqId=${reqId})`);
+        this.client.publish(
+            TOPICS.OS_FACTORY_RESET_REQUEST,
+            JSON.stringify({ reqId, confirm: token }),
             { qos: 1 },
         );
         return true;

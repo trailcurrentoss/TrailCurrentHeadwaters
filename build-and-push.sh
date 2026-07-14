@@ -60,16 +60,11 @@ declare -a IMAGES=(
     "frontend"
     "backend"
     "mosquitto"
-    "tileserver"
 )
 
 # Build and push each image
 for IMAGE in "${IMAGES[@]}"; do
-    # Set IMAGE_NAME with special handling for hyphenated names
     IMAGE_NAME="$IMAGE"
-    if [ "$IMAGE" = "tileserver" ]; then
-        IMAGE_NAME="tile-server"
-    fi
 
     echo "-------------------------------------------"
     echo "Building: trailcurrent-$IMAGE_NAME:latest"
@@ -87,10 +82,6 @@ for IMAGE in "${IMAGES[@]}"; do
         mosquitto)
             CONTEXT="containers/mosquitto"
             DOCKERFILE="containers/mosquitto/Dockerfile"
-            ;;
-        tileserver)
-            CONTEXT="containers/tileserver"
-            DOCKERFILE="containers/tileserver/Dockerfile"
             ;;
     esac
 
@@ -114,11 +105,7 @@ echo "=========================================="
 echo ""
 echo "Published images (all architectures):"
 for IMAGE in "${IMAGES[@]}"; do
-    IMAGE_NAME="$IMAGE"
-    if [ "$IMAGE" = "tileserver" ]; then
-        IMAGE_NAME="tile-server"
-    fi
-    echo "  - $REGISTRY/$DOCKER_USERNAME/trailcurrent-$IMAGE_NAME:latest"
+    echo "  - $REGISTRY/$DOCKER_USERNAME/trailcurrent-$IMAGE:latest"
 done
 echo ""
 echo "Architectures: linux/amd64, linux/arm64"

@@ -1,0 +1,74 @@
+# Build-machine docker-compose stack.
+#
+# Not deployed to a vehicle — this runs on a developer / CI build machine to
+# produce the region-agnostic maps-<date>.zip bundle that gets uploaded to a
+# Headwaters device via the PWA Maps page.
+#
+# Invocation: driven by build.sh, not `docker compose up` directly. build.sh
+# sets REGION and BUILD_DATE env vars, then runs individual services via
+# `docker compose run --rm <service>`. Services have no runtime dependencies
+# on each other; sequencing is orchestrated by build.sh.
+#
+# Working state lives under ./work/<region>/ so switching --region does not
+# clobber the previous region's PBF cache, Planetiler tiles, or Photon downloads.
+
+services:
+  # Planetiler — Java OSM → PMTiles converter (Apache-2.0).
+  # https://github.com/onthegomap/planetiler
+  planetiler:
+    image: ghcr.io/onthegomap/planetiler:latest
+    container_name: tc-maps-planetiler-${REGION:-unset}
+    volumes:
+      - ./work/${REGION:?REGION env var required}:/data
+    working_dir: /data
+    # Command supplied by build.sh at run-time (varies by region + PBF list).
+    # RAM cap set generously; adjust downward on constrained build machines.
+    mem_limit: 24g
+    cpus: 8
+
+  # Valhalla tile builder — runs valhalla_build_tiles against the PBF and
+  # produces the tile pack under work/<region>/valhalla_tiles/.
+  # https://github.com/valhalla/valhalla (MIT)
+  # We reuse the gis-ops docker image but invoke it in "build tiles" mode.
+  valhalla-builder:
+    image: ghcr.io/gis-ops/docker-valhalla/valhalla:latest
+    container_name: tc-maps-valhalla-builder-${REGION:-unset}
+    environment:
+      - use_tiles_ignore_pbf=False
+      - force_rebuild=True
+      - build_elevation=False
+      - build_admins=True
+      - build_time_zones=True
+      - server_threads=8
+    volumes:
+      - ./work/${REGION:?REGION env var required}/valhalla:/custom_files
+    mem_limit: 12g
+    cpus: 8
+
+  # Photon dump downloader — a tiny alpine + curl container that pulls the
+  # per-country Photon dumps from photon.komoot.io. No Photon binary involved
+  # at build time; the dump is a pre-built index we just fetch and stitch.
+  photon-fetch:
+    image: alpine:3.20
+    container_name: tc-maps-photon-fetch-${REGION:-unset}
+    volumes:
+      - ./work/${REGION:?REGION env var required}/photon:/work
+      - ./scripts:/scripts:ro
+    environment:
+      - PHOTON_DUMP_URL=${PHOTON_DUMP_URL:?PHOTON_DUMP_URL env var required}
+    entrypoint: ["/bin/sh", "/scripts/photon-fetch.sh"]
+    mem_limit: 512m
+
+  # PBF updater — pyosmium-based incremental update of the local Geofabrik
+  # extract. Called by build.sh before Planetiler + Valhalla stages.
+  pbf-update:
+    build:
+      context: ./docker/pbf-update
+    container_name: tc-maps-pbf-update-${REGION:-unset}
+    volumes:
+      - ./work/${REGION:?REGION env var required}/pbf:/pbf
+      - ./scripts:/scripts:ro
+    environment:
+      - PBF_SOURCES=${PBF_SOURCES:?PBF_SOURCES env var required}
+    entrypoint: ["/bin/sh", "/scripts/pbf-update.sh"]
+    mem_limit: 4g

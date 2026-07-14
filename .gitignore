@@ -59,3 +59,14 @@ build_*.log
 CLAUDE.md
 CLAUDE.MDtrailcurrent@*
 ziZVcFI9
+
+# Local execution plans / roadmaps (agent-generated, not distributed)
+PLANS/
+
+# Offline map build pipeline — intermediate state and final bundles.
+# Working state (Geofabrik PBFs, Planetiler output, Photon dumps, Valhalla
+# tiles) plus the produced maps-<date>.zip are all large and reproducible;
+# they don't belong in git.
+build/maps/work/
+build/maps/dist/
+

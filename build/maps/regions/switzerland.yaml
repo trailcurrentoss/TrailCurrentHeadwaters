@@ -1,0 +1,27 @@
+# Switzerland.
+#
+# Added as a Test 5 (new-region-without-code-change) sanity check for the
+# migration validation plan. Small country, well-defined bbox.
+#
+# ./build.sh --region switzerland
+
+region: switzerland
+display_name: Switzerland
+description: All of Switzerland.
+
+pbf_sources:
+  - https://download.geofabrik.de/europe/switzerland-latest.osm.pbf
+
+# Photon search index is global for every bundle — see build.sh.
+
+bbox:
+  west: 5.9
+  south: 45.8
+  east: 10.5
+  north: 47.9
+
+estimated_footprint_gb:
+  pmtiles: 1
+  photon_data: 88   # global Photon dump — same across every region
+  valhalla_tiles: 1
+  bundle_zip: 91

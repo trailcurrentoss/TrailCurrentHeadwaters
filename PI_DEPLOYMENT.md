@@ -9,10 +9,12 @@ This document covers two scenarios:
 2. **Installing the CA certificate** on client devices (phones, tablets,
    laptops)
 
-**For initial device setup** (flashing a new CM5 and running the first-login
-wizard), see [CM5/SETUP.md](CM5/SETUP.md). The CM5 image includes all
-application code, Docker images, and map tiles baked in — no deployment
-package transfer is needed for a fresh device.
+**For initial device setup** (flashing a new CM5 and completing the
+captive-portal setup from a phone), see [CM5/SETUP.md](CM5/SETUP.md). The
+CM5 image includes all application code, Docker images, and map tiles
+baked in — no deployment package transfer is needed for a fresh device,
+and **no SSH, keyboard, or monitor is required or supported for initial
+setup**. The CM5 must be the WiFi variant.
 
 ---
 
@@ -46,14 +48,14 @@ This produces `trailcurrent-deployment-1.0.0.zip` containing:
 
 For devices flashed with the current CM5 image, **no deployment package is
 needed**. The image includes all application artifacts baked in. On first
-SSH login, an interactive setup wizard runs automatically and:
+boot the device brings up a `Headwaters-XXXX` WiFi access point and serves
+a branded captive-portal setup page. The customer joins from their phone
+and completes setup entirely through the portal — MQTT and admin passwords,
+CA certificate installation, and startup of all services. See
+[CM5/SETUP.md](CM5/SETUP.md) for the complete flashing and setup procedure.
 
-1. Prompts for MQTT and admin passwords
-2. Auto-generates encryption keys
-3. Writes `.env` and starts all services
-
-See [CM5/SETUP.md](CM5/SETUP.md) for the complete flashing and first-login
-procedure.
+**The WiFi variant of the CM5 is required.** There is no fallback setup
+path that uses SSH, a keyboard, a monitor, or a serial console.
 
 If you are working with an **older image** that does not include baked-in
 artifacts, you can still deploy manually using the steps below.
@@ -100,24 +102,12 @@ For devices running older images without baked-in application artifacts:
    ```
    Then re-run `./deploy.sh`.
 
-5. **Place the map tiles file** (first time or when updating maps):
-   ```bash
-   mkdir -p data/tileserver
-   # Transfer map.mbtiles to data/tileserver/
-   ```
-
-   **Place the Nominatim search dataset** (first time or when updating the region).
-   The same OSM extract used to generate the tiles can be used here directly —
-   Nominatim reads the `.osm.pbf` file with no conversion.
-   ```bash
-   mkdir -p data/nominatim
-   # Transfer map.osm.pbf to data/nominatim/
-   ```
-   See [DOCS/UpdatingNominatim.md](DOCS/UpdatingNominatim.md) for how to obtain
-   the PBF for a different region. If the file is missing when you run
-   `./deploy.sh`, the script will bring up the rest of the stack and print
-   a warning; nominatim starts as soon as you drop the file in and re-run
-   deploy.
+5. **Map data:** *No manual step here.* Map bundles are uploaded via the PWA
+   Maps page after first boot — see
+   [PLANS/Offline-Maps-Migration.md](PLANS/Offline-Maps-Migration.md) for the
+   architecture and [build/maps/README.md](build/maps/README.md) for how to
+   build a region-specific bundle. The device boots into a healthy "Map Data
+   not Loaded" state until the first upload lands.
 
 <a id="install-the-ca-certificate"></a>
 
@@ -214,9 +204,10 @@ These items are **PRESERVED** and never deleted by `deploy.sh`:
   - To renew the server cert: `./scripts/generate-certs.sh 2` (uses existing CA, no need to re-install CA on devices)
 
 ### Data
-- `data/tileserver/map.mbtiles` — Map tile database (~25GB)
-- `data/nominatim/map.osm.pbf` — Raw OSM extract used for search import
-- `nominatim-data` Docker volume — Imported PostgreSQL database that backs the search API (regenerated only if you delete the volume)
+- `data/maps/versions/<version>/` — Map bundles uploaded via the PWA Maps page (~130 GB per bundle for North America; one current + one previous version retained for rollback)
+- `data/maps/current` — Symlink to the active bundle version, updated atomically by `map-watcher` on successful upload
+- `data/firmware/` — Peripheral module firmware payloads
+- `data/deployments/` — OTA deployment package history
 - MongoDB data volume — All application state
 
 **CRITICAL: Never delete `data/` directory during updates!**
@@ -263,7 +254,7 @@ curl -k -o /dev/null -s -w "%{http_code}" https://localhost/
 ```bash
 # Check logs for specific service
 docker compose logs <service-name>
-# Services: backend, frontend, mosquitto, mongodb, tileserver, geocoder, nominatim
+# Services: backend, frontend, mosquitto, mongodb
 
 # Restart all containers
 docker compose down && docker compose up -d --no-build

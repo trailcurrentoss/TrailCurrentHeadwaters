@@ -24,6 +24,15 @@ mmdebstrap:
     - nvme-cli
     - parted
     - cloud-guest-utils
+    # Setup access point stack — trailcurrent-setup-ap.service uses these
+    # to broadcast the Headwaters-XXXX captive-portal WiFi network when
+    # .env is absent (fresh device or post-factory-reset).
+    - hostapd
+    - dnsmasq
+    - rfkill
+    - iw
+    - wireless-regdb
+    - iptables
     # chrony is installed in customize-hooks below, not here — it conflicts
     # with systemd-timesyncd (both provide time-daemon), which is pulled in
     # unavoidably by the systemd-min base layer.
@@ -80,7 +89,12 @@ mmdebstrap:
 
       # ── Power savings: disable unused peripherals ──
       dtoverlay=disable-bt
-      dtoverlay=disable-wifi
+      # NOTE: WiFi is NOT disabled at the overlay level. The out-of-box
+      # setup uses a captive-portal WiFi AP (Headwaters-XXXX) driven by
+      # trailcurrent-setup-ap.service. That service takes the radio down
+      # via `rfkill block wifi` once .env exists (setup complete), so
+      # runtime power cost matches a fully disabled radio while the
+      # module can still bring it back up for factory reset.
       dtoverlay=disable-hdmi0
       dtoverlay=disable-hdmi1
       dtparam=audio=off
@@ -183,8 +197,10 @@ mmdebstrap:
     #
     # Prerequisites (must exist before running build.sh):
     #   - images/*.tar        (Docker image tarballs from build-and-save-images.sh)
-    #   - data/tileserver/map.mbtiles  (map tile data)
-    #   - data/nominatim/map.osm.pbf   (OSM extract for the search service)
+    #
+    # Map data is NOT baked into the image — users install their region's
+    # bundle via the PWA Maps upload flow after first boot. See
+    # PLANS/Offline-Maps-Migration.md "Confirmed decisions → Initial payload".
     #
     - |
       TC_HOME="$1/home/$IGconf_device_user1"
@@ -227,24 +243,23 @@ mmdebstrap:
         echo "Run ./build-and-save-images.sh before building the CM5 image."
       fi
 
-      # data/tileserver/map.mbtiles (map tile data, ~25GB)
-      mkdir -p "$TC_HOME/data/tileserver"
-      if [ -f "$REPO_ROOT/data/tileserver/map.mbtiles" ]; then
-        cp "$REPO_ROOT/data/tileserver/map.mbtiles" "$TC_HOME/data/tileserver/map.mbtiles"
-        chown 1000:1000 "$TC_HOME/data/tileserver/map.mbtiles"
-      else
-        echo "WARNING: map.mbtiles not found at data/tileserver/map.mbtiles"
-        echo "The tileserver will not start without this file."
-      fi
+      # data/maps/ skeleton — empty, trailcurrent-owned, 0755.
+      # First map bundle upload via PWA lands here. Ownership is critical:
+      # docker must NOT be the party that creates these at container mount
+      # time (would land root-owned). See PLANS/Offline-Maps-Migration.md
+      # "Overarching principle → 4. Ownership invariant".
+      mkdir -p "$TC_HOME/data/maps/versions"
+      mkdir -p "$TC_HOME/data/maps/staging"
+      chown -R 1000:1000 "$TC_HOME/data/maps"
+      chmod 0755 "$TC_HOME/data/maps" "$TC_HOME/data/maps/versions" "$TC_HOME/data/maps/staging"
 
-      # data/nominatim/map.osm.pbf (OSM extract for the search service, ~18GB)
-      mkdir -p "$TC_HOME/data/nominatim"
-      if [ -f "$REPO_ROOT/data/nominatim/map.osm.pbf" ]; then
-        cp "$REPO_ROOT/data/nominatim/map.osm.pbf" "$TC_HOME/data/nominatim/map.osm.pbf"
-        chown 1000:1000 "$TC_HOME/data/nominatim/map.osm.pbf"
-      else
-        echo "WARNING: map.osm.pbf not found at data/nominatim/map.osm.pbf"
-        echo "The nominatim search service will not start without this file."
+      # Bake-time verification: any root-owned entry under data/maps fails
+      # the image build loudly. A broken bake that ships is unrecoverable in
+      # the field without SSH.
+      if find "$TC_HOME/data/maps" \( -not -uid 1000 -o -not -gid 1000 \) -print -quit | grep -q .; then
+        echo "ERROR: data/maps skeleton has non-trailcurrent ownership after bake"
+        find "$TC_HOME/data/maps" \( -not -uid 1000 -o -not -gid 1000 \) -ls
+        exit 1
       fi
 
       # data/keys/ directory (populated by firstboot)
@@ -309,6 +324,38 @@ mmdebstrap:
       [Install]
       WantedBy=multi-user.target
       EOF
+
+    # ── docker-compose-up systemd service ─────────────────────────────
+    # Runs `docker compose up -d` on every boot AFTER .env exists. This
+    # is the piece that was previously done by hand inside the SSH
+    # first-login wizard; the captive-portal flow has no interactive
+    # session to run it from, so we make it a systemd oneshot instead.
+    #
+    # Idempotent: if the containers are already up, `docker compose up
+    # -d` is effectively a no-op. If they're gone (fresh reboot after
+    # the portal wrote .env), it starts them.
+    - |
+      cat > "$1/etc/systemd/system/trailcurrent-compose-up.service" << SVCEOF
+      [Unit]
+      Description=TrailCurrent docker compose up (starts app containers after setup)
+      After=docker.service trailcurrent-firstboot.service trailcurrent-load-images.service
+      Requires=docker.service
+      # Only runs after setup is complete. Before .env exists the app is
+      # in captive-portal setup mode and there is nothing to compose up.
+      ConditionPathExists=/home/$IGconf_device_user1/.env
+
+      [Service]
+      Type=oneshot
+      RemainAfterExit=yes
+      User=$IGconf_device_user1
+      WorkingDirectory=/home/$IGconf_device_user1
+      ExecStart=/usr/bin/docker compose -f /home/$IGconf_device_user1/docker-compose.yml up -d --no-build --remove-orphans
+      TimeoutStartSec=300
+      StandardOutput=journal+console
+
+      [Install]
+      WantedBy=multi-user.target
+      SVCEOF
 
     # ── cantomqtt systemd service (starts after deployment provides code) ──
     - |
@@ -415,11 +462,81 @@ mmdebstrap:
       WantedBy=multi-user.target
       SVCEOF
 
+    # ── Setup access point: install script + mask default services ───
+    # The Debian hostapd and dnsmasq packages ship their own systemd
+    # units that auto-start on boot. We don't want either — our
+    # trailcurrent-setup-ap.service manages both daemons manually via
+    # the shell script and lives at a different config path. Mask so
+    # they can never conflict.
+    - install -m 755 "$SRCROOT/layer/files/trailcurrent-setup-ap.sh" "$1/usr/local/bin/trailcurrent-setup-ap.sh"
+    # Mask Debian's default hostapd and dnsmasq services so they can
+    # never start on their own — our trailcurrent-setup-ap.service
+    # manages both daemons directly. Same technique as the existing
+    # systemd-timesyncd mask above.
+    - ln -sf /dev/null "$1/etc/systemd/system/hostapd.service"
+    - ln -sf /dev/null "$1/etc/systemd/system/dnsmasq.service"
+    - |
+      cat > "$1/etc/systemd/system/trailcurrent-setup-ap.service" << SVCEOF
+      [Unit]
+      Description=TrailCurrent captive-portal setup access point (Headwaters-XXXX)
+      # network.target only — do NOT wait for firstboot (its 90-120s
+      # pip install would delay AP visibility). setup-ap doesn't need
+      # anything firstboot produces; wlan0 exists as soon as the kernel
+      # loads brcmfmac.
+      After=network.target
+      # Only run when the device is unconfigured. The .env file is the
+      # marker for "setup completed" — its presence blocks the AP from
+      # coming back up on normal boots.
+      ConditionPathExists=!/home/$IGconf_device_user1/.env
+
+      [Service]
+      Type=oneshot
+      RemainAfterExit=yes
+      ExecStart=/usr/local/bin/trailcurrent-setup-ap.sh start
+      ExecStop=/usr/local/bin/trailcurrent-setup-ap.sh stop
+      TimeoutStartSec=60
+      StandardOutput=journal+console
+
+      [Install]
+      WantedBy=multi-user.target
+      SVCEOF
+
+    # ── os-settings systemd service ───────────────────────────────────
+    # Host-side daemon that owns PWA-driven OS operations: setting the
+    # IANA time zone, and factory reset (wipes .env + docker volumes,
+    # then reboots into the captive-portal setup AP). See
+    # local_code/os-settings.py.
+    #
+    # Runs as $IGconf_device_user1 with passwordless sudo — the same
+    # grant configured on the rig image lets it shell out to
+    # `timedatectl`, `docker compose down -v`, and `systemctl reboot`.
+    - |
+      cat > "$1/etc/systemd/system/os-settings.service" << SVCEOF
+      [Unit]
+      Description=TrailCurrent OS Settings proxy (PWA-driven system config)
+      After=docker.service
+      Requires=docker.service
+      ConditionPathExists=/home/$IGconf_device_user1/local_code/os-settings.py
+
+      [Service]
+      Type=simple
+      User=$IGconf_device_user1
+      WorkingDirectory=/home/$IGconf_device_user1/local_code
+      EnvironmentFile=/home/$IGconf_device_user1/local_code/.env
+      Environment=PYTHONUNBUFFERED=1
+      ExecStart=/home/$IGconf_device_user1/local_code/cantomqtt/bin/python /home/$IGconf_device_user1/local_code/os-settings.py
+      Restart=always
+      RestartSec=10
+
+      [Install]
+      WantedBy=multi-user.target
+      SVCEOF
+
     # ── Console login banner (MOTD) ───────────────────────────────────
     - install -m 644 "$SRCROOT/layer/files/motd" "$1/etc/motd"
 
     # ── Enable all services ──────────────────────────────────────────
-    - $BDEBSTRAP_HOOKS/enable-units "$1" can0 disable-usb cpu-performance docker trailcurrent-firstboot trailcurrent-load-images cantomqtt discovery-mdns deployment-watcher chrony time-from-bearing
+    - $BDEBSTRAP_HOOKS/enable-units "$1" can0 disable-usb cpu-performance docker trailcurrent-firstboot trailcurrent-load-images trailcurrent-compose-up cantomqtt discovery-mdns deployment-watcher os-settings trailcurrent-setup-ap chrony time-from-bearing
 
     # ── Add default user to docker group ─────────────────────────────
     - chroot "$1" usermod -aG docker "$IGconf_device_user1"

@@ -1,0 +1,27 @@
+# United States — U.S.-only extract (no Canada, no Mexico).
+# Useful when Canada / Mexico coverage is not needed and a smaller bundle is preferred.
+#
+# ./build.sh --region united-states
+
+region: united-states
+display_name: United States
+description: The United States, including territories, without Canada or Mexico.
+
+pbf_sources:
+  - https://download.geofabrik.de/north-america/us-latest.osm.pbf
+
+# Photon search index is global for every bundle — see build.sh. No per-region
+# variation. Search works for any place on Earth from this bundle; tiles and
+# routing cover the U.S. only.
+
+bbox:
+  west: -168.0
+  south: 17.0
+  east: -65.0
+  north: 72.0
+
+estimated_footprint_gb:
+  pmtiles: 25
+  photon_data: 57   # global Photon dump — same across every region
+  valhalla_tiles: 32
+  bundle_zip: 100
