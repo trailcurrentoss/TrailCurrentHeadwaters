@@ -2,7 +2,7 @@
     "name": "Overlook",
     "short_name": "Overlook",
     "id": "/",
-    "version": "0.0.20",
+    "version": "__GIT_SHA__",
     "description": "Software defined vehicles for everyone",
     "start_url": "/",
     "display": "standalone",

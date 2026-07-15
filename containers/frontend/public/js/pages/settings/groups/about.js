@@ -38,7 +38,7 @@ export const aboutGroup = {
             <!-- App Info -->
             <div class="card settings-item" id="about-version" style="flex-direction: column; align-items: flex-start; gap: 10px;">
                 <span class="settings-label">About</span>
-                <p class="settings-description">Overlook 0.0.20</p>
+                <p class="settings-description">Overlook __GIT_SHA__</p>
                 <p class="settings-description">A Progressive Web App by TrailCurrent</p>
             </div>
         `;
