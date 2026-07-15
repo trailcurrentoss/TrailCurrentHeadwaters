@@ -1,7 +1,7 @@
 // Version suffix is bumped whenever the shell/nav topology changes so a
 // stale SW that failed to install can't hold clients back. In dev, this
 // literal string is the cache name; in prod, __GIT_SHA__ is replaced.
-const CACHE_NAME = 'rv-cache-__GIT_SHA__-shell-v4';
+const CACHE_NAME = 'rv-cache-__GIT_SHA__-shell-v6';
 const STATIC_ASSETS = [
     '/',
     '/index.html',
@@ -39,23 +39,34 @@ const STATIC_ASSETS = [
     '/js/shell/alert-host.js',
     '/js/components/alarm-bell.js',
     '/js/pages/airquality.js',
-    '/js/pages/alarms.js',
     '/js/pages/energy.js',
     '/js/pages/home.js',
     '/js/pages/login.js',
     '/js/pages/map.js',
-    '/js/pages/settings.js',
     '/js/pages/trailer.js',
     '/js/pages/water.js',
     '/js/pages/wizard.js',
-    '/js/pages/config.js',
-    '/js/pages/deployments.js',
     '/js/pages/playbill.js',
     '/js/pages/peregrine.js',
     '/js/pages/playbill/radio.js',
     '/js/pages/playbill/volume.js',
     '/js/pages/playbill/remote.js',
     '/js/pages/playbill/youtube.js',
+    // Consolidated Settings — shell + per-group modules.
+    '/js/pages/settings/index.js',
+    '/js/pages/settings/groups/general.js',
+    '/js/pages/settings/groups/alarms.js',
+    '/js/pages/settings/groups/network.js',
+    '/js/pages/settings/groups/maps.js',
+    '/js/pages/settings/groups/voice.js',
+    '/js/pages/settings/groups/deploy.js',
+    '/js/pages/settings/groups/cloud.js',
+    '/js/pages/settings/groups/system.js',
+    '/js/pages/settings/groups/security.js',
+    '/js/pages/settings/groups/about.js',
+    // Ionicons (vendored) — loader entry + all cherry-picked SVGs.
+    '/libs/ionicons/ionicons.esm.js',
+    '/libs/ionicons/ionicons.js',
     '/docs/playbill-youtube-setup.html',
     '/apple-touch-icon.png',
     '/icons/icon-180.png',

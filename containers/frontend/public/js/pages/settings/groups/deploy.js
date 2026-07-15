@@ -1,5 +1,11 @@
-// Deployments page — local deployment upload and status tracking
-import { API, AuthStore, wsClient } from '../api.js';
+// Settings > Deployments
+//
+// Local deployment package upload + status tracking + version list.
+// Formerly the standalone Deployments page — moved here on
+// consolidation. Logic, DOM IDs, event handlers, and API calls are
+// byte-identical to the pre-consolidation implementation.
+
+import { API, AuthStore, wsClient } from '../../../api.js';
 
 let deploymentsList = [];
 
@@ -42,7 +48,17 @@ function statusClass(status) {
     return 'status-active';
 }
 
-export const deploymentsPage = {
+export const deployGroup = {
+    meta: {
+        id: 'deploy',
+        title: 'Deployments',
+        icon: 'cube-outline',
+        sub: 'Firmware packages',
+    },
+    searchIndex: [
+        { label: 'Upload Deployment Package', kw: 'deployment package upload zip version firmware', anchor: 'deployment-upload-form' },
+        { label: 'Available Packages',        kw: 'deployment packages versions rollback deployed',  anchor: 'deployments-list' },
+    ],
     render() {
         return `
             <section class="page-deployments">

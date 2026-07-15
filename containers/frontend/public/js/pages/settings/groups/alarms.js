@@ -1,8 +1,36 @@
-// Alarms page — flat list of every digital input across configured
-// Picket + Switchback modules with per-sensor arm toggle and rename.
-import { API } from '../api.js';
-import * as notifications from '../notifications.js';
-import { alarmBell } from '../components/alarm-bell.js';
+// Settings > Alarms & Notifications
+//
+// Composite group. Two independent pieces, both moved verbatim from
+// their pre-consolidation homes:
+//
+//   1. Alarms — flat list of every digital input across configured
+//      Picket + Switchback modules with per-sensor arm toggle, rename,
+//      Solstice battery-level threshold, and the alarm-bell history
+//      panel. (Formerly containers/frontend/public/js/pages/alarms.js.)
+//
+//   2. SMS Notifications — cellular router SMS relay config, extracted
+//      from the legacy top-level settings.js.
+//
+// DOM IDs, class names, event handlers, and API calls are byte-identical
+// to their pre-consolidation implementations to keep regression risk
+// near zero.
+
+import { API } from '../../../api.js';
+import * as notifications from '../../../notifications.js';
+import { alarmBell } from '../../../components/alarm-bell.js';
+
+// --- SMS section state (independent of the alarms body below). ---
+let smsSystemConfig = null;
+
+// Local copy of settings.js escapeHtmlSettings — used only for SMS field
+// values that echo back into the DOM.
+function escapeHtmlSettings(s) {
+    return String(s == null ? '' : s)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+}
 
 const LABEL_MAX = 24;
 const SENSORS_PER = { switchback: 8, picket: 12 };
@@ -431,7 +459,20 @@ function handleContainerInput(e) {
     }
 }
 
-export const alarmsPage = {
+export const alarmsGroup = {
+    meta: {
+        id: 'alarms',
+        title: 'Alarms & Notifications',
+        icon: 'notifications-outline',
+        sub: 'Sensor alarms, SMS',
+    },
+    searchIndex: [
+        { label: 'Alarm Notifications',    kw: 'alarm notification bell sensor door wifi push', anchor: 'alarms-push-container' },
+        { label: 'Solstice Battery Level', kw: 'battery alarm threshold state of charge solstice', anchor: 'alarms-battery-container' },
+        { label: 'Sensor Alarms',          kw: 'sensor alarm arm disarm picket switchback rename', anchor: 'alarms-list-container' },
+        { label: 'SMS Notifications',      kw: 'sms text message cellular router sendsms ssh',    anchor: 'sms-config-fields' },
+    ],
+
     render() {
         return `
             <section class="page-alarms">
@@ -455,47 +496,61 @@ export const alarmsPage = {
                     </aside>
                 </div>
             </section>
+            ${renderSmsSection()}
         `;
     },
 
     async init() {
+        // 1) Alarms body init (verbatim from the pre-consolidation page).
         const listContainer = document.getElementById('alarms-list-container');
         const batteryContainer = document.getElementById('alarms-battery-container');
-        if (!listContainer || !batteryContainer) return;
+        if (listContainer && batteryContainer) {
+            try {
+                const [config, sysCfg] = await Promise.all([
+                    API.getAlarmsConfig(),
+                    API.getSystemConfig(),
+                ]);
+                sensors = (config && config.sensors) || {};
+                const b = (config && config.battery) || {};
+                battery = {
+                    enabled: b.enabled === true,
+                    threshold: Number.isFinite(Number(b.threshold)) ? Number(b.threshold) : 20,
+                };
+                modules = (sysCfg && sysCfg.mcu_modules) || [];
+                batteryContainer.innerHTML = renderBatteryCard();
+                listContainer.innerHTML = renderList();
+                refreshPushCard();
+            } catch (err) {
+                console.error('[Alarms] Failed to load:', err);
+                listContainer.innerHTML = '<p style="color: var(--danger);">Failed to load alarms configuration.</p>';
+            }
 
-        try {
-            const [config, sysCfg] = await Promise.all([
-                API.getAlarmsConfig(),
-                API.getSystemConfig(),
-            ]);
-            sensors = (config && config.sensors) || {};
-            const b = (config && config.battery) || {};
-            battery = {
-                enabled: b.enabled === true,
-                threshold: Number.isFinite(Number(b.threshold)) ? Number(b.threshold) : 20,
-            };
-            modules = (sysCfg && sysCfg.mcu_modules) || [];
-            batteryContainer.innerHTML = renderBatteryCard();
-            listContainer.innerHTML = renderList();
-            refreshPushCard();
-        } catch (err) {
-            console.error('[Alarms] Failed to load:', err);
-            listContainer.innerHTML = '<p style="color: var(--danger);">Failed to load alarms configuration.</p>';
-            return;
+            const page = document.querySelector('.page-alarms');
+            if (page) {
+                containerClickListener = handleContainerClick;
+                containerInputListener = handleContainerInput;
+                page.addEventListener('click', containerClickListener);
+                page.addEventListener('input', containerInputListener);
+            }
+
+            // Live-repaint the history panel when alarms fire or clear.
+            historyChangeHandler = () => paintHistoryPanel();
+            alarmBell.addEventListener('change', historyChangeHandler);
         }
 
-        const page = document.querySelector('.page-alarms');
-        containerClickListener = handleContainerClick;
-        containerInputListener = handleContainerInput;
-        page.addEventListener('click', containerClickListener);
-        page.addEventListener('input', containerInputListener);
-
-        // Live-repaint the history panel when alarms fire or clear.
-        historyChangeHandler = () => paintHistoryPanel();
-        alarmBell.addEventListener('change', historyChangeHandler);
+        // 2) SMS section init — load system config + populate form.
+        try {
+            smsSystemConfig = await API.getSystemConfig();
+        } catch (err) {
+            console.error('[Alarms/SMS] Failed to load system config:', err);
+            smsSystemConfig = {};
+        }
+        populateSmsFields();
+        wireSmsListeners();
     },
 
     cleanup() {
+        // 1) Alarms body cleanup (verbatim from pre-consolidation).
         if (saveTimer) {
             clearTimeout(saveTimer);
             saveTimer = null;
@@ -519,5 +574,221 @@ export const alarmsPage = {
         sensors = {};
         battery = { enabled: false, threshold: 20 };
         modules = [];
+
+        // 2) SMS section cleanup. Listeners attach to elements that get
+        // removed with the mount's innerHTML swap, so only state needs
+        // clearing here.
+        smsSystemConfig = null;
     }
 };
+
+// =====================================================================
+// SMS Notifications section (moved verbatim from legacy settings.js)
+// =====================================================================
+
+function renderSmsSection() {
+    return `
+        <section class="settings-v2-sms-wrap">
+            <div class="card settings-item-vertical">
+                <div class="settings-item-header">
+                    <span class="settings-label">SMS Notifications</span>
+                    <p class="settings-description">Send SMS notifications via your cellular router's sendsms command over SSH</p>
+                </div>
+                <div class="password-form">
+                    <div class="settings-item" style="padding: 0; border: none;">
+                        <div>
+                            <label class="settings-label" style="font-size: 0.9rem;">Enable SMS</label>
+                        </div>
+                        <button class="toggle-switch"
+                                id="sms-enabled-toggle"
+                                aria-pressed="false">
+                        </button>
+                    </div>
+                    <div id="sms-config-fields" class="sms-config-fields hidden">
+                        <div class="password-form-group">
+                            <label class="password-label" for="settings-sms-phone">Phone Number</label>
+                            <input type="tel" id="settings-sms-phone" class="password-input"
+                                   placeholder="+15551234567"
+                                   value="">
+                        </div>
+                        <div class="password-form-group">
+                            <label class="password-label" for="settings-sms-router-ip">Router IP Address</label>
+                            <input type="text" id="settings-sms-router-ip" class="password-input"
+                                   placeholder="192.168.1.1"
+                                   value="">
+                        </div>
+                        <div class="password-form-group">
+                            <label class="password-label" for="settings-sms-ssh-key">SSH Private Key</label>
+                            <textarea id="settings-sms-ssh-key" class="password-input sms-ssh-key-textarea"
+                                      placeholder="-----BEGIN OPENSSH PRIVATE KEY-----&#10;...&#10;-----END OPENSSH PRIVATE KEY-----"
+                                      rows="6"></textarea>
+                        </div>
+                        <div class="sms-throttle-row">
+                            <div class="password-form-group sms-throttle-field">
+                                <label class="password-label" for="settings-sms-max-messages">Max messages</label>
+                                <input type="number" id="settings-sms-max-messages" class="password-input"
+                                       min="1" max="100" value="3">
+                            </div>
+                            <div class="sms-throttle-separator">per</div>
+                            <div class="password-form-group sms-throttle-field">
+                                <label class="password-label" for="settings-sms-throttle-window">Minutes</label>
+                                <input type="number" id="settings-sms-throttle-window" class="password-input"
+                                       min="1" max="1440" value="60">
+                            </div>
+                        </div>
+                        <div id="sms-config-message" class="password-message hidden"></div>
+                        <div class="sms-buttons">
+                            <button class="password-submit-btn" id="save-sms-config-btn">
+                                Save SMS Settings
+                            </button>
+                            <button class="password-submit-btn sms-test-btn" id="test-sms-btn">
+                                Send Test SMS
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+    `;
+}
+
+function populateSmsFields() {
+    if (!smsSystemConfig) return;
+    const toggle   = document.getElementById('sms-enabled-toggle');
+    const fields   = document.getElementById('sms-config-fields');
+    const phone    = document.getElementById('settings-sms-phone');
+    const ip       = document.getElementById('settings-sms-router-ip');
+    const ssh      = document.getElementById('settings-sms-ssh-key');
+    const maxMsg   = document.getElementById('settings-sms-max-messages');
+    const throttle = document.getElementById('settings-sms-throttle-window');
+
+    const enabled = !!smsSystemConfig.sms_enabled;
+    if (toggle) {
+        toggle.classList.toggle('active', enabled);
+        toggle.setAttribute('aria-pressed', String(enabled));
+    }
+    if (fields) fields.classList.toggle('hidden', !enabled);
+    if (phone)    phone.value    = smsSystemConfig.sms_phone_number || '';
+    if (ip)       ip.value       = smsSystemConfig.sms_router_ip || '';
+    if (ssh)      ssh.value      = smsSystemConfig.sms_ssh_key || '';
+    if (maxMsg)   maxMsg.value   = smsSystemConfig.sms_max_messages || 3;
+    if (throttle) throttle.value = smsSystemConfig.sms_throttle_window_minutes || 60;
+    void escapeHtmlSettings;   // kept for parity with settings.js; unused
+}
+
+function wireSmsListeners() {
+    const smsEnabledToggle = document.getElementById('sms-enabled-toggle');
+    if (smsEnabledToggle) {
+        smsEnabledToggle.addEventListener('click', async () => {
+            const isEnabled = smsEnabledToggle.classList.toggle('active');
+            smsEnabledToggle.setAttribute('aria-pressed', isEnabled);
+            const smsFields = document.getElementById('sms-config-fields');
+            if (smsFields) {
+                smsFields.classList.toggle('hidden', !isEnabled);
+            }
+            if (!isEnabled) {
+                try {
+                    smsSystemConfig = await API.updateSystemConfig({ sms_enabled: false });
+                    showSmsConfigMessage('SMS disabled', 'success');
+                } catch (error) {
+                    smsEnabledToggle.classList.add('active');
+                    smsEnabledToggle.setAttribute('aria-pressed', true);
+                    if (smsFields) smsFields.classList.remove('hidden');
+                    showSmsConfigMessage(error.message || 'Failed to disable SMS', 'error');
+                }
+            }
+        });
+    }
+    const saveSmsBtn = document.getElementById('save-sms-config-btn');
+    if (saveSmsBtn) saveSmsBtn.addEventListener('click', handleSaveSmsConfig);
+    const testSmsBtn = document.getElementById('test-sms-btn');
+    if (testSmsBtn) testSmsBtn.addEventListener('click', handleTestSms);
+}
+
+async function handleSaveSmsConfig() {
+    const messageEl = document.getElementById('sms-config-message');
+    const saveBtn = document.getElementById('save-sms-config-btn');
+    const smsEnabledToggle = document.getElementById('sms-enabled-toggle');
+
+    messageEl.classList.add('hidden');
+    messageEl.classList.remove('success', 'error');
+
+    const smsEnabled = smsEnabledToggle.classList.contains('active');
+    const smsPhoneNumber = document.getElementById('settings-sms-phone').value.trim();
+    const smsRouterIp = document.getElementById('settings-sms-router-ip').value.trim();
+    const smsSshKey = document.getElementById('settings-sms-ssh-key').value;
+    const smsMaxMessages = parseInt(document.getElementById('settings-sms-max-messages').value) || 3;
+    const smsThrottleWindow = parseInt(document.getElementById('settings-sms-throttle-window').value) || 60;
+
+    if (smsEnabled && !smsPhoneNumber) {
+        showSmsConfigMessage('Please enter a phone number', 'error');
+        return;
+    }
+    if (smsEnabled && !smsRouterIp) {
+        showSmsConfigMessage('Please enter the router IP address', 'error');
+        return;
+    }
+    if (smsEnabled && !smsSshKey) {
+        showSmsConfigMessage('Please paste the SSH private key', 'error');
+        return;
+    }
+
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'Saving...';
+
+    try {
+        smsSystemConfig = await API.updateSystemConfig({
+            sms_enabled: smsEnabled,
+            sms_phone_number: smsPhoneNumber,
+            sms_router_ip: smsRouterIp,
+            sms_ssh_key: smsSshKey,
+            sms_max_messages: smsMaxMessages,
+            sms_throttle_window_minutes: smsThrottleWindow,
+        });
+        showSmsConfigMessage('SMS settings saved successfully', 'success');
+    } catch (error) {
+        showSmsConfigMessage(error.message || 'Failed to save SMS settings', 'error');
+    } finally {
+        saveBtn.disabled = false;
+        saveBtn.textContent = 'Save SMS Settings';
+    }
+}
+
+async function handleTestSms() {
+    const messageEl = document.getElementById('sms-config-message');
+    const testBtn = document.getElementById('test-sms-btn');
+
+    messageEl.classList.add('hidden');
+    messageEl.classList.remove('success', 'error');
+
+    const phoneNumber = document.getElementById('settings-sms-phone').value.trim();
+    const routerIp = document.getElementById('settings-sms-router-ip').value.trim();
+    const sshKey = document.getElementById('settings-sms-ssh-key').value;
+
+    if (!phoneNumber || !routerIp || !sshKey) {
+        showSmsConfigMessage('Please fill in all SMS fields before testing', 'error');
+        return;
+    }
+
+    testBtn.disabled = true;
+    testBtn.textContent = 'Sending...';
+
+    try {
+        const result = await API.testSms(phoneNumber, routerIp, sshKey);
+        showSmsConfigMessage(result.output || 'Test SMS sent successfully', 'success');
+    } catch (error) {
+        showSmsConfigMessage(error.message || 'Failed to send test SMS', 'error');
+    } finally {
+        testBtn.disabled = false;
+        testBtn.textContent = 'Send Test SMS';
+    }
+}
+
+function showSmsConfigMessage(message, type) {
+    const messageEl = document.getElementById('sms-config-message');
+    if (messageEl) {
+        messageEl.textContent = message;
+        messageEl.classList.remove('hidden', 'success', 'error');
+        messageEl.classList.add(type);
+    }
+}

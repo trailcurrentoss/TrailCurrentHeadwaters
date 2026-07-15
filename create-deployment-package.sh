@@ -46,8 +46,8 @@ if [ -n "$VERSION" ]; then
     # service-worker.js: CACHE_NAME line
     sed -i '1s/__GIT_SHA__/'"$VERSION"'/' containers/frontend/public/service-worker.js
 
-    # settings.js: "Overlook __GIT_SHA__" (the About section only)
-    sed -i '/Overlook __GIT_SHA__/s/__GIT_SHA__/'"$VERSION"'/' containers/frontend/public/js/pages/settings.js
+    # settings About group: "Overlook __GIT_SHA__" (the About section only)
+    sed -i '/Overlook __GIT_SHA__/s/__GIT_SHA__/'"$VERSION"'/' containers/frontend/public/js/pages/settings/groups/about.js
 
     echo "  Version injected into source files"
 fi
@@ -67,7 +67,7 @@ if [ -n "$VERSION" ]; then
 
     sed -i '/"version":/s/'"$ESCAPED_VERSION"'/__GIT_SHA__/' containers/frontend/public/manifest.json
     sed -i '1s/'"$ESCAPED_VERSION"'/__GIT_SHA__/' containers/frontend/public/service-worker.js
-    sed -i '/Overlook '"$ESCAPED_VERSION"'/s/'"$ESCAPED_VERSION"'/__GIT_SHA__/' containers/frontend/public/js/pages/settings.js
+    sed -i '/Overlook '"$ESCAPED_VERSION"'/s/'"$ESCAPED_VERSION"'/__GIT_SHA__/' containers/frontend/public/js/pages/settings/groups/about.js
 
     echo "  Source files restored"
 fi

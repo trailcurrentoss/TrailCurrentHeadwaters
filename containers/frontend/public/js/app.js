@@ -8,16 +8,12 @@ import { trailerPage } from './pages/trailer.js';
 import { energyPage } from './pages/energy.js';
 import { waterPage } from './pages/water.js';
 import { airqualityPage } from './pages/airquality.js';
-import { settingsPage } from './pages/settings.js';
+import { settingsPage } from './pages/settings/index.js';
 import { loginPage } from './pages/login.js';
 import { mapPage } from './pages/map.js';
 import { wizardPage } from './pages/wizard.js';
-import { configPage } from './pages/config.js';
-import { deploymentsPage } from './pages/deployments.js';
-import { mapsPage } from './pages/maps.js';
 import { playbillPage } from './pages/playbill.js';
 import { peregrinePage } from './pages/peregrine.js';
-import { alarmsPage } from './pages/alarms.js';
 import { drivingPage } from './pages/driving.js';
 import { storagePage } from './pages/storage.js';
 import { alarmBell } from './components/alarm-bell.js';
@@ -119,6 +115,11 @@ class App {
         // initial navigate bails out with "contentElement is null" (logged
         // but harmless). We re-navigate below to actually render the
         // initial page now that the router is fully wired.
+        // Config, Deployments, Maps, and Alarms are no longer top-level
+        // pages — they live inside the consolidated Settings screen at
+        // #settings/network, #settings/deploy, #settings/maps, and
+        // #settings/alarms. Legacy hash bookmarks (#config, #maps, etc.)
+        // still work; the router transparently redirects them.
         router
             .init(document.getElementById('main-content'))
             .register('home', homePage)
@@ -127,12 +128,8 @@ class App {
             .register('water', waterPage)
             .register('airquality', airqualityPage)
             .register('map', mapPage)
-            .register('config', configPage)
-            .register('deployments', deploymentsPage)
-            .register('maps', mapsPage)
             .register('playbill', playbillPage)
             .register('peregrine', peregrinePage)
-            .register('alarms', alarmsPage)
             .register('settings', settingsPage);
 
         // Render the initial page now that the router is bound + populated.

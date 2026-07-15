@@ -47,26 +47,10 @@ export const SYSTEM_ITEMS = [
         label: 'Peregrine',
         svg: '<svg viewBox="0 0 512 512" fill="none" stroke="currentColor" stroke-width="40" stroke-linecap="round" stroke-linejoin="round"><path d="M200 100 C230 80 280 80 310 100 C350 120 370 160 370 200 C370 220 365 235 355 245 L340 270 L340 300 C320 320 300 340 280 380 C260 420 240 440 220 450 C200 460 180 440 170 420 C160 400 160 360 170 320 C150 320 130 310 120 290 C110 270 110 240 120 210 C130 170 160 130 200 100Z"></path><path d="M355 200 C380 200 410 215 420 235 C425 245 415 255 400 250"></path><circle cx="280" cy="175" r="10" fill="currentColor" stroke="none"></circle></svg>'
     },
-    {
-        page: 'config',
-        label: 'Config',
-        svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="4" y1="21" x2="4" y2="14"></line><line x1="4" y1="10" x2="4" y2="3"></line><line x1="12" y1="21" x2="12" y2="12"></line><line x1="12" y1="8" x2="12" y2="3"></line><line x1="20" y1="21" x2="20" y2="16"></line><line x1="20" y1="12" x2="20" y2="3"></line><line x1="1" y1="14" x2="7" y2="14"></line><line x1="9" y1="8" x2="15" y2="8"></line><line x1="17" y1="16" x2="23" y2="16"></line></svg>'
-    },
-    {
-        page: 'deployments',
-        label: 'Deploy',
-        svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline><line x1="12" y1="22.08" x2="12" y2="12"></line></svg>'
-    },
-    {
-        page: 'maps',
-        label: 'Maps',
-        svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"></polygon><line x1="8" y1="2" x2="8" y2="18"></line><line x1="16" y1="6" x2="16" y2="22"></line></svg>'
-    },
-    {
-        page: 'alarms',
-        label: 'Alarms',
-        svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 0 1-3.46 0"></path></svg>'
-    },
+    // Config, Deploy, Maps, and Alarms live inside Settings (consolidated).
+    // Reach them at #settings/network, #settings/deploy, #settings/maps,
+    // and #settings/alarms respectively. Router.LEGACY_REDIRECTS keeps
+    // old #config / #deployments / #maps / #alarms bookmarks working.
     {
         page: 'settings',
         label: 'Settings',

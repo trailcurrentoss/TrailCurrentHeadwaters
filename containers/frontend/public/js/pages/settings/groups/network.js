@@ -1,6 +1,13 @@
-// Module Configuration page
-import { API, wsClient } from '../api.js';
-import { ICON_LIST } from '../components/pdm-icons.js';
+// Settings > Network & Modules
+//
+// Wi-Fi (MCU OTA) + CAN module discovery / add / edit / delete / OTA.
+// Formerly the standalone Config page — moved here on consolidation so
+// that all settings live under one screen. Logic, DOM IDs, event
+// handlers, and API calls are byte-identical to the pre-consolidation
+// implementation.
+
+import { API, wsClient } from '../../../api.js';
+import { ICON_LIST } from '../../../components/pdm-icons.js';
 
 let systemConfig = null;
 let modules = [];
@@ -24,7 +31,17 @@ function getModuleDisplayName(typeId) {
     return found ? found.name : typeId;
 }
 
-export const configPage = {
+export const networkGroup = {
+    meta: {
+        id: 'network',
+        title: 'Network & Modules',
+        icon: 'wifi-outline',
+        sub: 'Wi-Fi, CAN modules',
+    },
+    searchIndex: [
+        { label: 'Wi-Fi Configuration', kw: 'wifi ssid password network access point ota mcu quigon', anchor: 'wifi-ssid' },
+        { label: 'Module Configuration', kw: 'modules scan can bus discover devices firmware ota', anchor: 'config-container' },
+    ],
     render() {
         return `
             <section class="page-config">

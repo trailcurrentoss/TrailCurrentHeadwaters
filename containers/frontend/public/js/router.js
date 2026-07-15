@@ -30,14 +30,43 @@ class Router {
         return this;
     }
 
-    async navigate(pageName) {
+    // Legacy hash redirects — when a page has been consolidated into
+    // Settings, keep old bookmarks working by mapping the top-level hash
+    // to the new #settings/<group> deep link. Matched on the FIRST path
+    // segment only (so `#config` and `#config/whatever` both redirect).
+    LEGACY_REDIRECTS = {
+        config: 'settings/network',
+        deployments: 'settings/deploy',
+        maps: 'settings/maps',
+        alarms: 'settings/alarms',
+    };
+
+    async navigate(fullPath) {
         if (!this.contentElement) {
             console.error('Router not initialized - contentElement is null');
             return;
         }
 
-        if (!this.routes.has(pageName)) {
-            console.error(`Page not found: ${pageName}`);
+        // Split "settings/general" → route="settings", subPath="general".
+        // The route name is always the first segment; anything after the
+        // first slash is a sub-path passed to the page module.
+        let route = fullPath;
+        let subPath = '';
+        const slashIdx = fullPath.indexOf('/');
+        if (slashIdx >= 0) {
+            route = fullPath.slice(0, slashIdx);
+            subPath = fullPath.slice(slashIdx + 1);
+        }
+
+        // Redirect legacy top-level pages that have been consolidated
+        // into Settings. Rewrites the URL and re-enters navigate() so
+        // hashchange listeners see the canonical destination.
+        if (this.LEGACY_REDIRECTS[route]) {
+            return this.navigate(this.LEGACY_REDIRECTS[route]);
+        }
+
+        if (!this.routes.has(route)) {
+            console.error(`Page not found: ${route}`);
             return;
         }
 
@@ -46,17 +75,18 @@ class Router {
             this.currentPage.cleanup();
         }
 
-        const pageModule = this.routes.get(pageName);
+        const pageModule = this.routes.get(route);
 
         // Apply transition
         this.contentElement.classList.add('page-enter');
 
-        // Render new page
-        this.contentElement.innerHTML = pageModule.render();
+        // Render new page. Pass subPath so pages with internal sub-routes
+        // (Settings) can render the correct sub-screen on first paint.
+        this.contentElement.innerHTML = pageModule.render(subPath);
 
         // Initialize page
         if (pageModule.init) {
-            await pageModule.init();
+            await pageModule.init(subPath);
         }
 
         // Store current page reference
@@ -72,15 +102,16 @@ class Router {
             }, 200);
         });
 
-        // Update navigation state
-        this.updateNav(pageName);
+        // Update navigation state (nav highlights the top-level route,
+        // not sub-paths — Settings stays selected across all its groups).
+        this.updateNav(route);
 
-        // Update URL hash
-        window.location.hash = pageName;
+        // Update URL hash. Preserve the full path so deep links round-trip.
+        window.location.hash = fullPath;
 
         // Notify subscribers (AppShell listens for this)
         this._navListeners.forEach(fn => {
-            try { fn(pageName); } catch (err) { console.error('nav listener error:', err); }
+            try { fn(route); } catch (err) { console.error('nav listener error:', err); }
         });
     }
 
@@ -102,7 +133,7 @@ class Router {
         // Update More button active state when an overflow page is active on small screens
         const moreBtn = document.getElementById('nav-more-btn');
         if (moreBtn) {
-            const overflowPages = ['water', 'airquality', 'map', 'peregrine', 'playbill', 'config', 'deployments', 'settings'];
+            const overflowPages = ['water', 'airquality', 'map', 'peregrine', 'playbill', 'settings'];
             const isOverflowActive = overflowPages.includes(activePage);
             // Show More as active if overflow page is active and we're on small screen
             moreBtn.classList.toggle('active', isOverflowActive && window.innerWidth <= 480);
@@ -111,7 +142,13 @@ class Router {
 
     getPageFromHash() {
         const hash = window.location.hash.slice(1);
-        return this.routes.has(hash) ? hash : 'home';
+        if (!hash) return 'home';
+        // Route lookup uses only the first segment; sub-paths are preserved
+        // in the returned string so navigate() sees the full deep link.
+        const slashIdx = hash.indexOf('/');
+        const route = slashIdx >= 0 ? hash.slice(0, slashIdx) : hash;
+        if (this.LEGACY_REDIRECTS[route]) return hash;   // let navigate() resolve
+        return this.routes.has(route) ? hash : 'home';
     }
 }
 

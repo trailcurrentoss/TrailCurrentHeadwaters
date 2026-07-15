@@ -1,5 +1,12 @@
-// Maps page — offline bundle upload, status tracking, rollback.
-import { API, AuthStore, wsClient } from '../api.js';
+// Settings > Maps
+//
+// Offline map bundle: installed version, upload from PWA, load from a
+// plugged-in USB/SD, recent-uploads list, rollback. Formerly the
+// standalone Maps page — moved here on consolidation. Logic, DOM IDs,
+// event handlers, and API calls are byte-identical to the pre-
+// consolidation implementation.
+
+import { API, AuthStore, wsClient } from '../../../api.js';
 
 let uploadsList = [];
 let currentBundle = null;
@@ -49,7 +56,19 @@ function escapeHtml(s) {
     }[c]));
 }
 
-export const mapsPage = {
+export const mapsGroup = {
+    meta: {
+        id: 'maps',
+        title: 'Maps',
+        icon: 'map-outline',
+        sub: 'Offline map bundles',
+    },
+    searchIndex: [
+        { label: 'Installed Map Bundle',  kw: 'map bundle north america osm extract rollback installed', anchor: 'current-bundle-details' },
+        { label: 'Upload Map Bundle',     kw: 'map upload bundle zip build california north america',    anchor: 'map-upload-form' },
+        { label: 'External Storage Maps', kw: 'external usb sd card import scan',                        anchor: 'external-storage-card' },
+        { label: 'Recent Uploads',        kw: 'map upload history versions applied',                     anchor: 'maps-uploads-list' },
+    ],
     render() {
         return `
             <section class="page-maps">
