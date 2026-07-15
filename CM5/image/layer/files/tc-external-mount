@@ -1,0 +1,66 @@
+#!/bin/bash
+#
+# tc-external-mount — auto-mount a USB / SD partition to /media/tc-external/
+#
+# Called by the 99-tc-external.rules udev rule on ADD of a removable
+# block-device partition with a filesystem. Uses systemd-mount --collect
+# so the mount lifecycle is tied to the device — when the drive is
+# yanked, systemd tears down the mount automatically.
+#
+# Mount is READ-ONLY. The backend `/api/maps/import-external` route
+# only ever READS the drive contents (copies bytes into staging on the
+# NVMe). RO mounts also mean we can't accidentally corrupt a customer's
+# USB drive with a partial write.
+#
+# Usage (via udev):
+#   /usr/local/bin/tc-external-mount <DEVNAME> <ID_FS_LABEL>
+#
+# Example:
+#   /usr/local/bin/tc-external-mount /dev/sda1 MYUSB
+#     → mounts /dev/sda1 read-only at /media/tc-external/MYUSB/
+#
+# If ID_FS_LABEL is empty, the device basename is used (e.g. sda1).
+
+set -eu
+
+DEV="${1:-}"
+LABEL="${2:-}"
+
+if [ -z "$DEV" ] || [ ! -b "$DEV" ]; then
+    logger -t tc-external-mount "invalid or missing device: $DEV"
+    exit 1
+fi
+
+# Sanitize the label to a filesystem-safe mount-point name. Anything that
+# isn't alphanumeric or ._- becomes an underscore. Empty label falls back
+# to the device basename.
+if [ -n "$LABEL" ]; then
+    NAME=$(printf '%s' "$LABEL" | tr -c 'A-Za-z0-9._-' '_')
+else
+    NAME=$(basename "$DEV")
+fi
+
+MNT="/media/tc-external/$NAME"
+
+mkdir -p "$MNT"
+
+# systemd-mount --collect creates a transient mount unit that is
+# automatically stopped (and the mount torn down) when the underlying
+# device disappears. --no-block returns immediately so udev doesn't
+# block on the mount completing.
+#
+# Options:
+#   ro       — read-only (this is the invariant Phase 8 relies on)
+#   noexec   — cheap defence against running arbitrary binaries from a
+#              user's USB drive
+#   nosuid   — same
+#   nodev    — no device nodes
+#   uid/gid  — for filesystems that don't have per-file ownership
+#              (vfat, exfat), everything shows up owned by trailcurrent
+#              so the backend can read it without stat-check surprises
+systemd-mount --no-block --collect \
+    --options=ro,noexec,nosuid,nodev,uid=1000,gid=1000 \
+    "$DEV" "$MNT" \
+    || logger -t tc-external-mount "systemd-mount failed for $DEV → $MNT"
+
+logger -t tc-external-mount "mounted $DEV at $MNT (label=$LABEL)"

@@ -14,7 +14,9 @@ docker login
 # 3. Build and push all images
 ./build-and-push.sh
 
-# That's it! All 4 images are now on Docker Hub with :latest tag
+# That's it! All 3 custom images are now on Docker Hub with :latest tag.
+# (Third-party images — mongo, photon, valhalla — are pulled from their
+# upstream registries at build-and-save-images.sh time, not pushed by us.)
 ```
 
 ## Prerequisites
@@ -74,13 +76,19 @@ The `build-and-push.sh` script uses **Docker Buildx** to:
 ./build-and-push.sh
 ```
 
-This will build and push all 4 images to Docker Hub with the `:latest` tag:
+This will build and push all 3 custom images to Docker Hub with the `:latest` tag:
 - Build and push `<username>/trailcurrent-frontend:latest`
 - Build and push `<username>/trailcurrent-backend:latest`
 - Build and push `<username>/trailcurrent-mosquitto:latest`
-- Build and push `<username>/trailcurrent-tile-server:latest`
 
 (Where `<username>` is your Docker Hub username configured in `build-and-push.sh`)
+
+**Third-party images we ship but don't own:**
+- `mongo:7` — Docker Hub official
+- `rtuszik/photon-docker:2.3` — community-maintained Docker packaging of Photon geocoder ([source](https://github.com/rtuszik/photon-docker))
+- `ghcr.io/nilsnolde/docker-valhalla/valhalla:latest` — community-maintained Docker packaging of Valhalla routing engine ([source](https://github.com/nilsnolde/docker-valhalla))
+
+These are pulled fresh from their upstream registries by `build-and-save-images.sh` at package-build time and shipped as tarballs inside the deployment package. They do NOT go into our Docker Hub. See `THIRD_PARTY_LICENSES.md` for licensing.
 
 ## Step-by-Step Setup
 
@@ -90,9 +98,8 @@ Create these **public** repositories on [Docker Hub](https://hub.docker.com):
 - `trailcurrent-frontend`
 - `trailcurrent-backend`
 - `trailcurrent-mosquitto`
-- `trailcurrent-tile-server`
 
-(Just create empty repos, the script will populate them)
+(Just create empty repos, the script will populate them.)
 
 ### 2. Log In to Docker Hub
 
@@ -107,7 +114,7 @@ docker login
 ./build-and-push.sh
 ```
 
-Monitor the output - it will build and push all 4 images with the `:latest` tag.
+Monitor the output - it will build and push all 3 custom images with the `:latest` tag.
 
 ## Verifying Success
 

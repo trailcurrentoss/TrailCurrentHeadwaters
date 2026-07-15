@@ -191,36 +191,5 @@ module.exports = () => {
         }
     });
 
-    // POST /api/ota/upload-firmware - Upload a firmware .bin file
-    router.post('/upload-firmware', express.raw({ type: 'application/octet-stream', limit: '4mb' }), (req, res) => {
-        try {
-            const filename = req.headers['x-firmware-filename'];
-            if (!filename || !filename.endsWith('.bin')) {
-                return res.status(400).json({ error: 'X-Firmware-Filename header required (must end in .bin)' });
-            }
-
-            // Sanitize filename
-            const safeName = path.basename(filename);
-
-            // Ensure firmware directory exists
-            if (!fs.existsSync(FIRMWARE_DIR)) {
-                fs.mkdirSync(FIRMWARE_DIR, { recursive: true });
-            }
-
-            const filePath = path.join(FIRMWARE_DIR, safeName);
-            fs.writeFileSync(filePath, req.body);
-
-            console.log(`[OTA] Firmware uploaded: ${safeName} (${req.body.length} bytes)`);
-            res.json({
-                success: true,
-                filename: safeName,
-                size: req.body.length
-            });
-        } catch (error) {
-            console.error('Error uploading firmware:', error);
-            res.status(500).json({ error: 'Failed to upload firmware' });
-        }
-    });
-
     return router;
 };

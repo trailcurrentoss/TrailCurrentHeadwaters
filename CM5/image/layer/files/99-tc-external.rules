@@ -1,0 +1,21 @@
+# TrailCurrent — auto-mount external USB / SD drives to /media/tc-external/
+#
+# Fires on the ADD of any removable block-device partition that has a
+# filesystem. The mount script (/usr/local/bin/tc-external-mount) uses
+# `systemd-mount --collect` so REMOVE is handled automatically — no
+# separate remove rule needed.
+#
+# Filters:
+#   SUBSYSTEM=="block"           — only block devices
+#   ACTION=="add"                — only on plug-in
+#   ENV{DEVTYPE}=="partition"    — partitions, not whole disks (avoids
+#                                  mounting a raw disk with no FS)
+#   ATTRS{removable}=="1"        — excludes NVMe (boot device on the CM5)
+#                                  and any non-removable eMMC. Includes
+#                                  USB thumb drives, USB HDDs, SD cards
+#   ENV{ID_FS_USAGE}=="filesystem" — skips swap, encrypted, RAID members
+#
+# Anything that passes all four is a normal removable drive with a
+# readable filesystem — safe to mount.
+
+SUBSYSTEM=="block", ACTION=="add", ENV{DEVTYPE}=="partition", ATTRS{removable}=="1", ENV{ID_FS_USAGE}=="filesystem", RUN+="/usr/local/bin/tc-external-mount %E{DEVNAME} %E{ID_FS_LABEL}"

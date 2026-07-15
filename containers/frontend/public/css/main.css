@@ -5051,6 +5051,69 @@ body {
     border-color: var(--danger) !important;
 }
 
+/* Phase 8 — external storage (USB/SD) bundle rows */
+.external-bundle-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border);
+}
+.external-bundle-row:last-child {
+    border-bottom: none;
+}
+.external-bundle-info {
+    flex: 1;
+    min-width: 0;
+}
+.external-bundle-name {
+    color: var(--text-primary);
+    font-size: 0.95rem;
+    font-weight: 500;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.external-bundle-meta {
+    color: var(--text-secondary);
+    font-size: 0.8rem;
+    margin-top: 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+@keyframes external-shimmer {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+}
+
+/* Third-party licenses viewer in Settings. `pre` because THIRD_PARTY_LICENSES.md
+   is plain markdown displayed as-is — avoids pulling in a markdown parser
+   for a screen most users will never open. */
+.licenses-controls {
+    margin-top: 10px;
+}
+.licenses-content {
+    margin-top: 12px;
+    padding: 12px 14px;
+    max-height: 60vh;
+    overflow-y: auto;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text-primary);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.78rem;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+}
+.licenses-content.hidden {
+    display: none;
+}
+
 /* ─── Playbill remote-control page ─────────────────────────────────────── */
 
 .page-playbill {

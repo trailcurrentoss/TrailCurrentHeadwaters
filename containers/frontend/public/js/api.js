@@ -367,23 +367,6 @@ class API {
         return this.request('/ota/firmware');
     }
 
-    static async uploadFirmware(file) {
-        const url = `${API_BASE}/ota/upload-firmware`;
-        const token = AuthStore.getToken();
-        const response = await fetch(url, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/octet-stream',
-                'X-Firmware-Filename': file.name,
-                ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-            },
-            body: file
-        });
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.error || 'Upload failed');
-        return data;
-    }
-
     // Discovery
     static async startDiscovery() {
         return this.request('/discovery/start', { method: 'POST' });
@@ -463,6 +446,22 @@ class API {
 
     static async cancelMapUpload(id) {
         return this.request(`/maps/cancel/${encodeURIComponent(id)}`, { method: 'POST' });
+    }
+
+    // Phase 8 — sneakernet load path. Scans for map bundles on connected
+    // external drives (USB / SD) auto-mounted under /media/tc-external/.
+    // Returns [{path, name, size, mountpoint, mtime}].
+    static async scanExternalMaps() {
+        return this.request('/maps/scan-external');
+    }
+
+    // Copies a bundle from an external drive into staging. Same downstream
+    // flow as PWA upload — MAPS_AVAILABLE fires, map-watcher applies.
+    static async importExternalMap(path) {
+        return this.request('/maps/import-external', {
+            method: 'POST',
+            body: JSON.stringify({ path })
+        });
     }
 
     // Routing (Valhalla via backend proxy)

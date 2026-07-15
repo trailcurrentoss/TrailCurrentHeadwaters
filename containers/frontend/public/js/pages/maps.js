@@ -71,6 +71,30 @@ export const mapsPage = {
                         </div>
                     </div>
 
+                    <!-- Load from external storage (Phase 8 sneakernet).
+                         Hidden entirely when the poll finds nothing plugged in
+                         — this card only ever appears when there's something
+                         actionable, so the page stays clean by default. -->
+                    <div class="card settings-item-vertical hidden" id="external-storage-card">
+                        <div class="settings-item-header">
+                            <span class="settings-label">Load from external storage</span>
+                            <p class="settings-description">
+                                Bundle detected on a connected USB drive or SD card.
+                                Importing copies to the device at NVMe speed
+                                (5–10 min for California, ~30 min for North America)
+                                — much faster than uploading over Wi-Fi.
+                            </p>
+                        </div>
+                        <div id="external-bundles-list"></div>
+                        <div id="external-import-progress" class="hidden" style="margin-top: 0.75rem;">
+                            <div class="upload-progress-bar">
+                                <div class="upload-progress-fill" id="external-import-progress-fill"></div>
+                            </div>
+                            <span id="external-import-progress-text" class="settings-description">Preparing…</span>
+                        </div>
+                        <div id="external-import-message" class="password-message hidden" style="margin-top: 0.5rem;"></div>
+                    </div>
+
                     <!-- Upload form -->
                     <div class="card settings-item-vertical">
                         <div class="settings-item-header">
@@ -124,6 +148,12 @@ export const mapsPage = {
         // Real-time status updates from map-watcher via WebSocket
         this._wsHandler = (data) => this.handleStatusUpdate(data);
         wsClient.on('map_status', this._wsHandler);
+
+        // Phase 8 — poll for external-storage bundles every 10 s while the
+        // page is open. First scan runs immediately; the card only shows up
+        // when at least one bundle is found.
+        this.scanExternalNow();
+        this._externalPoll = setInterval(() => this.scanExternalNow(), 10_000);
     },
 
     handleStatusUpdate(data) {
@@ -416,6 +446,112 @@ export const mapsPage = {
         });
     },
 
+    // --- Phase 8: sneakernet (USB/SD) load path -----------------------------
+
+    async scanExternalNow() {
+        // Polled every 10s. Silent no-op on error; the card just doesn't
+        // appear if the backend can't scan (e.g. host-root mount not
+        // available in a dev-machine setup).
+        let results = [];
+        try {
+            const resp = await API.scanExternalMaps();
+            results = (resp && Array.isArray(resp.results)) ? resp.results : [];
+        } catch (err) {
+            console.warn('[maps] external scan failed:', err);
+            return;
+        }
+        this.renderExternalBundles(results);
+    },
+
+    renderExternalBundles(results) {
+        const card = document.getElementById('external-storage-card');
+        const listEl = document.getElementById('external-bundles-list');
+        if (!card || !listEl) return;
+
+        if (!results || results.length === 0) {
+            card.classList.add('hidden');
+            listEl.innerHTML = '';
+            return;
+        }
+        card.classList.remove('hidden');
+        listEl.innerHTML = results.map((b, i) => `
+            <div class="external-bundle-row">
+                <div class="external-bundle-info">
+                    <div class="external-bundle-name">${this.escapeText(b.name || '')}</div>
+                    <div class="external-bundle-meta">
+                        ${formatFileSize(b.size)} &middot; ${this.escapeText(b.mountpoint || '')}
+                        ${b.mtime ? ' &middot; ' + formatDate(b.mtime) : ''}
+                    </div>
+                </div>
+                <button type="button" class="password-submit-btn external-import-btn"
+                        data-idx="${i}" style="width: auto; padding: 6px 14px;">
+                    Import
+                </button>
+            </div>
+        `).join('');
+        listEl.querySelectorAll('.external-import-btn').forEach((btn) => {
+            btn.addEventListener('click', () => {
+                const idx = parseInt(btn.dataset.idx, 10);
+                const b = results[idx];
+                if (b) this.importExternalBundle(b);
+            });
+        });
+    },
+
+    async importExternalBundle(bundle) {
+        const progressContainer = document.getElementById('external-import-progress');
+        const progressFill = document.getElementById('external-import-progress-fill');
+        const progressText = document.getElementById('external-import-progress-text');
+        const messageEl = document.getElementById('external-import-message');
+        const buttons = document.querySelectorAll('.external-import-btn');
+        if (!progressContainer || !messageEl) return;
+
+        buttons.forEach(b => b.disabled = true);
+        messageEl.classList.add('hidden');
+        messageEl.classList.remove('success', 'error');
+        progressContainer.classList.remove('hidden');
+        progressFill.style.width = '0%';
+        progressText.textContent = `Copying ${bundle.name} to device…`;
+
+        // The backend copies synchronously and returns when done. There's
+        // no progress-during-copy signal today; we show an indeterminate
+        // "in progress" state and let the map-watcher status stream take
+        // over once the copy completes and MAPS_AVAILABLE fires.
+        progressFill.style.width = '100%';
+        progressFill.style.background = 'linear-gradient(90deg, var(--primary), var(--primary), transparent)';
+        progressFill.style.backgroundSize = '200% 100%';
+        progressFill.style.animation = 'external-shimmer 1.2s linear infinite';
+
+        try {
+            const resp = await API.importExternalMap(bundle.path);
+            messageEl.textContent = `Copied to device. Verifying + extracting will follow — status shows below.`;
+            messageEl.classList.remove('hidden', 'error');
+            messageEl.classList.add('success');
+            progressText.textContent = 'Copy complete';
+            progressFill.style.animation = '';
+            // Refresh the uploads list so the new external row appears.
+            this.loadUploads();
+        } catch (err) {
+            console.error('[maps] external import failed:', err);
+            messageEl.textContent = `Import failed: ${err.message || err}`;
+            messageEl.classList.remove('hidden', 'success');
+            messageEl.classList.add('error');
+            progressContainer.classList.add('hidden');
+            progressFill.style.animation = '';
+        } finally {
+            buttons.forEach(b => b.disabled = false);
+        }
+    },
+
+    // Small XSS-safe text helper for external-bundle rendering. We can't
+    // reuse the top-level escapeHtml because it lives at module scope and
+    // some rows go through innerHTML.
+    escapeText(s) {
+        return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
+            '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+        }[c]));
+    },
+
     cleanup() {
         if (this._wsHandler) {
             wsClient.off('map_status', this._wsHandler);
@@ -424,6 +560,10 @@ export const mapsPage = {
         if (this._currentXhr) {
             try { this._currentXhr.abort(); } catch (_) { /* ignore */ }
             this._currentXhr = null;
+        }
+        if (this._externalPoll) {
+            clearInterval(this._externalPoll);
+            this._externalPoll = null;
         }
         this._uploadInFlight = false;
         uploadsList = [];

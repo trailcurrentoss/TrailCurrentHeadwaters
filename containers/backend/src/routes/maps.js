@@ -17,6 +17,21 @@ const STAGING_DIR = path.join(MAPS_ROOT, 'staging');
 const VERSIONS_DIR = path.join(MAPS_ROOT, 'versions');
 const CURRENT_LINK = path.join(MAPS_ROOT, 'current');
 
+// Host filesystem is read-only mounted at /host/root by docker-compose
+// (originally for system-stats disk usage; reused here). External USB/SD
+// drives auto-mount under /media/tc-external/<label>/ via the udev rule
+// baked into the CM5 image. Backend scans those paths for map bundles
+// and reads bytes directly during import.
+const HOST_ROOT = '/host/root';
+const EXTERNAL_MOUNT_DIRS = [
+    // Preferred location — matches the CM5 layer YAML's udev rule target
+    'media/tc-external',
+    // Fallbacks for dev-machine testing OR if a user manually mounts
+    'media',
+    'mnt',
+    'run/media'
+];
+
 module.exports = (db) => {
     const mapsUploads = db.collection('map_uploads');
 
@@ -329,5 +344,232 @@ module.exports = (db) => {
         }
     });
 
+    // --- Phase 8: sneakernet (USB / SD) load path ---------------------------
+    //
+    // Parallel inbound leg to PWA upload. Same downstream flow — bundle
+    // lands in staging/<uuid>.zip, MAPS_AVAILABLE is published, map-watcher
+    // does the rest. Only difference is where the source bytes come from.
+
+    // GET /api/maps/scan-external
+    //
+    // Walks the mount points where udev auto-mounts external drives and
+    // returns any file matching `maps-*.zip` in the root of each mount
+    // (and one level down, to catch bundles the user dropped in a folder).
+    // Returns [{path, name, size, mountpoint, mtime}].
+    router.get('/scan-external', async (req, res) => {
+        const results = [];
+        const seen = new Set();       // dedupe if a bundle shows through
+                                       // multiple listed roots (e.g. /media
+                                       // and /media/tc-external overlap)
+        for (const relRoot of EXTERNAL_MOUNT_DIRS) {
+            const scanRoot = path.join(HOST_ROOT, relRoot);
+            let mountEntries;
+            try {
+                mountEntries = fs.readdirSync(scanRoot, { withFileTypes: true });
+            } catch (_) { continue; }  // dir doesn't exist — skip silently
+
+            for (const mnt of mountEntries) {
+                if (!mnt.isDirectory()) continue;
+                const mountPath = path.join(scanRoot, mnt.name);
+                // Scan the mount root + one level of subdirs. Deeper walks
+                // are too slow on a big USB drive and would surprise users.
+                for (const searchDepth of [mountPath, ...subdirs(mountPath, 1)]) {
+                    let entries;
+                    try {
+                        entries = fs.readdirSync(searchDepth, { withFileTypes: true });
+                    } catch (_) { continue; }
+                    for (const f of entries) {
+                        if (!f.isFile()) continue;
+                        if (!/^maps-.*\.zip$/i.test(f.name)) continue;
+                        const full = path.join(searchDepth, f.name);
+                        if (seen.has(full)) continue;
+                        seen.add(full);
+                        try {
+                            const st = fs.statSync(full);
+                            results.push({
+                                // Absolute host path (with the /host/root prefix
+                                // stripped) — this is what /import-external
+                                // will accept. Keeping the strip explicit means
+                                // the client never sees /host/root in URLs.
+                                path: full.slice(HOST_ROOT.length) || '/',
+                                name: f.name,
+                                size: st.size,
+                                mountpoint: '/' + relRoot + '/' + mnt.name,
+                                mtime: st.mtime.toISOString()
+                            });
+                        } catch (_) { /* stat failed — skip */ }
+                    }
+                }
+            }
+        }
+        // Newest first — the user just plugged in the drive, they probably
+        // want the freshest bundle.
+        results.sort((a, b) => (b.mtime || '').localeCompare(a.mtime || ''));
+        res.json({ results });
+    });
+
+    // POST /api/maps/import-external
+    // Body: { path: "/media/tc-external/<label>/maps-<date>.zip" }
+    //
+    // Streams the file from the read-only host mount into staging, hashing
+    // as it goes. Same shape as the upload finish handler once the copy
+    // completes: chown to trailcurrent, insert Mongo record, publish
+    // MAPS_AVAILABLE. Map-watcher handles verify + extract + apply from
+    // there — indistinguishable from a PWA upload.
+    router.post('/import-external', express.json(), (req, res) => {
+        const body = req.body || {};
+        const clientPath = String(body.path || '');
+        // Defence against path traversal — the source MUST live under one
+        // of our expected external mount roots. Anything else (e.g.
+        // /etc/passwd or /root/.ssh) is rejected without touching disk.
+        if (!clientPath.startsWith('/')) {
+            return res.status(400).json({ error: 'path must be absolute' });
+        }
+        if (clientPath.includes('/..')) {
+            return res.status(400).json({ error: 'path may not contain ..' });
+        }
+        const inWhitelist = EXTERNAL_MOUNT_DIRS.some(
+            (r) => clientPath.startsWith('/' + r + '/')
+        );
+        if (!inWhitelist) {
+            return res.status(400).json({
+                error: 'path is not under a recognized external mount root'
+            });
+        }
+        const srcPath = path.join(HOST_ROOT, clientPath);
+        let srcStat;
+        try {
+            srcStat = fs.statSync(srcPath);
+        } catch (err) {
+            return res.status(404).json({ error: 'source file not found' });
+        }
+        if (!srcStat.isFile()) {
+            return res.status(400).json({ error: 'source is not a regular file' });
+        }
+        if (!/\.zip$/i.test(srcPath)) {
+            return res.status(400).json({ error: 'source must be a .zip' });
+        }
+
+        try { fs.mkdirSync(STAGING_DIR, { recursive: true }); } catch (_) {}
+
+        const originalName = path.basename(clientPath);
+        const uuid = randomUUID();
+        const savedFilename = `${uuid}.zip`;
+        const destPath = path.join(STAGING_DIR, savedFilename);
+        const hash = crypto.createHash('sha256');
+
+        const rs = fs.createReadStream(srcPath, { highWaterMark: 4 * 1024 * 1024 });
+        const ws = fs.createWriteStream(destPath);
+
+        // Chown the destination immediately so a killed-mid-copy partial
+        // still lands trailcurrent-owned — same defence-in-depth as the
+        // upload path. See feedback_docker_volume_root_ownership + the
+        // deploy.sh preflight for the wider story.
+        if (targetUid !== null && targetGid !== null) {
+            try { fs.chownSync(destPath, targetUid, targetGid); }
+            catch (_) { /* non-fatal */ }
+        }
+
+        let bytesCopied = 0;
+        let responded = false;
+
+        rs.on('data', (chunk) => {
+            hash.update(chunk);
+            bytesCopied += chunk.length;
+        });
+
+        const cleanup = () => {
+            try { rs.destroy(); } catch (_) {}
+            try { ws.destroy(); } catch (_) {}
+            try { fs.unlinkSync(destPath); } catch (_) {}
+        };
+
+        rs.on('error', (err) => {
+            console.error('[maps] external-import read error:', err.message);
+            cleanup();
+            if (!responded) {
+                responded = true;
+                res.status(500).json({ error: 'read failed', detail: err.message });
+            }
+        });
+        ws.on('error', (err) => {
+            console.error('[maps] external-import write error:', err.message);
+            cleanup();
+            if (!responded) {
+                responded = true;
+                res.status(500).json({ error: 'write failed', detail: err.message });
+            }
+        });
+        ws.on('finish', async () => {
+            if (responded) return;
+            try {
+                const sha256 = hash.digest('hex');
+                // Second-chance chown after the file has all bytes — belt
+                // and suspenders against a race where the first chown ran
+                // before the file was created.
+                if (targetUid !== null && targetGid !== null) {
+                    try { fs.chownSync(destPath, targetUid, targetGid); }
+                    catch (_) {}
+                }
+                const doc = {
+                    id: uuid,
+                    filename: savedFilename,
+                    originalName,
+                    size: bytesCopied,
+                    sha256,
+                    uploadedAt: new Date(),
+                    status: 'uploaded',
+                    source: 'external'         // distinguishes this from PWA-upload
+                                                // rows in the recent-uploads list
+                };
+                const result = await mapsUploads.insertOne(doc);
+                doc._id = result.insertedId;
+
+                mqttService.publishLocalMapsAvailable({
+                    id: doc.id,
+                    filename: savedFilename,
+                    originalName: doc.originalName,
+                    size: doc.size,
+                    sha256: doc.sha256,
+                    timestamp: doc.uploadedAt.toISOString()
+                });
+
+                responded = true;
+                res.json({
+                    id: doc.id,
+                    filename: doc.originalName,
+                    size: doc.size,
+                    sha256: doc.sha256,
+                    source: 'external'
+                });
+            } catch (err) {
+                console.error('[maps] external-import metadata save failed:', err);
+                cleanup();
+                if (!responded) {
+                    responded = true;
+                    res.status(500).json({ error: 'Failed to save import' });
+                }
+            }
+        });
+
+        rs.pipe(ws);
+    });
+
     return router;
 };
+
+// Return absolute-path subdirs of `dir` up to `maxDepth` deep. Used by
+// /scan-external to look one level down inside each mount for a bundle
+// the user might have stashed in a folder.
+function subdirs(dir, maxDepth) {
+    if (maxDepth <= 0) return [];
+    let entries;
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); }
+    catch (_) { return []; }
+    const out = [];
+    for (const e of entries) {
+        if (!e.isDirectory()) continue;
+        out.push(path.join(dir, e.name));
+    }
+    return out;
+}

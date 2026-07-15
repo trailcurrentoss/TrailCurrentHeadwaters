@@ -73,3 +73,6 @@ build/maps/dist/
 
 # Stray mktemp-style temp files from deployment package generation
 zi[A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9][A-Za-z0-9]
+
+# Auto-synced from repo-root THIRD_PARTY_LICENSES.md by build-and-save-images.sh
+containers/frontend/public/THIRD_PARTY_LICENSES.md

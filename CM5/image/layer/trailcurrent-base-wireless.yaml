@@ -303,6 +303,15 @@ mmdebstrap:
       WantedBy=multi-user.target
       EOF
 
+    # ── Phase 8: sneakernet — auto-mount USB / SD drives ───────────────
+    # udev rule + mount script that hands external drives to
+    # `systemd-mount --collect`, which creates a transient RO mount at
+    # /media/tc-external/<label>/. Backend's /api/maps/scan-external
+    # reads this path (via the /host/root:ro bind) to detect bundles.
+    - install -m 755 "$SRCROOT/layer/files/tc-external-mount" "$1/usr/local/bin/tc-external-mount"
+    - install -m 644 "$SRCROOT/layer/files/99-tc-external.rules" "$1/etc/udev/rules.d/99-tc-external.rules"
+    - mkdir -p "$1/media/tc-external"
+
     # ── Docker image loader service (runs once after Docker starts) ───
     - install -m 755 "$SRCROOT/layer/files/trailcurrent-load-images.sh" "$1/usr/local/bin/trailcurrent-load-images.sh"
     - |
@@ -399,6 +408,43 @@ mmdebstrap:
       ExecStart=/home/$IGconf_device_user1/local_code/cantomqtt/bin/python /home/$IGconf_device_user1/local_code/deployment-watcher.py
       Restart=always
       RestartSec=10
+
+      [Install]
+      WantedBy=multi-user.target
+      SVCEOF
+
+    # ── map-watcher systemd service ──────────────────────────────────
+    # Sibling of deployment-watcher, dedicated to map bundles. Must be
+    # baked into the image (not left to deploy.sh Step 6.2) so a freshly
+    # flashed CM5 that never receives an OTA can still accept a first-
+    # time map upload from the PWA. If this service isn't running, the
+    # MAPS_AVAILABLE MQTT event fires into the void and the upload
+    # never progresses past "uploaded" state.
+    - |
+      cat > "$1/etc/systemd/system/map-watcher.service" << SVCEOF
+      [Unit]
+      Description=TrailCurrent Map Watcher
+      After=docker.service network-online.target
+      Requires=docker.service
+      Wants=network-online.target
+      ConditionPathExists=/home/$IGconf_device_user1/local_code/map-watcher.py
+
+      [Service]
+      Type=simple
+      User=$IGconf_device_user1
+      Group=$IGconf_device_user1
+      WorkingDirectory=/home/$IGconf_device_user1/local_code
+      EnvironmentFile=/home/$IGconf_device_user1/local_code/.env
+      ExecStart=/home/$IGconf_device_user1/local_code/cantomqtt/bin/python /home/$IGconf_device_user1/local_code/map-watcher.py
+      Restart=always
+      RestartSec=10
+
+      # Security: the watcher must never write outside data/maps/.
+      # Combined with the bake-time ownership invariant above, this is
+      # the map path's total blast radius.
+      ProtectSystem=strict
+      ReadWritePaths=/home/$IGconf_device_user1/data/maps /tmp
+      NoNewPrivileges=true
 
       [Install]
       WantedBy=multi-user.target
@@ -536,7 +582,7 @@ mmdebstrap:
     - install -m 644 "$SRCROOT/layer/files/motd" "$1/etc/motd"
 
     # ── Enable all services ──────────────────────────────────────────
-    - $BDEBSTRAP_HOOKS/enable-units "$1" can0 disable-usb cpu-performance docker trailcurrent-firstboot trailcurrent-load-images trailcurrent-compose-up cantomqtt discovery-mdns deployment-watcher os-settings trailcurrent-setup-ap chrony time-from-bearing
+    - $BDEBSTRAP_HOOKS/enable-units "$1" can0 disable-usb cpu-performance docker trailcurrent-firstboot trailcurrent-load-images trailcurrent-compose-up cantomqtt discovery-mdns deployment-watcher map-watcher os-settings trailcurrent-setup-ap chrony time-from-bearing
 
     # ── Add default user to docker group ─────────────────────────────
     - chroot "$1" usermod -aG docker "$IGconf_device_user1"

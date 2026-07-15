@@ -8,12 +8,87 @@ Dockerized edge gateway with MQTT broker, tile server, and local dashboards. Par
 
 | I want to... | Go here |
 |--------------|---------|
+| Go from `git clone` to a running vehicle end-to-end | [Build a Headwaters machine from scratch](#build-a-headwaters-machine-from-scratch) below |
 | Set up a development environment | [Development Setup](#development-setup) below |
 | Build a CM5 image or deployment package | [Building for CM5 Devices](#building-for-cm5-devices) below |
 | Flash and set up a new CM5 device | [CM5/SETUP.md](CM5/SETUP.md) |
 | Update an existing device | [PI_DEPLOYMENT.md](PI_DEPLOYMENT.md) |
+| Upload / update map data | [DOCS/UpdatingMaps.md](DOCS/UpdatingMaps.md) |
 | Understand cloud OTA updates | [OTA_DEPLOYMENT_IMPLEMENTATION.md](OTA_DEPLOYMENT_IMPLEMENTATION.md#cloud-to-pi-ota-deployment-deployment-watcher) |
 | See third-party licenses & attribution | [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) |
+
+## Build a Headwaters machine from scratch
+
+The complete path from `git clone` to a running in-vehicle device. Follow the steps in order — each one links out to a topic doc for full detail.
+
+### 1. Assemble the hardware
+
+- **Compute module:** Raspberry Pi Compute Module 5 (CM5), **WiFi variant required** — out-of-box setup uses a captive-portal WiFi AP hosted by the module.
+- **Carrier + HAT:** standard CM5 IO Wireless-Base OR CM5 IO Base + Waveshare RS485 CAN HAT (B). See [CM5/SETUP.md](CM5/SETUP.md) for wiring detail and part numbers.
+- **Storage:** **512 GB or 1 TB NVMe** — a full North America map bundle is ~130 GB and the device keeps one retained previous version for rollback, so budget for both.
+- **Power + case + cables:** see the BOM in [CM5/SETUP.md](CM5/SETUP.md).
+
+### 2. Set up the build machine
+
+- Docker Engine + Docker Compose v2 plugin + `buildx`
+- ~600 GB free working disk if you'll build a North America map bundle; less for smaller regions
+- Linux, macOS (Apple Silicon works — every image we pull publishes `linux/arm64`), or Windows via WSL2
+- `git clone` this repo
+
+### 3. Build the CM5 rootfs image
+
+The CM5 boots from a self-contained image — no network required at first boot, everything (containers, systemd units, Python deps) baked in.
+
+- From repo root: `sudo ./CM5/image/build.sh` — produces `.img` files for both variants (Base HAT + Wireless-Base).
+- Detail: [CM5/image/README.md](CM5/image/README.md).
+
+### 4. Build the initial map bundle (optional at first boot)
+
+Bundles are region-scoped. Build now if you know what region you want; skip if you'd rather do it after the device is up.
+
+- `./build/maps/build.sh --region north-america` (or `california` / `united-states` / etc.)
+- Detail: [build/maps/README.md](build/maps/README.md).
+
+### 5. Flash the CM5
+
+- Boot-switch position, `rpiboot` command, verifying the flash. Full walkthrough in [CM5/SETUP.md](CM5/SETUP.md).
+- **The CM5 image does NOT include a map bundle by design** — first boot is a map-less-but-healthy state. Map install happens in step 8.
+
+### 6. First boot + captive-portal setup
+
+- Power on. Wait ~30 seconds. The device brings up a WiFi AP named `Headwaters-XXXX`.
+- Join with a phone. A setup portal opens automatically (or navigate to `http://172.20.0.1/`).
+- Enter your Wi-Fi credentials (SSID + password). Device saves them and reboots.
+- After reboot, find the device via mDNS at `https://headwaters.local/` (or check your router for the IP).
+- Detail: [CM5/SETUP.md](CM5/SETUP.md).
+
+### 7. First-time software deploy (optional — image already has everything)
+
+The CM5 image is fully self-contained. Deploy is only needed to push newer versions of the app than what shipped with the image. Skip on a fresh flash unless you're iterating.
+
+- Build a deployment package on the dev machine: `./create-deployment-package.sh --version=X.Y.Z`
+- Upload via the PWA's **Deployments** page.
+- Detail: [PI_DEPLOYMENT.md](PI_DEPLOYMENT.md) and [OTA_DEPLOYMENT_IMPLEMENTATION.md](OTA_DEPLOYMENT_IMPLEMENTATION.md).
+
+### 8. Install maps
+
+- If you didn't build a bundle in step 4, build one now.
+- Open the PWA → **Maps** page → **Upload Map Bundle** → pick the `.zip`.
+- Watch progress; device applies automatically. Full detail (region change, rollback, troubleshooting): [DOCS/UpdatingMaps.md](DOCS/UpdatingMaps.md).
+
+### 9. Ongoing updates — two independent pipelines
+
+- **Software updates (code, containers, config):** rebuild a deployment package on the dev machine → upload via the PWA **Deployments** page. See [PI_DEPLOYMENT.md](PI_DEPLOYMENT.md).
+- **Map data updates (fresh OSM extract, new region):** rebuild a bundle → upload via the PWA **Maps** page. See [DOCS/UpdatingMaps.md](DOCS/UpdatingMaps.md).
+
+These are intentionally separate. Map bundles are 90–130 GB and refresh on OSM's cadence; software releases are ~100 MB and ship on our cadence. Coupling them would either force every code deploy to carry the maps or hold up a map refresh waiting on a code release.
+
+### 10. Troubleshooting
+
+- **Device never appears on the network** — the WiFi credentials didn't stick, or the AP was skipped. Power-cycle; the `Headwaters-XXXX` AP should reappear.
+- **Map area shows "No map data installed"** after a bundle upload — reload the PWA (the map component caches the no-bundle state on load). If it persists, check the Maps page for the latest upload's status.
+- **Search returns nothing / route request fails** — the `photon` or `valhalla` container may not have started. Force it: SSH to the device once and run `docker compose --profile maps up -d photon valhalla`. This is only needed if `deploy.sh`'s auto-start step didn't fire, which is rare after the Phase 7 fixes landed.
+- Full failure catalog is in each topic doc — Maps issues in [DOCS/UpdatingMaps.md](DOCS/UpdatingMaps.md#troubleshooting), boot/network issues in [CM5/SETUP.md](CM5/SETUP.md), deployment issues in [PI_DEPLOYMENT.md](PI_DEPLOYMENT.md).
 
 ## Prerequisites
 

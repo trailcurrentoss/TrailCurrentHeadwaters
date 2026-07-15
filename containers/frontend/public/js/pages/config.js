@@ -30,30 +30,6 @@ export const configPage = {
             <section class="page-config">
                 <h1 class="section-title">Configuration</h1>
 
-                <!-- Firmware Management Section -->
-                <div class="card ota-testing-card">
-                    <div class="ota-testing-section">
-                        <h2 class="subsection-title">Firmware Management</h2>
-                        <p class="ota-testing-description">Upload firmware files and update modules</p>
-
-                        <div class="ota-form-group">
-                            <label class="form-label">Upload Firmware</label>
-                            <input type="file" id="firmware-file-input" accept=".bin" class="form-input" style="padding: 8px;">
-                            <p class="form-hint">Select a .bin firmware file to upload</p>
-                        </div>
-
-                        <div class="ota-form-actions">
-                            <button class="ota-trigger-btn" id="firmware-upload-btn" disabled>
-                                Upload Firmware
-                            </button>
-                        </div>
-
-                        <div id="firmware-list" class="firmware-list"></div>
-
-                        <div id="ota-message" class="ota-message hidden"></div>
-                    </div>
-                </div>
-
                 <!-- Wireless Configuration Section -->
                 <div class="card wireless-config-card">
                     <div class="wireless-config-section">
@@ -303,10 +279,8 @@ export const configPage = {
 
             // Setup listeners
             this.setupListeners();
-            this.setupFirmwareListeners();
             this.setupWirelessListeners();
             this.loadWirelessConfig();
-            this.loadFirmwareList();
             this.setupOtaProgressListener();
         } catch (error) {
             console.error('Failed to load configuration:', error);
@@ -314,21 +288,6 @@ export const configPage = {
             if (configEl) {
                 configEl.innerHTML = '<p style="color: var(--danger);">Failed to load configuration. Please try refreshing the page.</p>';
             }
-        }
-    },
-
-    setupFirmwareListeners() {
-        const fileInput = document.getElementById('firmware-file-input');
-        const uploadBtn = document.getElementById('firmware-upload-btn');
-
-        if (fileInput) {
-            fileInput.addEventListener('change', () => {
-                if (uploadBtn) uploadBtn.disabled = !fileInput.files.length;
-            });
-        }
-
-        if (uploadBtn) {
-            uploadBtn.addEventListener('click', () => this.handleFirmwareUpload());
         }
     },
 
@@ -356,67 +315,24 @@ export const configPage = {
         wsClient.on('ota_progress', otaProgressListener);
     },
 
-    async handleFirmwareUpload() {
-        const fileInput = document.getElementById('firmware-file-input');
-        const uploadBtn = document.getElementById('firmware-upload-btn');
-        if (!fileInput.files.length) return;
-
-        uploadBtn.disabled = true;
-        uploadBtn.textContent = 'Uploading...';
-        this.clearOtaMessage();
-
-        try {
-            const result = await API.uploadFirmware(fileInput.files[0]);
-            this.showOtaMessage(`Uploaded ${result.filename} (${result.size} bytes)`, 'success');
-            fileInput.value = '';
-            this.loadFirmwareList();
-        } catch (error) {
-            this.showOtaMessage(error.message || 'Upload failed', 'error');
-        } finally {
-            uploadBtn.disabled = true;
-            uploadBtn.textContent = 'Upload Firmware';
-        }
-    },
-
-    async loadFirmwareList() {
-        try {
-            const files = await API.listFirmware();
-            const listEl = document.getElementById('firmware-list');
-            if (!listEl) return;
-
-            if (files.length === 0) {
-                listEl.innerHTML = '<p class="form-hint" style="margin-top: 12px;">No firmware files uploaded yet</p>';
-                return;
-            }
-
-            listEl.innerHTML = `
-                <div style="margin-top: 12px;">
-                    <label class="form-label">Available Firmware</label>
-                    ${files.map(f => `
-                        <div class="firmware-file-item">
-                            <span class="firmware-filename">${escapeHtml(f.filename)}</span>
-                            <span class="firmware-size">${(f.size / 1024).toFixed(0)} KB</span>
-                        </div>
-                    `).join('')}
-                </div>
-            `;
-        } catch (error) {
-            console.error('Failed to load firmware list:', error);
-        }
-    },
-
     async handleModuleOta(module, moduleIndex) {
-        // Get available firmware files
+        const statusEl = document.getElementById(`ota-status-${moduleIndex}`);
+        const showStatus = (msg, cls) => {
+            if (!statusEl) return;
+            statusEl.textContent = msg;
+            statusEl.className = cls ? `module-ota-status ${cls}` : 'module-ota-status';
+        };
+
         let files;
         try {
             files = await API.listFirmware();
         } catch (err) {
-            this.showOtaMessage('Failed to load firmware list', 'error');
+            showStatus('Failed to load firmware list', 'ota-error');
             return;
         }
 
         if (!files.length) {
-            this.showOtaMessage('No firmware files available. Upload a .bin file first.', 'error');
+            showStatus('No firmware available — upload via Deployments', 'ota-error');
             return;
         }
 
@@ -436,20 +352,14 @@ export const configPage = {
 
         if (!confirm(`Update ${module.name} (${module.hostname}) with ${firmwareFile}?`)) return;
 
-        const statusEl = document.getElementById(`ota-status-${moduleIndex}`);
-        if (statusEl) {
-            statusEl.textContent = 'Triggering OTA...';
-            statusEl.className = 'module-ota-status';
-        }
+        showStatus('Triggering OTA...');
+        if (statusEl) statusEl.classList.remove('hidden');
 
         try {
             await API.triggerOta(module.hostname, firmwareFile, module.wireless === true);
             // Progress updates will come via WebSocket
         } catch (error) {
-            if (statusEl) {
-                statusEl.textContent = 'OTA trigger failed: ' + error.message;
-                statusEl.classList.add('ota-error');
-            }
+            showStatus('OTA trigger failed: ' + error.message, 'ota-error');
         }
     },
 
@@ -542,29 +452,6 @@ export const configPage = {
 
     clearWirelessMessage() {
         const messageEl = document.getElementById('wireless-message');
-        if (messageEl) {
-            messageEl.classList.add('hidden');
-        }
-    },
-
-    showOtaMessage(message, type) {
-        const messageEl = document.getElementById('ota-message');
-        if (messageEl) {
-            messageEl.textContent = message;
-            messageEl.className = `ota-message ${type}`;
-            messageEl.classList.remove('hidden');
-
-            // Auto-hide success messages after 4 seconds
-            if (type === 'success') {
-                setTimeout(() => {
-                    messageEl.classList.add('hidden');
-                }, 4000);
-            }
-        }
-    },
-
-    clearOtaMessage() {
-        const messageEl = document.getElementById('ota-message');
         if (messageEl) {
             messageEl.classList.add('hidden');
         }

@@ -4,6 +4,17 @@
 
 The MCU firmware OTA (Over-The-Air) deployment system has been successfully implemented and thoroughly tested. The system automatically updates MCU devices when firmware is included in a deployment package.
 
+### Two independent OTA pipelines
+
+TrailCurrent Headwaters ships with **two independent OTA pipelines**, both triggered from the PWA but with different domains:
+
+1. **Deployment OTA** (this document) — ships code, containers, config, MCU firmware. Triggered from the PWA **Deployments** page. Watched on-device by `deployment-watcher.service`. Runs `deploy.sh` on the CM5 to apply.
+2. **Map bundle OTA** — ships map tiles + geocoding index + routing tiles. Triggered from the PWA **Maps** page. Watched on-device by `map-watcher.service`. Applies via atomic-rename + symlink swap, no `deploy.sh` involvement.
+
+The two pipelines share the auth model (Bearer / API-key middleware) and the streamed-upload + SHA256 + MongoDB metadata pattern, but nothing else. They deliberately don't share state, storage paths, MQTT topics, MongoDB collections, or systemd units. **Map data updates run on OSM's cadence; software updates run on ours** — coupling them would either force every code deploy to carry 100+ GB of tiles or hold up a map refresh waiting for a software release.
+
+See [DOCS/UpdatingMaps.md](DOCS/UpdatingMaps.md) for the map bundle pipeline. This document covers only the deployment/firmware pipeline.
+
 ## Critical Fixes Applied (Feb 2026)
 
 Three critical issues were discovered and resolved during testing to make OTA deployment fully functional:

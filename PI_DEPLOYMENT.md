@@ -11,10 +11,13 @@ This document covers two scenarios:
 
 **For initial device setup** (flashing a new CM5 and completing the
 captive-portal setup from a phone), see [CM5/SETUP.md](CM5/SETUP.md). The
-CM5 image includes all application code, Docker images, and map tiles
-baked in — no deployment package transfer is needed for a fresh device,
-and **no SSH, keyboard, or monitor is required or supported for initial
-setup**. The CM5 must be the WiFi variant.
+CM5 image includes all application code, Docker images, systemd units,
+and Python dependencies baked in — **map data is not baked in**; it's
+uploaded via the PWA Maps page after first boot (see
+[DOCS/UpdatingMaps.md](DOCS/UpdatingMaps.md)). No deployment package
+transfer is needed for a fresh device, and **no SSH, keyboard, or monitor
+is required or supported for initial setup**. The CM5 must be the WiFi
+variant.
 
 ---
 
@@ -28,10 +31,14 @@ image flashed and configured. It is created on your development machine:
 ```
 
 This produces `trailcurrent-deployment-1.0.0.zip` containing:
-- `images/*.tar` — 5 pre-built ARM64 Docker images (4 custom + MongoDB)
+- `images/*.tar` — 6 pre-built ARM64 Docker images: `frontend`, `backend`,
+  `mosquitto` (custom), `mongodb`, `photon` (geocoding), and `valhalla`
+  (routing). Photon and Valhalla are behind the `maps` compose profile —
+  they only start when a map bundle is installed.
 - `docker-compose.yml` — Service orchestration
 - `config/` — Mosquitto configuration
-- `local_code/` — Python CAN-to-MQTT bridge and OTA helpers
+- `local_code/` — Python bridges + watchers (CAN-to-MQTT, deployment
+  watcher, map watcher)
 - `firmware/wired/` — MCU firmware binaries (if available)
 - `scripts/` — SSL certificate generation
 - `.env.example` — Environment variable template
@@ -239,6 +246,9 @@ sudo systemctl status cantomqtt.service
 # Deployment watcher running (for cloud OTA updates)
 sudo systemctl status deployment-watcher.service
 
+# Map watcher running (for PWA map bundle uploads)
+sudo systemctl status map-watcher.service
+
 # API responding
 curl -k https://localhost/api/health
 
@@ -258,7 +268,27 @@ docker compose logs <service-name>
 
 # Restart all containers
 docker compose down && docker compose up -d --no-build
+
+# Photon (search) and Valhalla (routing) are behind the `maps` profile
+# and only start when a map bundle is installed. To include them:
+docker compose --profile maps up -d
 ```
+
+### Map search or routing returns 503
+The `photon` and `valhalla` containers are profile-gated — they only start
+when `data/maps/current` exists (a bundle has been uploaded and applied).
+If either service returns 503:
+
+```bash
+# Are they running?
+docker ps | grep -E "photon|valhalla"
+
+# If not, and a bundle IS installed:
+docker compose --profile maps up -d photon valhalla
+```
+
+If no bundle is installed yet, upload one via the PWA Maps page — see
+[DOCS/UpdatingMaps.md](DOCS/UpdatingMaps.md).
 
 ### CAN-to-MQTT bridge not working
 ```bash

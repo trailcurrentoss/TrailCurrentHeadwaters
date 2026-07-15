@@ -44,6 +44,16 @@ fi
 # Create images directory
 mkdir -p images
 
+# Sync THIRD_PARTY_LICENSES.md into the frontend build context so nginx
+# can serve it as a static file, backing the in-app "Licenses & Attribution"
+# screen in Settings. Kept as a build-time cp (not a checked-in copy) so
+# the repo root remains the single source of truth for the license text —
+# no risk of the shipped copy drifting out of date silently.
+if [ -f "THIRD_PARTY_LICENSES.md" ]; then
+    cp -f THIRD_PARTY_LICENSES.md containers/frontend/public/THIRD_PARTY_LICENSES.md
+    echo "  Synced THIRD_PARTY_LICENSES.md into frontend static assets"
+fi
+
 # Services to build locally
 # Format: BUILD_DIR|IMAGE_TAG
 # IMAGE_TAG must match docker-compose.yml image: directive exactly
