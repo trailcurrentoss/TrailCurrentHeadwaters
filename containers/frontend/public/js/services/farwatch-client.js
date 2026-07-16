@@ -25,7 +25,6 @@ const POLL_ENDPOINTS = [
     ['energy',     '/api/energy'],
     ['water',      '/api/water'],
     ['airquality', '/api/airquality'],
-    ['thermostat', '/api/thermostat'],
     ['level',      '/api/trailer/level'],
     ['settings',   '/api/settings'],       // last-sync timestamp lives here
     ['proximity',  '/api/proximity/status']

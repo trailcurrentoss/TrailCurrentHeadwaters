@@ -40,7 +40,6 @@ const TIERS = {
     // Immediate — user-facing state, forward on change only
     'rv/lights':              { interval: 0,     changeOnly: true },
     'rv/relays':              { interval: 0,     changeOnly: true },
-    'rv/thermostat/status':   { interval: 0,     changeOnly: true },
     // Standard — slow-changing, 5s interval with threshold bypass
     'rv/energy/status':       { interval: 5000,  changeOnly: true, thresholds: 'energy' },
     'rv/gps/latlon':          { interval: 5000,  changeOnly: true, thresholds: 'gps' },
@@ -118,7 +117,6 @@ const LOCAL_TO_CLOUD = [
     { local: 'local/gps/alt',               cloud: 'rv/gps/alt' },
     { local: 'local/gps/details',            cloud: 'rv/gps/details' },
     { local: 'local/energy/status',          cloud: 'rv/energy/status' },
-    { local: 'local/thermostat/status',      cloud: 'rv/thermostat/status' },
     { local: 'local/water/status',            cloud: 'rv/water/status' },
     { local: 'local/level/tilt',             cloud: 'rv/level/tilt' },
     { local: 'local/level/status',           cloud: 'rv/level/status' },
@@ -290,9 +288,6 @@ function handleCloudMessage(topic, message) {
                     canBridge.sendRelayToggle(mqttServiceRef, relayId - 1);
                 }
             }
-        } else if (parts[1] === 'thermostat' && parts[2] === 'command') {
-            // Pass through to local thermostat
-            localClient.publish('local/thermostat/command', message, { qos: 1 });
         } else if (parts[1] === 'proximity') {
             // Pass through proximity events/status to local broker
             const localTopic = topic.replace('rv/', 'local/');
@@ -312,7 +307,6 @@ function subscribeCloudToLocal() {
     cloudClient.subscribe('rv/lights/all/command', { qos: 1 });
     cloudClient.subscribe('rv/relays/+/command', { qos: 1 });
     cloudClient.subscribe('rv/relays/all/command', { qos: 1 });
-    cloudClient.subscribe('rv/thermostat/command', { qos: 1 });
     cloudClient.subscribe('rv/proximity/event', { qos: 1 });
     cloudClient.subscribe('rv/proximity/status', { qos: 1 });
 }

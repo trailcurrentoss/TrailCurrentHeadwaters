@@ -20,19 +20,6 @@ async function connect() {
 }
 
 async function seedDatabase() {
-    // Seed thermostat
-    const thermostat = db.collection('thermostat');
-    const existingThermostat = await thermostat.findOne({ _id: 'main' });
-    if (!existingThermostat) {
-        await thermostat.insertOne({
-            _id: 'main',
-            target_temp: 72.0,
-            mode: 'auto',
-            updated_at: new Date()
-        });
-        console.log('Seeded thermostat');
-    }
-
     // Lights are managed dynamically by pdm-channel-sync and switchback-channel-sync.
     // No seed data — lights only exist when a module is enabled.
 

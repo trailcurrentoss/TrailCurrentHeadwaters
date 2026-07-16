@@ -1,11 +1,9 @@
-// Home page - Thermostat and Lights
+// Home page - Lights
 import { API, wsClient } from '../api.js';
-import { Thermostat } from '../components/thermostat.js';
 import { LightsGrid } from '../components/light-button.js';
 import { reverseGeocode, formatPlace } from '../services/reverse-geocode.js';
 import { units } from '../services/units.js';
 
-let thermostat = null;
 let lightsGrid = null;
 let alarmEnabled = false;
 let lastLatLon = null;      // { lat, lon } — most recent GNSS reading
@@ -61,13 +59,6 @@ export const homePage = {
                     <span id="home-greeting-sub" class="home-greeting-sub">${dateLine()}</span>
                 </header>
                 <div class="home-grid">
-                    <div class="home-panel thermostat-panel">
-                        <h1 class="section-title">Climate Control</h1>
-                        <div class="card" id="thermostat-card">
-                            <!-- Thermostat will be rendered here -->
-                        </div>
-                    </div>
-
                     <div class="home-panel lights-panel">
                         <h2 class="section-title">Devices</h2>
                         <div class="card" id="lights-card">
@@ -113,11 +104,6 @@ export const homePage = {
         wsClient.on('alt', altHandler);
         unitsHandler = () => updateGreetingSubtitle();
         units.addEventListener('change', unitsHandler);
-
-        // Initialize thermostat
-        thermostat = new Thermostat('thermostat-card');
-        document.getElementById('thermostat-card').innerHTML = thermostat.render();
-        await thermostat.init();
 
         // Initialize lights (only show panel if modules provide lights)
         try {
@@ -176,10 +162,6 @@ export const homePage = {
     },
 
     cleanup() {
-        if (thermostat) {
-            thermostat.cleanup();
-            thermostat = null;
-        }
         if (lightsGrid) {
             lightsGrid.cleanup();
             lightsGrid = null;

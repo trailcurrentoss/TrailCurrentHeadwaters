@@ -67,9 +67,8 @@ function renderTiles() {
     const energy = state.data.energy || {};
     const water = state.data.water || {};
     const air = state.data.airquality || {};
-    const thermostat = state.data.thermostat || {};
 
-    const interior = thermostat.current_temp_f ?? air.temp_f ?? null;
+    const interior = air.temp_f ?? null;
     const humidity = air.humidity_percent ?? null;
     const battery = energy.battery_percent;
     const voltage = energy.battery_voltage;

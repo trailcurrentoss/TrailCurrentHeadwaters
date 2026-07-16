@@ -93,7 +93,7 @@ class Units extends EventTarget {
     speedLabel() { return this.prefs.speed; }
 
     /**
-     * Format a Fahrenheit reading (native climate/thermostat unit) to the
+     * Format a Fahrenheit reading (native climate unit) to the
      * user's preferred unit as an integer string (no ° or unit suffix).
      * Returns '--' for null/NaN.
      */
@@ -109,7 +109,7 @@ class Units extends EventTarget {
     /**
      * Convert an F-native value to the user's preferred temperature unit
      * (returns a number, unrounded). For places that need to do further
-     * arithmetic on the value (e.g., thermostat delta buttons).
+     * arithmetic on the value.
      */
     tempToUser(f) {
         if (f === null || f === undefined || Number.isNaN(f)) return null;

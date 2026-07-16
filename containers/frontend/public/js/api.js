@@ -156,18 +156,6 @@ class API {
         localStorage.removeItem('rv_api_key');
     }
 
-    // Thermostat
-    static async getThermostat() {
-        return this.request('/thermostat');
-    }
-
-    static async setThermostat(data) {
-        return this.request('/thermostat', {
-            method: 'PUT',
-            body: JSON.stringify(data)
-        });
-    }
-
     // Lights
     static async getLights() {
         return this.request('/lights');

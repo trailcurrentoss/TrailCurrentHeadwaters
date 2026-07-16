@@ -7,7 +7,6 @@ const { readSystemStats } = require('./services/system-stats');
 // MQTT Topic Path Constants
 const MQTT_ROOT = 'local';
 const MQTT_LIGHTS = 'lights';
-const MQTT_THERMOSTAT = 'thermostat';
 const MQTT_ENERGY = 'energy';
 const MQTT_AIRQUALITY = 'airquality';
 const MQTT_GPS = 'gps';
@@ -37,8 +36,6 @@ const MSG_STATUS = 'status';
 const TOPICS = {
     LIGHT_COMMAND: `${MQTT_ROOT}/${MQTT_LIGHTS}/+/${MSG_COMMAND}`,  // + is wildcard for light ID
     LIGHT_STATUS: `${MQTT_ROOT}/${MQTT_LIGHTS}/+/${MSG_STATUS}`,
-    THERMOSTAT_COMMAND: `${MQTT_ROOT}/${MQTT_THERMOSTAT}/${MSG_COMMAND}`,
-    THERMOSTAT_STATUS: `${MQTT_ROOT}/${MQTT_THERMOSTAT}/${MSG_STATUS}`,
     ENERGY_STATUS: `${MQTT_ROOT}/${MQTT_ENERGY}/${MSG_STATUS}`,
     AIRQUALITY_STATUS: `${MQTT_ROOT}/${MQTT_AIRQUALITY}/${MSG_STATUS}`,
     AIRQUALITY_TEMP_AND_HUMIDITY: `${MQTT_ROOT}/${MQTT_AIRQUALITY}/temphumid`,
@@ -208,15 +205,6 @@ class MqttService {
                 console.error('Failed to subscribe to relay all command:', err);
             } else {
                 console.log('Subscribed to relay all command topic');
-            }
-        });
-
-        // Subscribe to thermostat status topic
-        this.client.subscribe(TOPICS.THERMOSTAT_STATUS, (err) => {
-            if (err) {
-                console.error('Failed to subscribe to thermostat status:', err);
-            } else {
-                console.log('Subscribed to thermostat status topic');
             }
         });
 
@@ -510,8 +498,6 @@ class MqttService {
                 this.handleGpsDetails(payload);
             } else if (parts[1] === MQTT_GPS && parts[2] === 'time') {
                 this.handleGpsTime(payload);
-            } else if (parts[1] === MQTT_THERMOSTAT && parts[2] === MSG_STATUS) {
-                this.handleThermostatStatus(payload);
             } else if (parts[1] === MQTT_WATER && parts[2] === MSG_STATUS) {
                 this.handleWaterStatus(payload);
             } else if (parts[1] === MQTT_LEVEL && parts[2] === 'tilt') {
@@ -867,19 +853,6 @@ class MqttService {
         }
     }
 
-    // Handle thermostat status update from HVAC controller
-    handleThermostatStatus(payload) {
-        debugLog('Received thermostat status:', payload);
-
-        // Broadcast thermostat data directly via WebSocket (no database storage)
-        if (this.broadcast) {
-            this.broadcast('thermostat', {
-                target_temp: payload.target_temp,
-                mode: payload.mode
-            });
-        }
-    }
-
     // Handle Plateau tilt data (CAN ID 0x30 decoded by CAN bridge)
     // Payload: { front_back, side_to_side, front_back_diff_mm, left_right_diff_mm }
     // Handle water tank levels from Reservoir (CAN ID 0x3E decoded by CAN bridge)
@@ -1070,28 +1043,6 @@ class MqttService {
         this.client.publish(topic, JSON.stringify({ id }), { qos: 1 });
         return true;
     }
-
-    // Publish thermostat command
-    publishThermostatCommand(target_temp, mode) {
-        if (!this.connected) {
-            console.warn('MQTT not connected, cannot publish thermostat command');
-            return false;
-        }
-
-        const topic = TOPICS.THERMOSTAT_COMMAND;
-        const payload = {};
-        if (target_temp !== undefined) {
-            payload.target_temp = target_temp;
-        }
-        if (mode !== undefined) {
-            payload.mode = mode;
-        }
-
-        console.log(`Publishing thermostat command to ${topic}:`, payload);
-        this.client.publish(topic, JSON.stringify(payload), { qos: 1 });
-        return true;
-    }    
-
 
     // Publish light command — sends CAN messages directly. lightId is
     // global (1-24) across up to three Torrent instances; the CAN ID is

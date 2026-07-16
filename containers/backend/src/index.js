@@ -10,7 +10,6 @@ const mqttService = require('./mqtt');
 // Import routes
 const authRoutes = require('./routes/auth');
 const { authMiddleware } = require('./routes/auth');
-const thermostatRoutes = require('./routes/thermostat');
 const lightsRoutes = require('./routes/lights');
 const trailerRoutes = require('./routes/trailer');
 const energyRoutes = require('./routes/energy');
@@ -77,7 +76,6 @@ async function startServer() {
         app.use(authMiddleware(db));
 
         // API Routes (protected)
-        app.use('/api/thermostat', thermostatRoutes(db));
         app.use('/api/lights', lightsRoutes(db));
         app.use('/api/trailer', trailerRoutes());
         app.use('/api/energy', energyRoutes());

@@ -21,7 +21,6 @@ const STATIC_ASSETS = [
     '/js/components/light-button.js',
     '/js/components/map-display.js',
     '/js/components/pdm-icons.js',
-    '/js/components/thermostat.js',
     '/js/components/water-tanks.js',
     '/js/components/arc-gauge.js',
     '/js/components/trailer-diagram.js',
