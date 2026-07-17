@@ -2479,6 +2479,18 @@ body {
     height: 20px;
 }
 
+/* Tracking-mode button — the single Apple-Maps-style toggle. Tint the
+   glyph in the brand primary while a tracking mode is active so the
+   "map is following you" state reads at a glance; the outline (free)
+   state keeps the neutral text-primary color. */
+.map-track-btn--active {
+    color: var(--primary);
+    border-color: var(--primary);
+}
+.map-track-btn svg text {
+    font-family: inherit;
+}
+
 /* ===== Map search box ===== */
 .map-search {
     position: absolute;
@@ -2767,6 +2779,21 @@ body {
         height: 18px;
     }
 
+}
+
+/* When a route is active the next-maneuver banner sits centered at the
+   top of the map (top:12/8 + ~44 px tall, up to two lines with the
+   street-name detail). On narrow layouts it stretches nearly edge-to-
+   edge, so the search box and the tracking button hide behind it.
+   Push them down below the banner whenever it's visible, using :has()
+   to key off the banner's `hidden` attribute. */
+@media (max-width: 900px) {
+    .map-wrapper:has(.next-maneuver-banner:not([hidden])) .map-search {
+        top: 76px;
+    }
+    .map-wrapper:has(.next-maneuver-banner:not([hidden])) .map-controls {
+        top: 76px;
+    }
 }
 
 /* Safety net: [hidden] should already give us display:none, but explicit

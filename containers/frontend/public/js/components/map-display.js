@@ -16,7 +16,13 @@ export class MapDisplay {
         this.maplibreLoaded = false;
         this.wsHandler = null;
         this.hasReceivedLocation = false;
-        this.followVehicle = true;
+        // Camera tracking mode — Apple-Maps style cycle driven by the
+        // single locate/track button. `'free'` is entered by a user pan;
+        // taps cycle between the two active modes. See setTrackingMode /
+        // cycleTrackingMode for the state machine.
+        this.trackingMode = 'heading-up';
+        this.currentHeading = null; // degrees, from gnss_details.courseOverGround
+        this.gnssDetailsHandler = null;
         this.searchDebounceId = null;
         this.searchRequestSeq = 0;
         this.searchOutsideClickHandler = null;
@@ -57,22 +63,8 @@ export class MapDisplay {
                     <ul id="map-search-results" class="map-search-results" hidden role="listbox"></ul>
                 </div>
                 <div class="map-controls">
-                    <button id="locate-btn" class="map-btn" title="Center on current location">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <circle cx="12" cy="12" r="3"></circle>
-                            <path d="M12 2v4m0 12v4m10-10h-4M6 12H2"></path>
-                        </svg>
-                    </button>
-                    <button id="zoom-in-btn" class="map-btn" title="Zoom in">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <line x1="12" y1="5" x2="12" y2="19"></line>
-                            <line x1="5" y1="12" x2="19" y2="12"></line>
-                        </svg>
-                    </button>
-                    <button id="zoom-out-btn" class="map-btn" title="Zoom out">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <line x1="5" y1="12" x2="19" y2="12"></line>
-                        </svg>
+                    <button id="track-mode-btn" class="map-btn map-track-btn" type="button"
+                            title="Tracking mode" aria-label="Tracking mode">
                     </button>
                 </div>
                 <!-- Long-press / right-click context menu: appears at the click
@@ -117,15 +109,20 @@ export class MapDisplay {
             this.registerPmtilesProtocol();
             this.initMap();
             this.setupThemeListener();
-            // Wire search-input events → /api/geocode/search. Must fire only
-            // in the bundle-installed path — in the no-bundle path the input
-            // is disabled by initNoMapDataState() and the geocode endpoint
-            // returns 503, so there's no point attaching listeners.
-            this.setupSearch();
         } catch (err) {
             console.error('[map] MapLibre/PMTiles init failed, falling back to no-data state:', err);
             this.initNoMapDataState();
+            return;
         }
+
+        // Overlay wiring is intentionally outside the map-init try/catch —
+        // a failure here should NOT tear down the working map or disable
+        // the search input. Wrap each independently so one broken button
+        // handler can't break the other.
+        try { this.setupControls(); }
+        catch (err) { console.error('[map] setupControls failed:', err); }
+        try { this.setupSearch(); }
+        catch (err) { console.error('[map] setupSearch failed:', err); }
     }
 
     // Wire the pmtiles:// protocol into MapLibre. The pmtiles UMD bundle
@@ -267,9 +264,11 @@ export class MapDisplay {
             customAttribution: '© OpenStreetMap contributors'
         }));
 
-        // Disable auto-follow when user manually pans
+        // Manual pan drops the camera into `free` (overridden) mode.
+        // The tracking button reflects this immediately via the
+        // updateTrackModeButton() call inside setTrackingMode.
         this.map.on('dragstart', () => {
-            this.followVehicle = false;
+            if (this.trackingMode !== 'free') this.setTrackingMode('free');
         });
 
         // Add location marker when map loads
@@ -363,14 +362,10 @@ export class MapDisplay {
             // to compact nav mode internally; on the map side we re-enable
             // vehicle-follow so the camera tracks GPS as the user drives.
             this.turnList.on('go', () => {
-                this.followVehicle = true;
-                if (this.currentPosition && this.map) {
-                    this.map.easeTo({
-                        center: [this.currentPosition.lng, this.currentPosition.lat],
-                        zoom: Math.max(this.map.getZoom(), 15),
-                        duration: 500
-                    });
-                }
+                // Default to heading-up when navigation starts — matches the
+                // "start driving" affordance drivers expect. User can still
+                // tap through to north-up.
+                this.setTrackingMode('heading-up');
             });
             // The setup UI asks the user to pick an origin. Route the search
             // through the existing backend proxy and hand results back to
@@ -566,25 +561,91 @@ export class MapDisplay {
     }
 
     setupControls() {
-        const locateBtn = document.getElementById('locate-btn');
-        const zoomInBtn = document.getElementById('zoom-in-btn');
-        const zoomOutBtn = document.getElementById('zoom-out-btn');
-
-        if (locateBtn) {
-            locateBtn.addEventListener('click', () => this.centerOnLocation());
+        const trackBtn = document.getElementById('track-mode-btn');
+        if (trackBtn) {
+            trackBtn.addEventListener('click', () => this.cycleTrackingMode());
         }
+        this.updateTrackModeButton();
+    }
 
-        if (zoomInBtn) {
-            zoomInBtn.addEventListener('click', () => {
-                if (this.map) this.map.zoomIn();
-            });
-        }
+    // Icon markup for each tracking mode. Kept as a static map so
+    // updateTrackModeButton() is a single innerHTML swap.
+    static TRACK_MODE_ICONS = {
+        'free':
+            `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                  stroke-width="2" stroke-linejoin="round" aria-hidden="true">
+                <polygon points="12 2 6 21 12 17 18 21 12 2"></polygon>
+             </svg>`,
+        'north-up':
+            `<svg viewBox="0 0 24 24" fill="currentColor" stroke="currentColor"
+                  stroke-width="1.5" stroke-linejoin="round" aria-hidden="true">
+                <polygon points="12 3 8 11 12 9 16 11 12 3"></polygon>
+                <text x="12" y="21" text-anchor="middle" font-size="9"
+                      font-weight="700" font-family="inherit"
+                      fill="currentColor" stroke="none">N</text>
+             </svg>`,
+        'heading-up':
+            `<svg viewBox="0 0 24 24" fill="currentColor" stroke="currentColor"
+                  stroke-width="1.5" stroke-linejoin="round" aria-hidden="true">
+                <polygon points="12 2 6 21 12 17 18 21 12 2"></polygon>
+             </svg>`,
+    };
 
-        if (zoomOutBtn) {
-            zoomOutBtn.addEventListener('click', () => {
-                if (this.map) this.map.zoomOut();
-            });
+    static TRACK_MODE_TITLES = {
+        'free': 'Not tracking — tap to follow',
+        'north-up': 'Following, north-up',
+        'heading-up': 'Following, heading-up',
+    };
+
+    updateTrackModeButton() {
+        const btn = document.getElementById('track-mode-btn');
+        if (!btn) return;
+        const mode = this.trackingMode;
+        btn.innerHTML = MapDisplay.TRACK_MODE_ICONS[mode] || MapDisplay.TRACK_MODE_ICONS['free'];
+        btn.title = MapDisplay.TRACK_MODE_TITLES[mode] || '';
+        btn.setAttribute('aria-label', btn.title);
+        btn.classList.toggle('map-track-btn--active', mode !== 'free');
+        btn.dataset.mode = mode;
+    }
+
+    // Tap-cycle used by the single tracking button. Apple-Maps semantics:
+    //   free       → heading-up   (first tap after a manual pan)
+    //   heading-up → north-up
+    //   north-up   → heading-up
+    // The `free` state is only entered by a user pan (see the dragstart
+    // handler in initMap), never by tapping this button.
+    cycleTrackingMode() {
+        const next = this.trackingMode === 'heading-up' ? 'north-up' : 'heading-up';
+        this.setTrackingMode(next);
+    }
+
+    // Apply a tracking mode. Handles the camera state that goes with it:
+    // north-up resets bearing to 0; heading-up snaps to the last known
+    // heading if we have one; free leaves the camera where the user put it.
+    // Safe to call before the map is ready — the follow logic in
+    // handleLocationUpdate/onHeadingUpdate reads trackingMode each tick.
+    setTrackingMode(mode) {
+        if (!['free', 'north-up', 'heading-up'].includes(mode)) return;
+        this.trackingMode = mode;
+        this.updateTrackModeButton();
+
+        if (!this.map) return;
+
+        if (mode === 'free') return;
+
+        // Snap the camera to the appropriate follow pose. If we don't yet
+        // have a fix, just fix the bearing so the map already looks right
+        // when the first location arrives.
+        const opts = { duration: 400 };
+        if (mode === 'north-up') opts.bearing = 0;
+        if (mode === 'heading-up' && Number.isFinite(this.currentHeading)) {
+            opts.bearing = this.currentHeading;
         }
+        if (this.currentPosition) {
+            opts.center = [this.currentPosition.lng, this.currentPosition.lat];
+            opts.zoom = Math.max(this.map.getZoom(), 15);
+        }
+        this.map.easeTo(opts);
     }
 
     setupSearch() {
@@ -873,7 +934,7 @@ export class MapDisplay {
         const maxLon = Math.max(anchor.lng, closest.lon);
         const minLat = Math.min(anchor.lat, closest.lat);
         const maxLat = Math.max(anchor.lat, closest.lat);
-        this.followVehicle = false;
+        this.setTrackingMode('free');
         this.map.fitBounds([[minLon, minLat], [maxLon, maxLat]], {
             padding: this.cameraPaddingForResultsCard(),
             maxZoom: 15,
@@ -966,7 +1027,7 @@ export class MapDisplay {
     // pick) is a separate action — see the chevron handler in renderSearchResults.
     selectSearchResult(r, idx) {
         if (!r || !this.map) return;
-        this.followVehicle = false;
+        this.setTrackingMode('free');
         // Re-emit all pins with the new selected index so the previous
         // highlight fades back to the muted color and this one lights up.
         if (typeof idx === 'number') this.setSelectedResultPin(idx);
@@ -1174,7 +1235,9 @@ export class MapDisplay {
             this._activeRoute = { destination, costing };
             this._lastRecomputeAt = Date.now();
             this._offRouteStreak = 0;
-            this.followVehicle = false;
+            // Route preview should show the whole trip, not follow — user
+            // taps Go to start navigation, which re-enters heading-up.
+            this.setTrackingMode('free');
         } catch (err) {
             console.error('[route] request failed:', err);
             let msg = 'Route request failed.';
@@ -1310,9 +1373,17 @@ export class MapDisplay {
         this.wsHandler = (data) => {
             this.handleLocationUpdate(data);
         };
-
-        // Subscribe to GPS location updates
         wsClient.on('latlon', this.wsHandler);
+
+        // Course over ground arrives on the separate gnss_details channel.
+        // Cache it so heading-up mode can rotate the map on the next
+        // location tick without waiting for another gnss_details frame.
+        this.gnssDetailsHandler = (data) => {
+            if (data && Number.isFinite(data.courseOverGround)) {
+                this.currentHeading = data.courseOverGround;
+            }
+        };
+        wsClient.on('gnss_details', this.gnssDetailsHandler);
     }
 
     handleLocationUpdate(data) {
@@ -1336,14 +1407,24 @@ export class MapDisplay {
             this.updateLocationOnMap(latitude, longitude, accuracy);
         }
 
-        // Center map on vehicle location when following
-        if (this.followVehicle && this.map) {
+        // Camera-follow. north-up and heading-up both center on the vehicle;
+        // heading-up additionally rotates the map to the current course
+        // (courseOverGround arrives on the separate gnss_details channel —
+        // whichever value we have most recently is applied here).
+        if (this.trackingMode !== 'free' && this.map) {
             const zoom = isFirstPosition ? 15 : this.map.getZoom();
-            this.map.easeTo({
+            const opts = {
                 center: [longitude, latitude],
-                zoom: zoom,
-                duration: isFirstPosition ? 1000 : 500
-            });
+                zoom,
+                duration: isFirstPosition ? 1000 : 500,
+            };
+            if (this.trackingMode === 'heading-up'
+                    && Number.isFinite(this.currentHeading)) {
+                opts.bearing = this.currentHeading;
+            } else if (this.trackingMode === 'north-up') {
+                opts.bearing = 0;
+            }
+            this.map.easeTo(opts);
         }
 
         // Push GPS tick into the next-maneuver banner if a route is active.
@@ -1365,15 +1446,11 @@ export class MapDisplay {
         this.maybeRecomputeOffRoute(latitude, longitude);
     }
 
+    // Kept for external callers (nothing inside this file uses it anymore —
+    // the button routes through cycleTrackingMode instead). Re-enters
+    // heading-up which is the default follow pose.
     centerOnLocation() {
-        if (this.currentPosition && this.map) {
-            this.followVehicle = true;
-            this.map.flyTo({
-                center: [this.currentPosition.lng, this.currentPosition.lat],
-                zoom: Math.max(this.map.getZoom(), 15),
-                duration: 500
-            });
-        }
+        this.setTrackingMode('heading-up');
     }
 
     cleanup() {
@@ -1390,10 +1467,14 @@ export class MapDisplay {
             this.searchOutsideClickHandler = null;
         }
 
-        // Remove WebSocket listener
+        // Remove WebSocket listeners
         if (this.wsHandler) {
             wsClient.off('latlon', this.wsHandler);
             this.wsHandler = null;
+        }
+        if (this.gnssDetailsHandler) {
+            wsClient.off('gnss_details', this.gnssDetailsHandler);
+            this.gnssDetailsHandler = null;
         }
 
         // Detach the simulator listener installed in initMap.
