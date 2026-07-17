@@ -2755,6 +2755,9 @@ body {
 
 .maplibregl-canvas {
     outline: none;
+    /* Suppress iOS Safari's callout / magnifier on long-press so our own
+       long-press → "Route to here" menu can take over. */
+    -webkit-touch-callout: none;
 }
 
 .maplibregl-ctrl-attrib {
