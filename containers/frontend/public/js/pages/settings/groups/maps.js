@@ -91,12 +91,14 @@ export const mapsGroup = {
                                 Useful for screen recordings — the location dot changes color to make clear the position is simulated.
                             </p>
                         </div>
-                        <div class="settings-item">
-                            <span class="settings-label">Enabled</span>
-                            <button type="button" class="toggle-switch" id="simulate-location-toggle"
-                                    aria-pressed="false"></button>
+                        <div class="settings-units-container">
+                            <div class="settings-units-row">
+                                <span class="settings-units-label">Enabled</span>
+                                <button type="button" class="toggle-switch" id="simulate-location-toggle"
+                                        aria-pressed="false"></button>
+                            </div>
                         </div>
-                        <div id="simulate-location-coords" class="settings-units-container" hidden>
+                        <div id="simulate-location-coords" class="settings-units-container hidden">
                             <div class="settings-units-row">
                                 <label class="settings-units-label" for="simulate-lat-input">Latitude</label>
                                 <input type="number" step="0.0001" id="simulate-lat-input"
@@ -517,7 +519,10 @@ export const mapsGroup = {
             const { latitude, longitude } = gnssSimulator.getCoords();
             toggle.classList.toggle('active', active);
             toggle.setAttribute('aria-pressed', active ? 'true' : 'false');
-            coordsBox.hidden = !active;
+            // `.settings-units-container` sets `display: flex`, which beats
+            // the HTML `hidden` attribute, so we toggle a `.hidden` utility
+            // class (declared with `!important`) for visibility instead.
+            coordsBox.classList.toggle('hidden', !active);
             // Only overwrite the input if the user isn't editing — avoids
             // clobbering keystrokes when onChange fires from persist().
             if (document.activeElement !== latInput) latInput.value = latitude.toFixed(4);
