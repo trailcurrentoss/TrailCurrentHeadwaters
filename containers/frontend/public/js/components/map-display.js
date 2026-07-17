@@ -1,6 +1,5 @@
 // Map display component using MapLibre GL JS for vector tiles
 import { API, wsClient } from '../api.js';
-import { units } from '../services/units.js';
 import { gnssSimulator, LIVE_MARKER_COLOR, SIMULATED_MARKER_COLOR } from '../services/gnss-simulator.js';
 import { RouteOverlay } from './route-overlay.js';
 import { TurnList } from './turn-list.js';
@@ -16,10 +15,7 @@ export class MapDisplay {
         this.currentPosition = null;
         this.maplibreLoaded = false;
         this.wsHandler = null;
-        this.wsGnssDetailsHandler = null;
         this.hasReceivedLocation = false;
-        this.unsubStaleLatlon = null;
-        this.unsubStaleGnss = null;
         this.followVehicle = true;
         this.searchDebounceId = null;
         this.searchRequestSeq = 0;
@@ -51,14 +47,6 @@ export class MapDisplay {
                         <input type="text" id="map-search-input" class="map-search-input"
                             placeholder="Search places, addresses..." autocomplete="off"
                             spellcheck="false" enterkeyhint="search" />
-                        <button id="map-search-bounded" class="map-search-bounded" type="button"
-                                aria-pressed="false" aria-label="Restrict search to current map view"
-                                title="Restrict search to current map view">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <rect x="3" y="3" width="18" height="18" rx="2"></rect>
-                                <line x1="8" y1="12" x2="16" y2="12"></line>
-                            </svg>
-                        </button>
                         <button id="map-search-clear" class="map-search-clear" type="button" hidden aria-label="Clear search">
                             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                 <line x1="18" y1="6" x2="6" y2="18"></line>
@@ -67,9 +55,6 @@ export class MapDisplay {
                         </button>
                     </div>
                     <ul id="map-search-results" class="map-search-results" hidden role="listbox"></ul>
-                </div>
-                <div id="location-info" class="location-info">
-                    <span class="location-status">Waiting for GPS...</span>
                 </div>
                 <div class="map-controls">
                     <button id="locate-btn" class="map-btn" title="Center on current location">
@@ -374,6 +359,19 @@ export class MapDisplay {
             this.turnList.mount(slot);
             this.turnList.on('close', () => this.clearRoute());
             this.turnList.on('maneuver-click', (m) => this.flyToManeuver(m));
+            // "Go" pressed in the preview drawer. The drawer switches itself
+            // to compact nav mode internally; on the map side we re-enable
+            // vehicle-follow so the camera tracks GPS as the user drives.
+            this.turnList.on('go', () => {
+                this.followVehicle = true;
+                if (this.currentPosition && this.map) {
+                    this.map.easeTo({
+                        center: [this.currentPosition.lng, this.currentPosition.lat],
+                        zoom: Math.max(this.map.getZoom(), 15),
+                        duration: 500
+                    });
+                }
+            });
             // The setup UI asks the user to pick an origin. Route the search
             // through the existing backend proxy and hand results back to
             // the panel to render its own dropdown.
@@ -470,7 +468,10 @@ export class MapDisplay {
             filter: ['==', ['get', 'type'], 'location']
         });
 
-        // Search-result pin (populated when a user selects a search hit)
+        // Search-result pins. One feature per result (up to 25); the
+        // `selected` boolean property drives per-pin paint via `case`
+        // expressions so the currently previewed row stands out without
+        // needing a second source.
         this.map.addSource('search-result', {
             type: 'geojson',
             data: { type: 'FeatureCollection', features: [] }
@@ -480,7 +481,7 @@ export class MapDisplay {
             type: 'circle',
             source: 'search-result',
             paint: {
-                'circle-radius': 10,
+                'circle-radius': ['case', ['get', 'selected'], 12, 8],
                 'circle-color': '#000',
                 'circle-opacity': 0.25,
                 'circle-translate': [0, 2]
@@ -491,9 +492,9 @@ export class MapDisplay {
             type: 'circle',
             source: 'search-result',
             paint: {
-                'circle-radius': 9,
-                'circle-color': '#e94b3c',
-                'circle-stroke-width': 3,
+                'circle-radius': ['case', ['get', 'selected'], 11, 7],
+                'circle-color': ['case', ['get', 'selected'], '#e94b3c', '#f4a58e'],
+                'circle-stroke-width': ['case', ['get', 'selected'], 3, 2],
                 'circle-stroke-color': '#ffffff'
             }
         });
@@ -589,33 +590,9 @@ export class MapDisplay {
     setupSearch() {
         const input = document.getElementById('map-search-input');
         const clearBtn = document.getElementById('map-search-clear');
-        const boundedBtn = document.getElementById('map-search-bounded');
         const resultsEl = document.getElementById('map-search-results');
         const searchEl = document.getElementById('map-search');
         if (!input || !resultsEl || !searchEl) return;
-
-        // Restore + wire the "restrict to view" toggle. Persisted in
-        // localStorage so a user who prefers bounded search doesn't have
-        // to re-enable it every page load.
-        try {
-            this._searchBounded = localStorage.getItem('tc.mapSearchBounded') === '1';
-        } catch (_) { this._searchBounded = false; }
-        if (boundedBtn) {
-            const apply = () => {
-                boundedBtn.setAttribute('aria-pressed', this._searchBounded ? 'true' : 'false');
-                boundedBtn.classList.toggle('map-search-bounded--active', !!this._searchBounded);
-            };
-            apply();
-            boundedBtn.addEventListener('click', () => {
-                this._searchBounded = !this._searchBounded;
-                try { localStorage.setItem('tc.mapSearchBounded', this._searchBounded ? '1' : '0'); } catch (_) {}
-                apply();
-                // If a search is showing, re-run with the new mode so the
-                // user sees the effect immediately.
-                const q = input.value.trim();
-                if (q.length >= SEARCH_MIN_CHARS) this.doSearch(q);
-            });
-        }
 
         input.addEventListener('input', () => {
             const q = input.value.trim();
@@ -633,6 +610,19 @@ export class MapDisplay {
                 input.value = '';
                 clearBtn.hidden = true;
                 this.clearSearchResults();
+                input.blur();
+            } else if (e.key === 'Enter') {
+                // Fire the search immediately (bypass the debounce) and drop
+                // focus so mobile's on-screen keyboard collapses — otherwise
+                // the results drawer / "No results" message sits behind the
+                // keyboard and the user can't see it.
+                e.preventDefault();
+                if (this.searchDebounceId) {
+                    clearTimeout(this.searchDebounceId);
+                    this.searchDebounceId = null;
+                }
+                const q = input.value.trim();
+                if (q.length >= SEARCH_MIN_CHARS) this.doSearch(q);
                 input.blur();
             }
         });
@@ -658,45 +648,128 @@ export class MapDisplay {
         document.addEventListener('click', this.searchOutsideClickHandler);
     }
 
+    // Miles → km radii for the escalation ladder. Fixed steps keep the
+    // widening predictable: try the current view; if empty, jump to 25 mi,
+    // then 100 mi, then 300 mi, all anchored on the map's centre. Anything
+    // beyond that gives up ("no results"). The visible view is tried first
+    // so that when a user has framed exactly what they want, we respect it
+    // and don't grab distant matches.
+    static SEARCH_RADII_KM = [40, 161, 483];
+
     async doSearch(q) {
         const seq = ++this.searchRequestSeq;
-        let viewboxParam = '';
-        if (this.map) {
-            const b = this.map.getBounds();
-            // Nominatim viewbox format: left,top,right,bottom (west,north,east,south)
-            viewboxParam = `&viewbox=${b.getWest()},${b.getNorth()},${b.getEast()},${b.getSouth()}`;
-            // If the "restrict to view" toggle is on, also add bounded=1 so
-            // Photon filters to strictly within the viewbox, not just bias
-            // rank. Preference lives in localStorage under the map-search
-            // namespace so it survives page reloads.
-            if (this._searchBounded) {
-                viewboxParam += '&bounded=1';
-            }
-        }
-        try {
-            const data = await API.request(
-                `/geocode/search?q=${encodeURIComponent(q)}&limit=8${viewboxParam}`
-            );
-            // Ignore out-of-order responses
-            if (seq !== this.searchRequestSeq) return;
-            this.renderSearchResults(data && Array.isArray(data.results) ? data.results : []);
-        } catch (err) {
-            if (seq !== this.searchRequestSeq) return;
-            this.renderSearchError();
-        }
-    }
-
-    renderSearchResults(results) {
-        const resultsEl = document.getElementById('map-search-results');
-        if (!resultsEl) return;
-        if (!results || results.length === 0) {
-            resultsEl.innerHTML = '<li class="map-search-empty">No matches</li>';
-            resultsEl.hidden = false;
+        if (!this.map) {
+            this.renderSearchResults([], { expanded: false });
             return;
         }
-        resultsEl.innerHTML = results.map((r, i) => {
+        const center = this.map.getCenter();
+        const visible = this.map.getBounds();
+        const attempts = [
+            { west: visible.getWest(), east: visible.getEast(),
+              north: visible.getNorth(), south: visible.getSouth(),
+              expanded: false }
+        ];
+        for (const km of MapDisplay.SEARCH_RADII_KM) {
+            attempts.push({ ...this.bboxAroundCenter(center, km), expanded: true });
+        }
+        for (const a of attempts) {
+            const url = `/geocode/search?q=${encodeURIComponent(q)}&limit=25`
+                + `&viewbox=${a.west},${a.north},${a.east},${a.south}&bounded=1`;
+            let data;
+            try {
+                data = await API.request(url);
+            } catch (_) {
+                if (seq !== this.searchRequestSeq) return;
+                this.renderSearchError();
+                return;
+            }
+            // Bail if the user typed something newer while we were escalating.
+            if (seq !== this.searchRequestSeq) return;
+            const results = data && Array.isArray(data.results) ? data.results : [];
+            if (results.length > 0) {
+                this.renderSearchResults(results, { expanded: a.expanded, anchor: center });
+                return;
+            }
+        }
+        this.renderSearchResults([], { expanded: false, anchor: center });
+    }
+
+    // Build a bounding box around (center.lat, center.lng) that spans
+    // approximately radiusKm in every direction. Cosine correction keeps the
+    // east/west spread honest at higher latitudes; the 0.05 floor guards
+    // against a divide-by-tiny cos near the poles.
+    bboxAroundCenter(center, radiusKm) {
+        const latDelta = (radiusKm * 1000) / 111320;
+        const lonDelta = latDelta / Math.max(0.05, Math.cos(center.lat * Math.PI / 180));
+        return {
+            west:  center.lng - lonDelta,
+            east:  center.lng + lonDelta,
+            north: center.lat + latDelta,
+            south: center.lat - latDelta
+        };
+    }
+
+    renderSearchResults(results, opts = {}) {
+        const resultsEl = document.getElementById('map-search-results');
+        if (!resultsEl) return;
+        // Drawer chrome, both mobile-only via CSS: a drag-handle pill at the
+        // top for affordance, and a close button in the top-right that
+        // clears the input + pins + drawer (see `wireDrawerCloseButton`).
+        const closeMarkup = '<li class="map-search-results-close-wrap" role="presentation">'
+            + '<button type="button" class="map-search-results-close" aria-label="Close search results">'
+            + '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">'
+            + '<line x1="18" y1="6" x2="6" y2="18"></line>'
+            + '<line x1="6" y1="6" x2="18" y2="18"></line>'
+            + '</svg></button></li>';
+        const handleMarkup = '<li class="map-search-results-handle" aria-hidden="true"></li>';
+        if (!results || results.length === 0) {
+            resultsEl.innerHTML = closeMarkup + handleMarkup + '<li class="map-search-empty">No matches</li>';
+            resultsEl.hidden = false;
+            this._searchResults = [];
+            this.updateSearchResultPins([], null);
+            this.wireDrawerCloseButton(resultsEl);
+            return;
+        }
+        // Sort anchor: prefer live GPS ("closest to me"), fall back to the
+        // map's current center ("closest to what I'm looking at") so the list
+        // is still meaningful before we get a fix. Same anchor drives the
+        // distance chip when GPS is available.
+        const gps = this.currentPosition;
+        const hasGps = !!(gps && typeof gps.lat === 'number'
+            && typeof (gps.lng ?? gps.lon) === 'number');
+        const gpsLat = hasGps ? gps.lat : null;
+        const gpsLon = hasGps ? (gps.lng ?? gps.lon) : null;
+        let anchorLat = gpsLat, anchorLon = gpsLon;
+        if (anchorLat == null && this.map) {
+            const c = this.map.getCenter();
+            anchorLat = c.lat; anchorLon = c.lng;
+        }
+        // Sort closest-first so the top of the list is the nearest result.
+        // Rows missing coordinates fall to the bottom.
+        if (anchorLat != null) {
+            results = results.slice().sort((a, b) => {
+                const aValid = typeof a.lat === 'number' && typeof a.lon === 'number';
+                const bValid = typeof b.lat === 'number' && typeof b.lon === 'number';
+                if (!aValid && !bValid) return 0;
+                if (!aValid) return 1;
+                if (!bValid) return -1;
+                const da = this.haversineMeters(anchorLat, anchorLon, a.lat, a.lon);
+                const db = this.haversineMeters(anchorLat, anchorLon, b.lat, b.lon);
+                return da - db;
+            });
+        }
+        // Keep the sorted list on the instance so preview-tap and pin-select
+        // stay in sync without re-fetching.
+        this._searchResults = results;
+
+        resultsEl.innerHTML = closeMarkup + handleMarkup + results.map((r, i) => {
             const primary = this.primaryLabel(r);
             const secondary = this.secondaryLabel(r);
+            const distanceMarkup = (hasGps && typeof r.lat === 'number' && typeof r.lon === 'number')
+                ? `<div class="map-search-result-distance">${this.escapeHtml(
+                        this.formatDistanceMeters(this.haversineMeters(gpsLat, gpsLon, r.lat, r.lon))
+                    )}</div>`
+                : '';
             // Approximate hint: when the query asked for a house number the
             // OSM data doesn't have, backend marks the result approximate.
             // Surface that honestly so the user doesn't get misled into
@@ -722,6 +795,7 @@ export class MapDisplay {
                         <div class="map-search-result-secondary">${this.escapeHtml(secondary)}</div>
                         ${approxHint}
                     </div>
+                    ${distanceMarkup}
                     <button type="button" class="map-search-result-route" data-idx="${i}" aria-label="Directions to ${this.escapeHtml(primary)}">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
                             <polyline points="9 18 15 12 9 6"></polyline>
@@ -731,13 +805,28 @@ export class MapDisplay {
             `;
         }).join('');
         resultsEl.hidden = false;
-        // Row click flies the camera and drops a pin (existing behavior).
-        // The trailing "directions" button is a separate action that stops
-        // propagation so it doesn't also fire the row click.
+
+        // Drop every result onto the map so the user can eyeball the spatial
+        // spread before picking one. No pin is highlighted yet — the first
+        // preview tap lights one up.
+        this.updateSearchResultPins(results, null);
+        this.wireDrawerCloseButton(resultsEl);
+        // If matches were found inside the visible view (opts.expanded===false)
+        // leave the camera exactly where it is — the user framed this spot for
+        // a reason. Only re-fit when we had to widen; then frame the map
+        // centre + the closest result so "how far away the nearest one is"
+        // becomes visually obvious.
+        if (opts.expanded && opts.anchor) {
+            this.fitCameraToAnchorAndClosest(opts.anchor, results[0]);
+        }
+
+        // Row click previews (flies to the pin and highlights it) but keeps
+        // the results card open. The trailing chevron is the commit action
+        // — it hands off to routing and dismisses.
         resultsEl.querySelectorAll('.map-search-result').forEach((li) => {
             li.addEventListener('click', () => {
                 const idx = parseInt(li.dataset.idx, 10);
-                this.selectSearchResult(results[idx]);
+                this.selectSearchResult(results[idx], idx);
             });
         });
         resultsEl.querySelectorAll('.map-search-result-route').forEach((btn) => {
@@ -746,7 +835,25 @@ export class MapDisplay {
                 const idx = parseInt(btn.dataset.idx, 10);
                 const r = results[idx];
                 if (!r || typeof r.lat !== 'number' || typeof r.lon !== 'number') return;
-                this.selectSearchResult(r);   // pin the destination first
+                this.selectSearchResult(r, idx);   // pin the destination first
+                // Cancel any pending debounced search AND invalidate any
+                // in-flight response — otherwise a stale search that lands
+                // after this click re-populates the drawer and it looks
+                // like our "close" didn't take.
+                if (this.searchDebounceId) {
+                    clearTimeout(this.searchDebounceId);
+                    this.searchDebounceId = null;
+                }
+                this.searchRequestSeq++;
+                this.clearSearchResults();
+                // Take the browse pins off the map — the route overlay will
+                // draw its own start/end markers and 25 stray dots on top
+                // would just be visual noise.
+                this.clearSearchResultPin();
+                const input = document.getElementById('map-search-input');
+                if (input) { input.value = ''; input.blur(); }
+                const clearBtn = document.getElementById('map-search-clear');
+                if (clearBtn) clearBtn.hidden = true;
                 this.computeAndShowRoute({
                     lat: r.lat, lon: r.lon, name: this.primaryLabel(r)
                 });
@@ -754,11 +861,84 @@ export class MapDisplay {
         });
     }
 
+    // Frame the map so that both the search anchor (map centre at the time
+    // of the query) and the closest result are visible. Runs only when the
+    // search had to escalate beyond the visible view — the point is to make
+    // "how far away the nearest one is" visually obvious. Results farther
+    // out stay pinned; the user can pan to see them.
+    fitCameraToAnchorAndClosest(anchor, closest) {
+        if (!this.map || !anchor || !closest) return;
+        if (typeof closest.lat !== 'number' || typeof closest.lon !== 'number') return;
+        const minLon = Math.min(anchor.lng, closest.lon);
+        const maxLon = Math.max(anchor.lng, closest.lon);
+        const minLat = Math.min(anchor.lat, closest.lat);
+        const maxLat = Math.max(anchor.lat, closest.lat);
+        this.followVehicle = false;
+        this.map.fitBounds([[minLon, minLat], [maxLon, maxLat]], {
+            padding: this.cameraPaddingForResultsCard(),
+            maxZoom: 15,
+            duration: 700
+        });
+    }
+
     renderSearchError() {
         const resultsEl = document.getElementById('map-search-results');
         if (!resultsEl) return;
-        resultsEl.innerHTML = '<li class="map-search-empty">Search unavailable</li>';
+        resultsEl.innerHTML = '<li class="map-search-results-close-wrap" role="presentation">'
+            + '<button type="button" class="map-search-results-close" aria-label="Close search results">'
+            + '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">'
+            + '<line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line>'
+            + '</svg></button></li>'
+            + '<li class="map-search-results-handle" aria-hidden="true"></li>'
+            + '<li class="map-search-empty">Search unavailable</li>';
         resultsEl.hidden = false;
+        this.wireDrawerCloseButton(resultsEl);
+    }
+
+    // Bind the drawer's top-right close button. Full reset of the search
+    // surface: clear the input, dump the pins, hide the drawer. Called from
+    // every render branch since the button lives inside the innerHTML we just
+    // wrote (no persistent listener to reuse).
+    wireDrawerCloseButton(resultsEl) {
+        const btn = resultsEl.querySelector('.map-search-results-close');
+        if (!btn) return;
+        btn.addEventListener('click', (ev) => {
+            ev.stopPropagation();
+            const input = document.getElementById('map-search-input');
+            const clearBtn = document.getElementById('map-search-clear');
+            if (input) { input.value = ''; input.blur(); }
+            if (clearBtn) clearBtn.hidden = true;
+            if (this.searchDebounceId) {
+                clearTimeout(this.searchDebounceId);
+                this.searchDebounceId = null;
+            }
+            this._searchResults = [];
+            this.clearSearchResultPin();
+            this.clearSearchResults();
+        });
+    }
+
+    // Great-circle distance in metres. Small enough that we compute per row
+    // during render — cheaper than pulling in a geo library for one call.
+    haversineMeters(lat1, lon1, lat2, lon2) {
+        const R = 6371000;
+        const toRad = (d) => d * Math.PI / 180;
+        const dLat = toRad(lat2 - lat1);
+        const dLon = toRad(lon2 - lon1);
+        const a = Math.sin(dLat / 2) ** 2
+            + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+        return 2 * R * Math.asin(Math.sqrt(a));
+    }
+
+    // Same thresholds as next-maneuver-banner.js so the units feel consistent
+    // across the app (US convention — matches Valhalla units=miles).
+    formatDistanceMeters(meters) {
+        if (meters == null || !Number.isFinite(meters)) return '';
+        const feet = meters * 3.28084;
+        if (feet < 1000) return `${Math.round(feet / 10) * 10} ft`;
+        const miles = meters / 1609.344;
+        if (miles < 10) return `${miles.toFixed(1)} mi`;
+        return `${Math.round(miles)} mi`;
     }
 
     primaryLabel(r) {
@@ -780,24 +960,59 @@ export class MapDisplay {
         }[c]));
     }
 
-    selectSearchResult(r) {
+    // Preview a result: highlight its pin and move the camera to it, but
+    // leave the results card open and the input focused so the user can
+    // keep scrolling and previewing other rows. Committing (routing / final
+    // pick) is a separate action — see the chevron handler in renderSearchResults.
+    selectSearchResult(r, idx) {
         if (!r || !this.map) return;
         this.followVehicle = false;
-        this.updateSearchResultPin(r.lat, r.lon);
+        // Re-emit all pins with the new selected index so the previous
+        // highlight fades back to the muted color and this one lights up.
+        if (typeof idx === 'number') this.setSelectedResultPin(idx);
+
+        // Leave room at the bottom of the viewport for the mobile bottom
+        // card, otherwise the pin lands behind it. On desktop the card
+        // isn't repositioned, so bottom padding stays at the baseline.
+        const padding = this.cameraPaddingForResultsCard();
 
         // Fit to bbox when available (Nominatim returns [south, north, west, east]),
         // otherwise fly to point at zoom 15.
         if (r.bbox && r.bbox.length === 4) {
             const [south, north, west, east] = r.bbox;
             this.map.fitBounds([[west, south], [east, north]], {
-                padding: 60, maxZoom: 17, duration: 700
+                padding, maxZoom: 17, duration: 700
             });
         } else {
-            this.map.flyTo({ center: [r.lon, r.lat], zoom: 15, duration: 700 });
+            this.map.flyTo({
+                center: [r.lon, r.lat],
+                zoom: 15,
+                duration: 700,
+                padding
+            });
         }
-        this.clearSearchResults();
-        const input = document.getElementById('map-search-input');
-        if (input) input.blur();
+    }
+
+    // Compute MapLibre camera padding that keeps a fitBounds / flyTo target
+    // above whatever the results card is currently covering. Returns a
+    // {top,bottom,left,right} object with a symmetric 60 px baseline plus
+    // however much of the viewport the card actually occupies on the bottom.
+    cameraPaddingForResultsCard() {
+        const base = 60;
+        const resultsEl = document.getElementById('map-search-results');
+        let bottomExtra = 0;
+        if (resultsEl && !resultsEl.hidden && this.map) {
+            const cardRect = resultsEl.getBoundingClientRect();
+            const mapRect = this.map.getContainer().getBoundingClientRect();
+            // Only add extra when the card overlaps the bottom of the map
+            // (mobile bottom-card layout). Desktop dropdown sits at the top
+            // under the search box and doesn't need this correction.
+            const overlap = mapRect.bottom - cardRect.top;
+            if (overlap > 0 && cardRect.top > mapRect.top + mapRect.height / 2) {
+                bottomExtra = Math.min(overlap, mapRect.height * 0.6);
+            }
+        }
+        return { top: base, right: base, left: base, bottom: base + bottomExtra };
     }
 
     clearSearchResults() {
@@ -808,18 +1023,28 @@ export class MapDisplay {
         }
     }
 
-    updateSearchResultPin(lat, lon) {
+    // Push every result onto the map as a pin. `selectedIdx` (nullable)
+    // marks one pin as the currently previewed row so paint expressions
+    // can highlight it.
+    updateSearchResultPins(results, selectedIdx) {
         if (!this.map) return;
         const source = this.map.getSource('search-result');
         if (!source) return;
-        source.setData({
-            type: 'FeatureCollection',
-            features: [{
+        const features = (results || [])
+            .filter(r => typeof r.lat === 'number' && typeof r.lon === 'number')
+            .map((r, i) => ({
                 type: 'Feature',
-                geometry: { type: 'Point', coordinates: [lon, lat] },
-                properties: {}
-            }]
-        });
+                geometry: { type: 'Point', coordinates: [r.lon, r.lat] },
+                properties: { idx: i, selected: i === selectedIdx }
+            }));
+        source.setData({ type: 'FeatureCollection', features });
+    }
+
+    // Change which pin is highlighted without rebuilding the whole feature
+    // set. Used when the user taps a row to preview a different result.
+    setSelectedResultPin(selectedIdx) {
+        if (!this.map || !this._searchResults) return;
+        this.updateSearchResultPins(this._searchResults, selectedIdx);
     }
 
     clearSearchResultPin() {
@@ -1088,43 +1313,6 @@ export class MapDisplay {
 
         // Subscribe to GPS location updates
         wsClient.on('latlon', this.wsHandler);
-
-        this.wsGnssDetailsHandler = (dataGnssDetails) => {
-            this.handleGnssDetailsUpdate(dataGnssDetails);
-        }
-        wsClient.on('gnss_details',this.wsGnssDetailsHandler);
-
-        this.unsubStaleLatlon = wsClient.onStale('latlon', () => {
-            this.markLocationStale();
-        });
-        this.unsubStaleGnss = wsClient.onStale('gnss_details', () => {
-            this.speed = null;
-            this.heading = null;
-            if (this.currentPosition) {
-                this.currentPosition.speed = null;
-                this.currentPosition.heading = null;
-                this.updateLocationInfo(this.currentPosition.lat, this.currentPosition.lng, null, null);
-            }
-        });
-    }
-
-    markLocationStale() {
-        const infoEl = document.getElementById('location-info');
-        if (infoEl) {
-            const statusEl = infoEl.querySelector('.location-status');
-            if (statusEl) {
-                statusEl.innerHTML = 'Waiting for GPS...';
-            }
-        }
-    }
-
-    handleGnssDetailsUpdate(dataGnssDetails) {
-        if (this.currentPosition) {
-            this.currentPosition.speed = dataGnssDetails.speedOverGround;
-            this.currentPosition.heading = dataGnssDetails.courseOverGround;
-        }
-        this.speed = dataGnssDetails.speedOverGround;
-        this.heading = dataGnssDetails.courseOverGround;
     }
 
     handleLocationUpdate(data) {
@@ -1140,9 +1328,7 @@ export class MapDisplay {
         this.currentPosition = {
             lat: latitude,
             lng: longitude,
-            accuracy: accuracy || null,
-            speed: this.speed,
-            heading: this.heading
+            accuracy: accuracy || null
         };
 
         // Update location on map
@@ -1160,33 +1346,23 @@ export class MapDisplay {
             });
         }
 
-        // Update location info display
-        this.updateLocationInfo(latitude, longitude, this.speed, this.heading);
-
         // Push GPS tick into the next-maneuver banner if a route is active.
         // The banner handles its own no-op when no route is set — no need
         // to gate on route state here.
         if (this.nextManeuverBanner) {
             this.nextManeuverBanner.setPosition(latitude, longitude);
+            // Mirror the banner's current-maneuver index into the compact
+            // nav drawer so "remaining time / distance" ticks down as we
+            // drive. Cheap DOM writes only when the index actually advances.
+            if (this.turnList) {
+                this.turnList.setNavProgress(this.nextManeuverBanner.getCurrentManeuverIndex());
+            }
         }
 
         // Off-route recomputation. No-op if no route is active. Fires at
         // most once per 30 s and only after 3 consecutive off-route ticks
         // — see maybeRecomputeOffRoute for the guardrails.
         this.maybeRecomputeOffRoute(latitude, longitude);
-    }
-
-    updateLocationInfo(lat, lng, speed, heading) {
-        const infoEl = document.getElementById('location-info');
-        if (infoEl) {
-            const statusEl = infoEl.querySelector('.location-status');
-            if (statusEl) {
-                let text = `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
-                text += ` <br /> ${units.formatSpeed(speed)} ${units.speedLabel()}`;
-                statusEl.innerHTML = text;
-                statusEl.classList.remove('error');
-            }
-        }
     }
 
     centerOnLocation() {
@@ -1219,15 +1395,6 @@ export class MapDisplay {
             wsClient.off('latlon', this.wsHandler);
             this.wsHandler = null;
         }
-
-        // Remove Gnss Details WebSocket listener
-        if (this.wsGnssDetailsHandler)  {
-            wsClient.off('gnss_details',this.wsGnssDetailsHandler);
-            this.wsGnssDetailsHandler = null;
-        }
-
-        if (this.unsubStaleLatlon) this.unsubStaleLatlon();
-        if (this.unsubStaleGnss) this.unsubStaleGnss();
 
         // Detach the simulator listener installed in initMap.
         if (this._simUnsub) {

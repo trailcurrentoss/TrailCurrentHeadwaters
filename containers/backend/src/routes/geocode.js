@@ -227,7 +227,7 @@ module.exports = () => {
         }
         if (noBundleInstalled()) return noBundleResponse(res);
 
-        const limitN = Math.min(Math.max(parseInt(limit, 10) || 8, 1), 20);
+        const limitN = Math.min(Math.max(parseInt(limit, 10) || 8, 1), 25);
         const qs = [
             `q=${encodeURIComponent(q.trim())}`,
             `limit=${limitN}`,

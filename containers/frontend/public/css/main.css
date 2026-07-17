@@ -2479,19 +2479,6 @@ body {
     height: 20px;
 }
 
-.location-info {
-    position: absolute;
-    top: 72px; /* Sits below .map-search (which owns top:16px) */
-    left: 16px;
-    background: var(--bg-primary);
-    border: 1px solid var(--border-color);
-    border-radius: 8px;
-    padding: 8px 12px;
-    z-index: 1000;
-    width: 65%;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
-}
-
 /* ===== Map search box ===== */
 .map-search {
     position: absolute;
@@ -2540,44 +2527,6 @@ body {
 
 .map-search-input::placeholder {
     color: var(--text-muted, var(--text-secondary));
-}
-
-/* "Restrict search to current map view" toggle. Sits inline with the
-   search input's trailing controls. Two visual states: inactive
-   (subtle icon) and active (primary color background). */
-.map-search-bounded {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 28px;
-    height: 28px;
-    padding: 0;
-    margin-right: 4px;
-    border: 1px solid transparent;
-    border-radius: 6px;
-    background: transparent;
-    color: var(--text-secondary);
-    cursor: pointer;
-    transition: background 0.1s ease, color 0.1s ease, border-color 0.1s ease;
-    flex-shrink: 0;
-}
-.map-search-bounded:hover {
-    color: var(--text-primary);
-    background: var(--bg-secondary);
-}
-.map-search-bounded--active {
-    color: #ffffff;
-    background: var(--primary);
-    border-color: var(--primary);
-}
-.map-search-bounded--active:hover {
-    background: var(--primary);
-    color: #ffffff;
-    filter: brightness(1.08);
-}
-.map-search-bounded svg {
-    width: 16px;
-    height: 16px;
 }
 
 .map-search-clear {
@@ -2668,6 +2617,27 @@ body {
     text-align: center;
 }
 
+/* Distance from vehicle GPS → result. Sits to the right of the primary/
+   secondary text, before the trailing "directions" chevron. Muted so the
+   place name stays the visual anchor. */
+.map-search-result-distance {
+    flex-shrink: 0;
+    align-self: center;
+    color: var(--text-secondary);
+    font-size: 0.75rem;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    padding: 2px 6px;
+    background: var(--bg-secondary);
+    border-radius: 6px;
+}
+
+/* Drag-handle affordance at the top of the results list. Only visible in
+   the mobile bottom-card layout (see @media (max-width: 480px) below). */
+.map-search-results-handle {
+    display: none;
+}
+
 /* Approximate hint on search rows where the query asked for a housenumber
    that OSM doesn't have. The row itself is left visually normal; the hint
    is a small line that reads like a caption. */
@@ -2688,16 +2658,6 @@ body {
 }
 .map-search-result--approximate .map-search-result-icon {
     color: var(--warning, #b45309);
-}
-
-.location-status {
-    font-size: 0.875rem;
-    color: var(--text-secondary);
-    font-family: monospace;
-}
-
-.location-status.error {
-    color: var(--danger);
 }
 
 /* Current location marker */
@@ -2791,13 +2751,6 @@ body {
         right: 16px;
     }
 
-    .location-info {
-        left: 16px;
-        right: 16px;
-        top: 68px;
-        text-align: center;
-    }
-
     .map-search {
         left: 16px;
         right: 64px; /* leaves gap for map-controls column */
@@ -2812,6 +2765,125 @@ body {
     .map-btn svg {
         width: 18px;
         height: 18px;
+    }
+
+}
+
+/* Safety net: [hidden] should already give us display:none, but explicit
+   !important guarantees the search drawer clears even if a future author
+   rule sets `display: block` on `.map-search-results`. Without this we
+   saw the empty drawer background linger after `clearSearchResults()`. */
+.map-search-results[hidden] { display: none !important; }
+
+/* Close button is drawer chrome — hide it on any layout that isn't the
+   mobile bottom drawer. The inline input clear button already covers the
+   desktop reset case. */
+.map-search-results-close-wrap {
+    display: none;
+}
+
+/* Bottom-drawer layout for the search results — applies to all "mobile"
+   viewports including landscape phones and small tablets, matching the
+   turn-list drawer breakpoint so the two surfaces feel like the same
+   drawer swap. Anything wider gets the desktop dropdown / left rail. */
+@media (max-width: 900px) {
+    /* Lift the <ul> out of the search-box flow and pin it just above the
+       app's fixed bottom nav (.bottom-nav at 80 px + safe-area). Without
+       the nav offset the last row hides behind the nav bar and never
+       scrolls into view. Top padding reserves a 40 px band for the
+       drag-handle + close button (both absolutely positioned inside it). */
+    .map-search-results {
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: calc(80px + env(safe-area-inset-bottom, 0px));
+        margin: 0;
+        padding: 40px 8px 8px;
+        border-radius: 16px 16px 0 0;
+        border-left: none;
+        border-right: none;
+        border-bottom: none;
+        box-shadow: 0 -6px 20px rgba(0, 0, 0, 0.3);
+        max-height: 55vh;
+        z-index: 1002; /* above .map-search (1001) and .map-controls */
+        overscroll-behavior: contain;
+    }
+
+    /* Drag-handle pill — centered horizontally in the top band. Non-
+       interactive, purely a visual affordance for the drawer edge. */
+    .map-search-results-handle {
+        display: block;
+        list-style: none;
+        position: absolute;
+        top: 8px;
+        left: 50%;
+        transform: translateX(-50%);
+        margin: 0;
+        width: 40px;
+        height: 4px;
+        border-radius: 2px;
+        background: var(--border-color);
+    }
+
+    /* Give each row a bit more vertical padding for touch targets. */
+    .map-search-result {
+        padding: 12px 14px;
+    }
+
+    /* Close button pinned to the drawer's top-right corner. Full reset
+       of the search surface — clears input, pins, drawer. Drawer-only;
+       desktop uses the inline clear button inside the input instead. */
+    .map-search-results-close-wrap {
+        display: block;
+        position: absolute;
+        top: 6px;
+        right: 8px;
+        margin: 0;
+        padding: 0;
+        z-index: 2;
+    }
+    .map-search-results-close {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 32px;
+        height: 32px;
+        padding: 0;
+        border: none;
+        border-radius: 8px;
+        background: var(--bg-secondary);
+        color: var(--text-secondary);
+        cursor: pointer;
+    }
+    .map-search-results-close:active {
+        background: var(--danger, #e94b3c);
+        color: #ffffff;
+    }
+    .map-search-results-close svg {
+        width: 18px;
+        height: 18px;
+    }
+}
+
+/* Desktop / large screens: promote the results dropdown into a persistent
+   left rail that mirrors the settings-v2-rail treatment (tinted background,
+   fills the vertical space below the search box, rounded outline). Breakpoint
+   matches the settings-v2 WIDE_MIN_WIDTH so the two layouts flip in sync. */
+@media (min-width: 1120px) {
+    .map-search-results {
+        margin-top: 8px;
+        max-height: calc(100vh - 120px);
+        min-height: 240px;
+        background: var(--bg-secondary);
+        border-radius: 12px;
+        box-shadow: 0 8px 28px rgba(0, 0, 0, 0.32);
+        padding: 8px 0;
+    }
+    /* Inside the rail, the result rows read better against the tinted
+       background with a slightly stronger hover / selected state. */
+    .map-search-result:hover,
+    .map-search-result:focus {
+        background: var(--bg-primary);
     }
 }
 
@@ -2963,10 +3035,13 @@ body {
     .next-maneuver-instruction { font-size: 0.9rem; }
 }
 
-/* Turn-list panel — slides in from the right when a route is active. */
+/* Turn-list panel — slides in from the right when a route is active.
+   Top offset clears the .map-search box (top:16 + ~52 input) so the two
+   don't collide on mid-width screens where the search extends past its
+   own column into the turn-list's horizontal range. */
 .turn-list-slot {
     position: absolute;
-    top: 0;
+    top: 68px;
     right: 0;
     bottom: 0;
     width: 320px;
@@ -3235,9 +3310,17 @@ body {
     background: var(--primary);
     color: #ffffff;
     border-color: var(--primary);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
 }
 .tl-btn--go:hover:not([disabled]) {
     filter: brightness(1.08);
+}
+.tl-btn--go svg {
+    width: 16px;
+    height: 16px;
 }
 .tl-btn--danger {
     display: inline-flex;
@@ -3258,8 +3341,10 @@ body {
     height: 16px;
 }
 
-/* Actions bar at the top of the trip body (holds "End Route"). Sticks to
-   the top of the scrollable step list so it's always in view. */
+/* Actions bar at the top of the trip body (holds "Go" in the preview
+   state). Sticks to the top of the scrollable step list so it's always
+   in view. The --footer variant pins the End Route button at the bottom
+   of the expanded nav drawer instead. */
 .turn-list-actions {
     position: sticky;
     top: 0;
@@ -3267,6 +3352,98 @@ body {
     padding: 10px 14px;
     background: var(--bg-primary);
     border-bottom: 1px solid var(--border);
+}
+.turn-list-actions--footer {
+    top: auto;
+    bottom: 0;
+    border-top: 1px solid var(--border);
+    border-bottom: none;
+}
+
+/* ===== Nav-mode drawer (post-Go) ===== */
+
+/* In nav mode the standard header (title + close X) collapses — the
+   metric row IS the header, and End Route replaces the close X. */
+.turn-list--nav .turn-list-header {
+    display: none;
+}
+
+/* Metric row: arrival time / remaining time / remaining distance +
+   expand-collapse chevron. This is the entire drawer when compact; it
+   sits above the step list when expanded. */
+.tl-nav-metrics {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 12px 12px 12px 16px;
+    background: var(--bg-secondary);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+    cursor: pointer;   /* whole row taps to expand when compact */
+}
+.turn-list--nav:not(.turn-list--nav-compact) .tl-nav-metrics {
+    cursor: default;
+}
+.tl-nav-metric {
+    flex: 1;
+    min-width: 0;
+    text-align: left;
+}
+.tl-nav-metric-value {
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+.tl-nav-metric-label {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-secondary);
+    margin-top: 2px;
+}
+.tl-nav-toggle {
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    border: none;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+}
+.tl-nav-toggle:hover {
+    background: var(--bg-primary);
+    color: var(--text-primary);
+}
+.tl-nav-toggle svg {
+    width: 22px;
+    height: 22px;
+}
+
+/* Compact nav: the drawer sizes to its content (the metric row). Uses
+   `.turn-list.turn-list--nav-compact` for higher specificity than the
+   plain `.turn-list` inside the mobile media query, so these overrides
+   actually win regardless of source order. */
+.turn-list.turn-list--nav-compact {
+    top: auto;
+    height: auto;
+    max-height: none;
+}
+.turn-list.turn-list--nav-compact .turn-list-body {
+    padding: 0;
+    overflow: hidden;
+}
+
+/* Passed maneuvers in the expanded step list — subtly greyed so the
+   user can see which turns they've already made. */
+.turn-list-step--passed {
+    opacity: 0.5;
 }
 .tl-hint {
     color: var(--text-secondary);
@@ -3358,22 +3535,53 @@ body {
     font-family: monospace;
 }
 
-/* Narrow screens: full-width panel that slides up from the bottom */
-@media (max-width: 640px) {
+/* Narrow screens: full-width panel that slides up from the bottom. The
+   bottom edge sits above the app's fixed .bottom-nav (80 px + safe area);
+   without the offset the "End" / close controls hide behind the nav bar.
+   Breakpoint matches the search-results drawer so both surfaces flip
+   between "bottom drawer" and "side panel" together. */
+@media (max-width: 900px) {
+    /* Fix the slot to the viewport (not to .page-map), same trick the
+       search drawer uses. Otherwise .page-map already carries its own
+       `bottom: calc(80 + safe)` in narrow layout and the slot's matching
+       offset stacks on top, floating the drawer ~160 px above the
+       viewport bottom instead of hugging the nav bar. */
     .turn-list-slot {
+        position: fixed;
+        left: 0;
+        right: 0;
         width: 100%;
+        max-width: 100%;
         top: auto;
         height: 55%;
+        bottom: calc(80px + env(safe-area-inset-bottom, 0px));
+        z-index: 1002;
     }
+    /* Drawer look: edge-to-edge (no side/bottom border), rounded only at
+       the top, shadow pointing upward toward the map. */
     .turn-list {
         top: 0;
         right: 0;
         bottom: 0;
         left: 0;
         border-radius: 12px 12px 0 0;
+        border-left: none;
+        border-right: none;
+        border-bottom: none;
+        box-shadow: 0 -6px 20px rgba(0, 0, 0, 0.3);
     }
     .turn-list--hidden {
-        transform: translateY(calc(100% + 24px));
+        transform: translateY(calc(100% + 24px + 80px));
+    }
+
+    /* Compact nav on mobile — collapse the slot itself to content height
+       so the drawer no longer reserves 55 vh of screen. Without this the
+       inner drawer shrunk but the invisible slot around it still occupied
+       half the viewport, so tapping collapse just "hid the directions"
+       while the map was still hidden behind the empty slot area. */
+    .turn-list-slot.turn-list-slot--nav-compact {
+        top: auto;
+        height: auto;
     }
 }
 

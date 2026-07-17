@@ -244,6 +244,13 @@ export class NextManeuverBanner {
         this._render(dist);
     }
 
+    // Consumers (e.g. the compact navigation drawer) read this to compute
+    // remaining time / distance by summing forward from _currentIdx across
+    // the flat maneuver list — avoids duplicating advance logic.
+    getCurrentManeuverIndex() {
+        return this._currentIdx;
+    }
+
     clear() {
         this._maneuvers = null;
         this._currentIdx = 0;

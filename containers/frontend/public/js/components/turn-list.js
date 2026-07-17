@@ -81,9 +81,17 @@ export class TurnList {
         this._searchSeq = 0;
         this._listeners = {
             'close': [], 'origin-search': [], 'origin-chosen': [],
-            'route-confirm': [], 'maneuver-click': []
+            'route-confirm': [], 'maneuver-click': [], 'go': []
         };
         this._escHandler = null;
+        // Nav-mode state. `_flatManeuvers` is a flat list of every maneuver
+        // across all legs (built during setTrip); `_navProgressIdx` advances
+        // as GPS ticks come in so we can sum "time / distance remaining"
+        // forward from the current position. `_navExpanded` controls whether
+        // the compact ETA bar or the full trip view is showing.
+        this._flatManeuvers = [];
+        this._navProgressIdx = 0;
+        this._navExpanded = false;
     }
 
     on(event, fn) {
@@ -152,8 +160,39 @@ export class TurnList {
     setTrip(trip) {
         this._trip = trip;
         this._state = 'trip';
+        // Flatten the maneuver list once per trip so nav-mode's per-tick
+        // "remaining" computation is a cheap forward-sum instead of a
+        // nested walk.
+        this._flatManeuvers = [];
+        (trip?.legs || []).forEach((leg) => {
+            (leg.maneuvers || []).forEach((m) => this._flatManeuvers.push(m));
+        });
+        this._navProgressIdx = 0;
+        this._navExpanded = false;
         this._render();
         if (this.rootEl) this.rootEl.classList.remove('turn-list--hidden');
+    }
+
+    // Move from "trip" (route preview) to "nav" (compact drawer with live
+    // ETA / remaining metrics, tap-to-expand for the full step list + end
+    // route). Called after the user taps Go in the preview drawer.
+    setNav() {
+        if (!this._trip) return;
+        this._state = 'nav';
+        this._navExpanded = false;
+        this._render();
+        if (this.rootEl) this.rootEl.classList.remove('turn-list--hidden');
+    }
+
+    // Called on each GPS tick while navigating. `idx` is the index into the
+    // flattened maneuver list — sourced from next-maneuver-banner so both
+    // components agree on progress. Updates the compact metrics in place
+    // (no full re-render of the drawer).
+    setNavProgress(idx) {
+        if (this._state !== 'nav' || typeof idx !== 'number') return;
+        if (idx === this._navProgressIdx) return;
+        this._navProgressIdx = idx;
+        this._updateNavMetrics();
     }
 
     setError(message) {
@@ -216,7 +255,15 @@ export class TurnList {
         this._destination = null;
         this._origin = null;
         this._state = 'hidden';
-        if (this.rootEl) this.rootEl.classList.add('turn-list--hidden');
+        this._flatManeuvers = [];
+        this._navProgressIdx = 0;
+        this._navExpanded = false;
+        if (this.rootEl) {
+            this.rootEl.classList.add('turn-list--hidden');
+            this.rootEl.classList.remove('turn-list--nav', 'turn-list--nav-compact');
+            const slot = this.rootEl.parentElement;
+            if (slot) slot.classList.remove('turn-list-slot--nav-compact');
+        }
     }
 
     destroy() {
@@ -230,7 +277,7 @@ export class TurnList {
         this._trip = null;
         this._listeners = {
             'close': [], 'origin-search': [], 'origin-chosen': [],
-            'route-confirm': [], 'maneuver-click': []
+            'route-confirm': [], 'maneuver-click': [], 'go': []
         };
     }
 
@@ -262,6 +309,18 @@ export class TurnList {
             `;
             bodyEl.innerHTML = this._renderTripBody();
             this._wireTripBody(bodyEl);
+            this.rootEl.classList.remove('turn-list--nav', 'turn-list--nav-compact');
+            this._syncSlotClass();
+        } else if (this._state === 'nav') {
+            // Compact drawer has no header — the ETA row IS the header.
+            // Expanded drawer reuses the metric row at the top of the body
+            // so the tap-target chevron stays visible while scrolling.
+            titleEl.textContent = '';
+            bodyEl.innerHTML = this._renderNavBody();
+            this._wireNavBody(bodyEl);
+            this.rootEl.classList.add('turn-list--nav');
+            this.rootEl.classList.toggle('turn-list--nav-compact', !this._navExpanded);
+            this._syncSlotClass();
         } else if (this._state === 'error') {
             titleEl.textContent = 'Directions';
             bodyEl.innerHTML = `
@@ -396,20 +455,68 @@ export class TurnList {
     }
 
     _renderTripBody() {
-        const maneuvers = [];
-        (this._trip?.legs || []).forEach((leg, legIdx) => {
-            (leg.maneuvers || []).forEach((m, i) => {
-                maneuvers.push({ legIdx, indexInLeg: i, maneuver: m });
-            });
-        });
-        this._flatManeuvers = maneuvers;
-        // Big, unambiguous "End Route" button sitting at the top of the
-        // body so a user finished with directions has an obvious way out
-        // without having to hunt for the header X. Emits the same 'close'
-        // event so the map's route overlay clears and the panel dismisses.
+        // Preview state (post-route, pre-Go): user is deciding whether to
+        // commit. Prominent Go button pinned to the top of the body; the
+        // header X still lets the user discard the route. Committing (Go)
+        // hands off to the compact nav drawer via setNav().
         return `
             <div class="turn-list-actions">
-                <button type="button" class="tl-btn tl-btn--danger" id="tl-end-route">
+                <button type="button" class="tl-btn tl-btn--go" id="tl-preview-go">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true">
+                        <polygon points="5 3 19 12 5 21 5 3"></polygon>
+                    </svg>
+                    Go
+                </button>
+            </div>
+            ${this._renderStepList()}
+        `;
+    }
+
+    _wireTripBody(bodyEl) {
+        const goBtn = bodyEl.querySelector('#tl-preview-go');
+        if (goBtn) goBtn.addEventListener('click', () => {
+            this._emit('go');
+            this.setNav();
+        });
+        this._wireStepClicks(bodyEl);
+    }
+
+    // Nav body — compact when collapsed (metrics only, tap to expand),
+    // full step list + End Route when expanded. The metric row's DOM ids
+    // are stable so _updateNavMetrics can rewrite them without a rebuild
+    // that would kill the current scroll position of the step list.
+    _renderNavBody() {
+        const metrics = this._computeRemaining();
+        const metricsRow = `
+            <div class="tl-nav-metrics" id="tl-nav-metrics">
+                <div class="tl-nav-metric">
+                    <div class="tl-nav-metric-value" id="tl-nav-eta">${escapeHtml(metrics.etaText)}</div>
+                    <div class="tl-nav-metric-label">Arrival</div>
+                </div>
+                <div class="tl-nav-metric">
+                    <div class="tl-nav-metric-value" id="tl-nav-time">${escapeHtml(metrics.timeText)}</div>
+                    <div class="tl-nav-metric-label">Remaining</div>
+                </div>
+                <div class="tl-nav-metric">
+                    <div class="tl-nav-metric-value" id="tl-nav-dist">${escapeHtml(metrics.distText)}</div>
+                    <div class="tl-nav-metric-label">Distance</div>
+                </div>
+                <button type="button" class="tl-nav-toggle" id="tl-nav-toggle"
+                        aria-label="${this._navExpanded ? 'Collapse directions' : 'Expand directions'}">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true">
+                        ${this._navExpanded
+                            ? '<polyline points="6 15 12 9 18 15"></polyline>'
+                            : '<polyline points="6 9 12 15 18 9"></polyline>'}
+                    </svg>
+                </button>
+            </div>
+        `;
+        if (!this._navExpanded) return metricsRow;
+        return `
+            ${metricsRow}
+            ${this._renderStepList()}
+            <div class="turn-list-actions turn-list-actions--footer">
+                <button type="button" class="tl-btn tl-btn--danger" id="tl-nav-end">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
                         <line x1="18" y1="6" x2="6" y2="18"></line>
                         <line x1="6" y1="6" x2="18" y2="18"></line>
@@ -417,16 +524,93 @@ export class TurnList {
                     End Route
                 </button>
             </div>
+        `;
+    }
+
+    _wireNavBody(bodyEl) {
+        // Whole compact drawer is a tap target (per user spec) — clicking
+        // anywhere on the metric row expands the drawer. In expanded mode
+        // the toggle button collapses it; the End Route button ends nav.
+        const metricsRow = bodyEl.querySelector('#tl-nav-metrics');
+        if (metricsRow && !this._navExpanded) {
+            metricsRow.addEventListener('click', () => {
+                this._navExpanded = true;
+                this._render();
+            });
+        } else if (metricsRow) {
+            // In expanded mode we only want the toggle chevron to collapse;
+            // clicks elsewhere in the metric row shouldn't accidentally close
+            // the drawer while the user is reading it.
+            const toggle = bodyEl.querySelector('#tl-nav-toggle');
+            if (toggle) toggle.addEventListener('click', (ev) => {
+                ev.stopPropagation();
+                this._navExpanded = false;
+                this._render();
+            });
+        }
+        const endBtn = bodyEl.querySelector('#tl-nav-end');
+        if (endBtn) endBtn.addEventListener('click', (ev) => {
+            ev.stopPropagation();
+            this._emit('close');
+        });
+        this._wireStepClicks(bodyEl);
+    }
+
+    // The .turn-list-slot's height is what actually reserves screen real
+    // estate on mobile (55 % of viewport). To make compact nav shrink the
+    // drawer to just the metric row, we mark the slot itself so its CSS
+    // rule can drop it to auto-height. Kept in sync with every render so a
+    // state transition never leaves a stale class.
+    _syncSlotClass() {
+        const slot = this.rootEl?.parentElement;
+        if (!slot) return;
+        slot.classList.toggle(
+            'turn-list-slot--nav-compact',
+            this._state === 'nav' && !this._navExpanded
+        );
+    }
+
+    _updateNavMetrics() {
+        if (this._state !== 'nav' || !this.host) return;
+        const metrics = this._computeRemaining();
+        const eta  = this.host.querySelector('#tl-nav-eta');
+        const time = this.host.querySelector('#tl-nav-time');
+        const dist = this.host.querySelector('#tl-nav-dist');
+        if (eta)  eta.textContent  = metrics.etaText;
+        if (time) time.textContent = metrics.timeText;
+        if (dist) dist.textContent = metrics.distText;
+    }
+
+    _computeRemaining() {
+        // Sum every maneuver from _navProgressIdx onward. Uses the same
+        // fields Valhalla returns in trip.summary (time = seconds, length
+        // = miles) so units line up with the rest of the routing UI.
+        let secs = 0, miles = 0;
+        for (let i = this._navProgressIdx; i < (this._flatManeuvers || []).length; i++) {
+            const m = this._flatManeuvers[i];
+            if (typeof m.time === 'number') secs += m.time;
+            if (typeof m.length === 'number') miles += m.length;
+        }
+        const now = new Date();
+        const eta = new Date(now.getTime() + secs * 1000);
+        const etaText = eta.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+        return { etaText, timeText: formatDurationMin(secs), distText: formatDistance(miles) };
+    }
+
+    _renderStepList() {
+        const maneuvers = this._flatManeuvers || [];
+        return `
             <ol class="turn-list-steps" id="turn-list-steps">
-                ${maneuvers.map(({ maneuver: m }, i) => {
+                ${maneuvers.map((m, i) => {
                     const primary = escapeHtml(m.instruction || MANEUVER_TYPE[m.type] || 'Continue');
                     const streets = (m.street_names && m.street_names.length)
                         ? escapeHtml(m.street_names.join(' / '))
                         : '';
                     const dist = formatDistance(m.length);
                     const dur = formatDurationMin(m.time);
+                    const passed = i < this._navProgressIdx ? ' turn-list-step--passed' : '';
                     return `
-                        <li class="turn-list-step" data-idx="${i}">
+                        <li class="turn-list-step${passed}" data-idx="${i}">
                             <div class="turn-list-step-icon">${escapeHtml(String(i + 1))}</div>
                             <div class="turn-list-step-body">
                                 <div class="turn-list-step-primary">${primary}</div>
@@ -440,15 +624,12 @@ export class TurnList {
         `;
     }
 
-    _wireTripBody(bodyEl) {
-        const endBtn = bodyEl.querySelector('#tl-end-route');
-        if (endBtn) endBtn.addEventListener('click', () => this._emit('close'));
-
+    _wireStepClicks(bodyEl) {
         bodyEl.querySelectorAll('.turn-list-step').forEach((li) => {
             li.addEventListener('click', () => {
                 const idx = parseInt(li.dataset.idx, 10);
-                const entry = (this._flatManeuvers || [])[idx];
-                if (entry) this._emit('maneuver-click', entry.maneuver, idx);
+                const m = (this._flatManeuvers || [])[idx];
+                if (m) this._emit('maneuver-click', m, idx);
             });
         });
     }
