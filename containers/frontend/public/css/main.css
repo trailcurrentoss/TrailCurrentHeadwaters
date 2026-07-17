@@ -8973,6 +8973,12 @@ input[type="range"] {
     margin: 0 auto;
     padding: 36px 40px calc(80px + env(safe-area-inset-bottom, 0px));
 }
+@media (min-width: 1200px) {
+    .settings-v2-detail-inner { max-width: 1040px; }
+}
+@media (min-width: 1600px) {
+    .settings-v2-detail-inner { max-width: 1240px; }
+}
 .settings-v2-detail-header {
     margin-bottom: 22px;
 }

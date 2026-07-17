@@ -91,7 +91,7 @@ export class AlertHost {
                     aria-label="${escapeHtml(label)}"
                     data-alert-action="goto-alarms">
                 ${BELL_SVG}
-                <span class="alert-bell-badge" ${has ? '' : 'hidden'}>${count > 99 ? '99+' : count}</span>
+                ${has ? `<span class="alert-bell-badge">${count > 99 ? '99+' : count}</span>` : ''}
             </button>
         `;
     }
