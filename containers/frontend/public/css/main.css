@@ -8113,25 +8113,6 @@ input[type="range"] {
  * are unchanged.
  */
 
-/* --- Config: firmware + WiFi side-by-side, module list full-width ------ */
-@media (min-width: 1240px) {
-    .app-shell[data-mode="camping"] .page-config {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 20px;
-        align-items: start;
-    }
-    .app-shell[data-mode="camping"] .page-config > h1,
-    .app-shell[data-mode="camping"] .page-config > h2,
-    .app-shell[data-mode="camping"] .page-config > .config-container,
-    .app-shell[data-mode="camping"] .page-config > .modal {
-        grid-column: 1 / -1;
-    }
-    .app-shell[data-mode="camping"] .page-config > .card {
-        margin: 0;
-    }
-}
-
 /* --- Alarms: sensor list + history side panel on wide ------------------ */
 .alarms-layout { display: block; }
 .alarm-history-panel { display: none; }
@@ -9123,6 +9104,9 @@ input[type="range"] {
 .settings-v2-gitem-body {
     flex: 1;
     min-width: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
 }
 .settings-v2-gitem-title {
     font-size: 14px;

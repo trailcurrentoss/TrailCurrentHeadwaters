@@ -18,6 +18,7 @@ import { drivingPage } from './pages/driving.js';
 import { storagePage } from './pages/storage.js';
 import { alarmBell } from './components/alarm-bell.js';
 import * as notifications from './notifications.js';
+import { gnssSimulator } from './services/gnss-simulator.js';
 
 class App {
     constructor() {
@@ -174,6 +175,11 @@ class App {
 
         // Alarm bell + banner + pill are managed by AppShell via AlertHost
         // (Phase 3). The alarmBell singleton is started inside AppShell.mount.
+
+        // Install the GNSS-simulator emit wrapper BEFORE wsClient.connect() so
+        // any latlon/gnss_details frames that arrive before consumers subscribe
+        // still pass through the interceptor.
+        gnssSimulator.init();
 
         // Connect WebSocket
         wsClient.connect();

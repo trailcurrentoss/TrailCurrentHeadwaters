@@ -1,6 +1,7 @@
 // Map display component using MapLibre GL JS for vector tiles
 import { API, wsClient } from '../api.js';
 import { units } from '../services/units.js';
+import { gnssSimulator, LIVE_MARKER_COLOR, SIMULATED_MARKER_COLOR } from '../services/gnss-simulator.js';
 import { RouteOverlay } from './route-overlay.js';
 import { TurnList } from './turn-list.js';
 import { NextManeuverBanner } from './next-maneuver-banner.js';
@@ -292,6 +293,10 @@ export class MapDisplay {
             this.setupRouting();
         });
 
+        // React to Simulate Location toggle at runtime — recolor the dot
+        // without waiting for the next fix so the switch feels immediate.
+        this._simUnsub = gnssSimulator.onChange(() => this.applyLocationMarkerColor());
+
         // Long-press (mobile) + right-click (desktop) both fire this event
         // in MapLibre. Show a small "Route to here" popup near the click.
         this.map.on('contextmenu', (e) => this.onMapContextMenu(e));
@@ -364,6 +369,11 @@ export class MapDisplay {
             }
         });
 
+        // Marker color reflects live vs. simulated GNSS. When the user toggles
+        // "Simulate Location" in settings the layers restyle via
+        // applyLocationMarkerColor() so the dot signals "not live data".
+        const markerColor = gnssSimulator.getMarkerColor();
+
         // Add accuracy circle layer
         this.map.addLayer({
             id: 'user-accuracy',
@@ -371,10 +381,10 @@ export class MapDisplay {
             source: 'user-location',
             paint: {
                 'circle-radius': ['get', 'accuracy_radius'],
-                'circle-color': '#4a90d9',
+                'circle-color': markerColor,
                 'circle-opacity': 0.15,
                 'circle-stroke-width': 1,
-                'circle-stroke-color': '#4a90d9'
+                'circle-stroke-color': markerColor
             },
             filter: ['==', ['get', 'type'], 'accuracy']
         });
@@ -386,7 +396,7 @@ export class MapDisplay {
             source: 'user-location',
             paint: {
                 'circle-radius': 8,
-                'circle-color': '#4a90d9',
+                'circle-color': markerColor,
                 'circle-stroke-width': 3,
                 'circle-stroke-color': '#ffffff'
             },
@@ -400,7 +410,7 @@ export class MapDisplay {
             source: 'user-location',
             paint: {
                 'circle-radius': 16,
-                'circle-color': '#4a90d9',
+                'circle-color': markerColor,
                 'circle-opacity': 0.3
             },
             filter: ['==', ['get', 'type'], 'location']
@@ -433,6 +443,25 @@ export class MapDisplay {
                 'circle-stroke-color': '#ffffff'
             }
         });
+    }
+
+    // Restyle the three user-location layers to reflect the current live vs.
+    // simulated GNSS color. Safe to call before map load — bails out when the
+    // layers aren't present yet.
+    applyLocationMarkerColor() {
+        if (!this.map) return;
+        const color = gnssSimulator.getMarkerColor();
+        const layers = [
+            ['user-accuracy',      'circle-color'],
+            ['user-accuracy',      'circle-stroke-color'],
+            ['user-location-dot',  'circle-color'],
+            ['user-location-pulse','circle-color'],
+        ];
+        for (const [layerId, prop] of layers) {
+            if (this.map.getLayer(layerId)) {
+                try { this.map.setPaintProperty(layerId, prop, color); } catch (_) {}
+            }
+        }
     }
 
     updateLocationOnMap(lat, lng, accuracy) {
@@ -1143,6 +1172,12 @@ export class MapDisplay {
 
         if (this.unsubStaleLatlon) this.unsubStaleLatlon();
         if (this.unsubStaleGnss) this.unsubStaleGnss();
+
+        // Detach the simulator listener installed in initMap.
+        if (this._simUnsub) {
+            this._simUnsub();
+            this._simUnsub = null;
+        }
 
         // Stop watching data-theme; otherwise a stale observer keeps firing
         // setStyle on a destroyed map after the page navigates away.

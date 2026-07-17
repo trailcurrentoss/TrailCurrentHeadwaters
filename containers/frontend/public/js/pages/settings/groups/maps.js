@@ -7,6 +7,7 @@
 // consolidation implementation.
 
 import { API, AuthStore, wsClient } from '../../../api.js';
+import { gnssSimulator } from '../../../services/gnss-simulator.js';
 
 let uploadsList = [];
 let currentBundle = null;
@@ -59,11 +60,12 @@ function escapeHtml(s) {
 export const mapsGroup = {
     meta: {
         id: 'maps',
-        title: 'Maps',
+        title: 'Maps & Location',
         icon: 'map-outline',
         sub: 'Offline map bundles',
     },
     searchIndex: [
+        { label: 'Simulate Location',     kw: 'simulate location fake gps demo screen recording privacy',   anchor: 'simulate-location-card' },
         { label: 'Installed Map Bundle',  kw: 'map bundle north america osm extract rollback installed', anchor: 'current-bundle-details' },
         { label: 'Upload Map Bundle',     kw: 'map upload bundle zip build california north america',    anchor: 'map-upload-form' },
         { label: 'External Storage Maps', kw: 'external usb sd card import scan',                        anchor: 'external-storage-card' },
@@ -74,6 +76,42 @@ export const mapsGroup = {
             <section class="page-maps">
                 <h1 class="section-title">Maps</h1>
                 <div class="settings-container" id="maps-container">
+
+                    <!-- Simulate Location — pins the map + driving dashboard to
+                         a fixed lat/lon so screen recordings don't reveal the
+                         real vehicle position. When active, incoming Bearing
+                         GNSS is dropped and a synthetic fix is published each
+                         second; the map's location dot recolors to signal that
+                         the position is no longer live. -->
+                    <div class="card settings-item-vertical" id="simulate-location-card">
+                        <div class="settings-item-header">
+                            <span class="settings-label">Simulate Location</span>
+                            <p class="settings-description">
+                                Ignore live GNSS from Bearing and pin the map + driving dashboard to a fixed lat/lon.
+                                Useful for screen recordings — the location dot changes color to make clear the position is simulated.
+                            </p>
+                        </div>
+                        <div class="settings-item">
+                            <span class="settings-label">Enabled</span>
+                            <button type="button" class="toggle-switch" id="simulate-location-toggle"
+                                    aria-pressed="false"></button>
+                        </div>
+                        <div id="simulate-location-coords" class="settings-units-container" hidden>
+                            <div class="settings-units-row">
+                                <label class="settings-units-label" for="simulate-lat-input">Latitude</label>
+                                <input type="number" step="0.0001" id="simulate-lat-input"
+                                       class="password-input" style="max-width: 12rem;">
+                            </div>
+                            <div class="settings-units-row">
+                                <label class="settings-units-label" for="simulate-lon-input">Longitude</label>
+                                <input type="number" step="0.0001" id="simulate-lon-input"
+                                       class="password-input" style="max-width: 12rem;">
+                            </div>
+                            <div class="settings-units-row" style="justify-content: flex-end; gap: 0.5rem;">
+                                <button type="button" class="settings-units-btn" id="simulate-reset-btn">Reset to default</button>
+                            </div>
+                        </div>
+                    </div>
 
                     <!-- Currently installed bundle -->
                     <div class="card settings-item-vertical">
@@ -163,6 +201,7 @@ export const mapsGroup = {
         this.renderCurrent();
         this.setupUploadForm();
         this.setupRollbackButton();
+        this.setupSimulateLocation();
 
         // Real-time status updates from map-watcher via WebSocket
         this._wsHandler = (data) => this.handleStatusUpdate(data);
@@ -465,6 +504,50 @@ export const mapsGroup = {
         });
     },
 
+    setupSimulateLocation() {
+        const toggle = document.getElementById('simulate-location-toggle');
+        const coordsBox = document.getElementById('simulate-location-coords');
+        const latInput = document.getElementById('simulate-lat-input');
+        const lonInput = document.getElementById('simulate-lon-input');
+        const resetBtn = document.getElementById('simulate-reset-btn');
+        if (!toggle || !coordsBox || !latInput || !lonInput || !resetBtn) return;
+
+        const applyState = () => {
+            const active = gnssSimulator.isActive();
+            const { latitude, longitude } = gnssSimulator.getCoords();
+            toggle.classList.toggle('active', active);
+            toggle.setAttribute('aria-pressed', active ? 'true' : 'false');
+            coordsBox.hidden = !active;
+            // Only overwrite the input if the user isn't editing — avoids
+            // clobbering keystrokes when onChange fires from persist().
+            if (document.activeElement !== latInput) latInput.value = latitude.toFixed(4);
+            if (document.activeElement !== lonInput) lonInput.value = longitude.toFixed(4);
+        };
+
+        applyState();
+        this._simUnsub = gnssSimulator.onChange(applyState);
+
+        toggle.addEventListener('click', () => {
+            if (gnssSimulator.isActive()) gnssSimulator.disable();
+            else gnssSimulator.enable();
+        });
+
+        const commitCoords = () => {
+            const lat = parseFloat(latInput.value);
+            const lon = parseFloat(lonInput.value);
+            if (isFinite(lat) && isFinite(lon)) {
+                gnssSimulator.setCoords(lat, lon);
+            }
+        };
+        latInput.addEventListener('change', commitCoords);
+        lonInput.addEventListener('change', commitCoords);
+
+        resetBtn.addEventListener('click', () => {
+            const { latitude, longitude } = gnssSimulator.getDefaultCoords();
+            gnssSimulator.setCoords(latitude, longitude);
+        });
+    },
+
     // --- Phase 8: sneakernet (USB/SD) load path -----------------------------
 
     async scanExternalNow() {
@@ -572,6 +655,10 @@ export const mapsGroup = {
     },
 
     cleanup() {
+        if (this._simUnsub) {
+            this._simUnsub();
+            this._simUnsub = null;
+        }
         if (this._wsHandler) {
             wsClient.off('map_status', this._wsHandler);
             this._wsHandler = null;
