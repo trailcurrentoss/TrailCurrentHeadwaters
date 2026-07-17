@@ -31,6 +31,7 @@ const playbillRoutes = require('./routes/playbill');
 const peregrineRoutes = require('./routes/peregrine');
 const alarmsRoutes = require('./routes/alarms');
 const geocodeRoutes = require('./routes/geocode');
+const trailsRoutes = require('./routes/trails');
 
 const app = express();
 const server = http.createServer(app);
@@ -97,6 +98,7 @@ async function startServer() {
         app.use('/api/peregrine', peregrineRoutes(db));
         app.use('/api/alarms', alarmsRoutes(db));
         app.use('/api/geocode', geocodeRoutes());
+        app.use('/api/trails', trailsRoutes(db));
 
         // Error handling middleware
         app.use((err, req, res, next) => {

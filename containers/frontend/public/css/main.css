@@ -2491,6 +2491,172 @@ body {
     font-family: inherit;
 }
 
+/* Trail button (dual-mode: pick / clear). Tint red when in clear mode
+   so the state contrast is obvious at a glance. */
+.map-trail-btn[data-mode="clear"] {
+    color: var(--danger, #e94b3c);
+    border-color: var(--danger, #e94b3c);
+}
+
+/* ===== Trail picker drawer ===== */
+.trail-picker {
+    position: absolute;
+    z-index: 1002;
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+.trail-picker[hidden] { display: none; }
+
+.trail-picker-handle {
+    display: none;
+}
+.trail-picker-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px 8px;
+    border-bottom: 1px solid var(--border-color);
+}
+.trail-picker-title {
+    font-weight: 600;
+    color: var(--text-primary);
+    font-size: 0.95rem;
+}
+.trail-picker-close {
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    padding: 4px;
+    border-radius: 6px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+.trail-picker-close:hover { background: var(--bg-secondary); color: var(--text-primary); }
+
+.trail-picker-search-wrap {
+    position: relative;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border-color);
+}
+.trail-picker-search-icon {
+    position: absolute;
+    left: 22px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 16px;
+    height: 16px;
+    color: var(--text-muted);
+    pointer-events: none;
+}
+.trail-picker-search {
+    width: 100%;
+    padding: 8px 10px 8px 34px;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    font-size: 0.9rem;
+}
+.trail-picker-search:focus {
+    outline: none;
+    border-color: var(--primary);
+}
+
+.trail-picker-list {
+    list-style: none;
+    margin: 0;
+    padding: 4px 0;
+    overflow-y: auto;
+    flex: 1;
+    min-height: 0;
+}
+.trail-picker-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 16px;
+    cursor: pointer;
+    transition: background 0.12s ease;
+}
+.trail-picker-row:hover { background: var(--bg-secondary); }
+.trail-picker-swatch {
+    width: 14px;
+    height: 14px;
+    border-radius: 3px;
+    flex: 0 0 auto;
+    box-shadow: 0 0 0 1px var(--border-color) inset;
+}
+.trail-picker-name {
+    flex: 1;
+    min-width: 0;
+    color: var(--text-primary);
+    font-size: 0.95rem;
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.trail-picker-meta {
+    color: var(--text-muted);
+    font-size: 0.78rem;
+    flex: 0 0 auto;
+}
+.trail-picker-empty {
+    padding: 20px 16px;
+    color: var(--text-muted);
+    text-align: center;
+    font-size: 0.9rem;
+    list-style: none;
+}
+
+/* Wide screens: dock the picker on the right side, similar to how the
+   turn-list panel treats the same viewport range. Sits below the map
+   controls so it doesn't collide with the tracking / trail buttons. */
+@media (min-width: 900px) {
+    .trail-picker {
+        top: 72px;
+        right: 32px;
+        width: 340px;
+        max-height: calc(100% - 120px);
+        border-radius: 12px;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+    }
+}
+
+/* Narrow screens: bottom sheet. Matches the map-search-results drawer
+   breakpoint (900px) so both surfaces feel like the same drawer swap.
+   The drawer is positioned inside `.map-wrapper`, which on narrow
+   layouts already sits above the fixed bottom-nav (see .page-map's
+   `bottom: calc(80px + safe-area)` above) — so `bottom: 0` here docks
+   the sheet directly on the nav's top edge without a floating gap. */
+@media (max-width: 899.98px) {
+    .trail-picker {
+        left: 0;
+        right: 0;
+        bottom: 0;
+        max-height: 55vh;
+        border-radius: 16px 16px 0 0;
+        border-left: none;
+        border-right: none;
+        border-bottom: none;
+        box-shadow: 0 -6px 20px rgba(0, 0, 0, 0.3);
+        padding-top: 8px;
+    }
+    .trail-picker-handle {
+        display: block;
+        width: 40px;
+        height: 4px;
+        border-radius: 2px;
+        background: var(--border-color);
+        margin: 0 auto 4px;
+    }
+}
+
 /* ===== Map search box ===== */
 .map-search {
     position: absolute;
@@ -9570,4 +9736,223 @@ input[type="range"] {
     }
     .settings-v2-card { padding: 18px 16px; }
     .settings-v2-detail-title { font-size: 24px; }
+}
+
+/* Trails page — GPX track library. Inherits gutters from .main-content
+ * (same as Vehicle / Energy / Water / Air); no extra padding here. */
+
+/* Color picker: native <input type="color"> + preset swatch row.
+ * The color wheel button hides the underlying input behind a big
+ * circular swatch so it looks intentional (the raw picker input is
+ * ugly on most browsers). */
+.trail-color-picker {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    flex-wrap: wrap;
+}
+
+.trail-color-wheel {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    padding: 4px 8px 4px 4px;
+    border-radius: 999px;
+    border: 1px solid var(--border-color);
+    background: var(--bg-secondary);
+    transition: background 0.15s ease;
+}
+.trail-color-wheel:hover { background: var(--bg-card-hover, var(--bg-secondary)); }
+.trail-color-wheel input[type="color"] {
+    /* Hide the native swatch — the visible bubble below is our proxy for it. */
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    opacity: 0;
+    cursor: pointer;
+    border: none;
+    padding: 0;
+    background: none;
+}
+.trail-color-wheel-swatch {
+    position: relative;
+    isolation: isolate;
+    display: inline-block;
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+    box-shadow: 0 0 0 2px var(--bg-card), 0 0 0 4px var(--border-color);
+}
+/* Rainbow conic ring hint sits BEHIND the solid-color inner dot, so the
+ * inline background:<picked color> the JS writes stays the visible fill
+ * while the ring signals "opens a color wheel." */
+.trail-color-wheel-swatch::before {
+    content: '';
+    position: absolute;
+    inset: -6px;
+    border-radius: 50%;
+    background: conic-gradient(from 0deg,
+        #ff2d55, #ff9500, #ffcc00, #34c759, #00c7be,
+        #007aff, #5856d6, #af52de, #ff375f, #ff2d55);
+    z-index: -1;
+    opacity: 0.85;
+}
+.trail-color-wheel-label {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+}
+
+.trail-color-presets {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+.trail-color-swatch {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    border: 2px solid transparent;
+    padding: 0;
+    cursor: pointer;
+    box-shadow: 0 0 0 1px var(--border-color);
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+.trail-color-swatch:hover { transform: scale(1.08); }
+.trail-color-swatch.selected {
+    border-color: var(--text-primary);
+    box-shadow: 0 0 0 2px var(--primary);
+}
+
+/* Tabs (Trails / Trash) inside the list card */
+.trails-tabs {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    border-bottom: 1px solid var(--border-color);
+    margin-bottom: 12px;
+}
+.trails-tab {
+    background: none;
+    border: none;
+    padding: 10px 14px;
+    color: var(--text-muted);
+    font-size: 0.95rem;
+    font-weight: 600;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+    transition: color 0.15s ease, border-color 0.15s ease;
+}
+.trails-tab:hover { color: var(--text-secondary); }
+.trails-tab.active {
+    color: var(--text-primary);
+    border-bottom-color: var(--primary);
+}
+.trails-tab-count {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    font-weight: 500;
+}
+.trails-tabs-spacer { flex: 1; }
+.trails-empty-trash-btn {
+    background: none;
+    border: 1px solid var(--danger);
+    color: var(--danger);
+    padding: 6px 12px;
+    border-radius: 8px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease;
+}
+.trails-empty-trash-btn:hover:not(:disabled) {
+    background: var(--danger);
+    color: var(--btn-text);
+}
+.trails-empty-trash-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+/* Trail list rows */
+.trail-row {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 12px 4px;
+    border-bottom: 1px solid var(--border-color);
+}
+.trail-row:last-child { border-bottom: none; }
+.trail-row-swatch {
+    width: 20px;
+    height: 20px;
+    border-radius: 4px;
+    flex: 0 0 auto;
+    box-shadow: 0 0 0 1px var(--border-color) inset;
+}
+.trail-row-info {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+.trail-row-name {
+    color: var(--text-primary);
+    font-weight: 600;
+    font-size: 0.98rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.trail-row-meta {
+    color: var(--text-muted);
+    font-size: 0.82rem;
+}
+.trail-row-actions {
+    display: flex;
+    gap: 8px;
+    flex: 0 0 auto;
+}
+.trail-action-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    font-size: 0.85rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+.trail-action-btn:hover:not(:disabled) {
+    border-color: var(--primary);
+    color: var(--primary);
+}
+.trail-action-btn:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+.trail-action-btn-danger:hover:not(:disabled) {
+    border-color: var(--danger);
+    color: var(--danger);
+}
+
+/* Narrow screens: collapse action labels; stack row into two lines when
+ * the info + actions can't share one row without truncating names. */
+@media (max-width: 640px) {
+    .trail-row { flex-wrap: wrap; }
+    .trail-row-info { flex-basis: calc(100% - 34px); }
+    .trail-row-actions {
+        flex-basis: 100%;
+        justify-content: flex-end;
+    }
+    .trail-action-btn span { display: none; }
+    .trail-action-btn { padding: 8px 10px; }
 }

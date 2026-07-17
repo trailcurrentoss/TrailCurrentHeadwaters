@@ -474,6 +474,81 @@ class API {
             body: JSON.stringify({ sources, targets, costing })
         });
     }
+
+    // Trails — user-uploaded GPX tracks with a display color. See
+    // backend/src/routes/trails.js for the storage layout.
+    static async getTrails() {
+        return this.request('/trails');
+    }
+
+    static async getTrashedTrails() {
+        return this.request('/trails/trash');
+    }
+
+    // Create a trail from a native File (from a <input type="file">).
+    // Uses XHR so callers can wire an upload progress bar if they want;
+    // returns a promise resolving to the created trail JSON.
+    static createTrail({ name, color, file }, onProgress) {
+        return new Promise((resolve, reject) => {
+            const form = new FormData();
+            form.append('name', name);
+            form.append('color', color);
+            form.append('gpx', file, file.name);
+
+            const xhr = new XMLHttpRequest();
+            xhr.open('POST', `${API_BASE}/trails`);
+            const token = AuthStore.getToken();
+            const apiKey = this.getApiKey();
+            // Mirrors request()'s "apiKey wins if both are present". XHR's
+            // setRequestHeader appends with a comma on repeat calls, so we
+            // only set one.
+            if (apiKey) xhr.setRequestHeader('Authorization', apiKey);
+            else if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+
+            if (onProgress) {
+                xhr.upload.onprogress = (e) => {
+                    if (e.lengthComputable) onProgress(e.loaded / e.total);
+                };
+            }
+            xhr.onload = () => {
+                let data = {};
+                try { data = JSON.parse(xhr.responseText); } catch (_) {}
+                if (xhr.status >= 200 && xhr.status < 300) resolve(data);
+                else reject(new Error(data.error || `Upload failed (${xhr.status})`));
+            };
+            xhr.onerror = () => reject(new Error('Network error'));
+            xhr.send(form);
+        });
+    }
+
+    static async updateTrail(id, data) {
+        return this.request(`/trails/${encodeURIComponent(id)}`, {
+            method: 'PUT',
+            body: JSON.stringify(data)
+        });
+    }
+
+    static async deleteTrail(id) {
+        return this.request(`/trails/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    }
+
+    static async restoreTrail(id) {
+        return this.request(`/trails/${encodeURIComponent(id)}/restore`, { method: 'POST' });
+    }
+
+    static async permanentDeleteTrail(id) {
+        return this.request(`/trails/${encodeURIComponent(id)}/permanent`, { method: 'DELETE' });
+    }
+
+    static async emptyTrailsTrash() {
+        return this.request('/trails/trash/empty', { method: 'POST' });
+    }
+
+    // Server-parsed GeoJSON for an active trail. Backend converts GPX to
+    // GeoJSON at upload time, so the map page never touches XML.
+    static async getTrailGeoJSON(id) {
+        return this.request(`/trails/${encodeURIComponent(id)}/geojson`);
+    }
 }
 
 // WebSocket connection for real-time updates

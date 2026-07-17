@@ -11,6 +11,7 @@ import { airqualityPage } from './pages/airquality.js';
 import { settingsPage } from './pages/settings/index.js';
 import { loginPage } from './pages/login.js';
 import { mapPage } from './pages/map.js';
+import { trailsPage } from './pages/trails.js';
 import { wizardPage } from './pages/wizard.js';
 import { playbillPage } from './pages/playbill.js';
 import { peregrinePage } from './pages/peregrine.js';
@@ -129,6 +130,7 @@ class App {
             .register('water', waterPage)
             .register('airquality', airqualityPage)
             .register('map', mapPage)
+            .register('trails', trailsPage)
             .register('playbill', playbillPage)
             .register('peregrine', peregrinePage)
             .register('settings', settingsPage);

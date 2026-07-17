@@ -39,6 +39,7 @@ services:
       - ./data/firmware:/app/firmware
       - ./data/deployments:/app/deployments
       - ./data/maps:/app/maps
+      - ./data/trails:/app/trails
       - /sys:/host/sys:ro
       - /proc:/host/proc:ro
       # Host root FS bind-mount so system-stats can statvfs the actual host

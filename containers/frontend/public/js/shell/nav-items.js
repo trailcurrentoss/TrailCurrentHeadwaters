@@ -31,6 +31,11 @@ export const PRIMARY_ITEMS = [
         page: 'map',
         label: 'Map',
         svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle></svg>'
+    },
+    {
+        page: 'trails',
+        label: 'Trails',
+        svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20l4-8 4 4 4-10 4 14"></path></svg>'
     }
 ];
 
@@ -58,10 +63,15 @@ export const SYSTEM_ITEMS = [
     }
 ];
 
-// The narrow bottom-nav shows the same primary group plus a "More" overflow
-// that lists everything else. Items shown as bottom-nav primaries (kept small
-// so labels fit at 375px).
-export const BOTTOM_NAV_PRIMARY = PRIMARY_ITEMS;
+// The narrow bottom-nav has room for six tabs + "More" at 375 px. The
+// sidebar carries every primary item (there's vertical room); the bottom
+// nav keeps the six most-frequently-used ones and pushes the rest into
+// the More menu alongside the System items.
+export const BOTTOM_NAV_PRIMARY = PRIMARY_ITEMS.filter(it => it.page !== 'trails');
 
-// Everything else lives in the More menu.
-export const BOTTOM_NAV_OVERFLOW = SYSTEM_ITEMS;
+// Trails rides in the More menu on narrow screens. Ordered above System
+// items so it stays adjacent to the primary group it belongs to.
+export const BOTTOM_NAV_OVERFLOW = [
+    ...PRIMARY_ITEMS.filter(it => it.page === 'trails'),
+    ...SYSTEM_ITEMS
+];

@@ -8,6 +8,12 @@ import { NextManeuverBanner } from './next-maneuver-banner.js';
 const SEARCH_DEBOUNCE_MS = 300;
 const SEARCH_MIN_CHARS = 2;
 
+function escapeHtml(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }[c]));
+}
+
 export class MapDisplay {
     constructor(containerId) {
         this.containerId = containerId;
@@ -66,6 +72,37 @@ export class MapDisplay {
                     <button id="track-mode-btn" class="map-btn map-track-btn" type="button"
                             title="Tracking mode" aria-label="Tracking mode">
                     </button>
+                    <!-- Dual-mode trail button: acts as "browse trails" when no
+                         trail is loaded, "clear trail" once one is on the map.
+                         The icon + title swap in _updateTrailButton(). -->
+                    <button id="trail-btn" class="map-btn map-trail-btn" type="button"
+                            data-mode="pick"
+                            title="Browse trails" aria-label="Browse trails">
+                    </button>
+                </div>
+                <!-- Trail picker drawer — opened by the map's trail button
+                     when no trail is loaded. Bottom sheet on narrow screens,
+                     side panel on wide screens (via CSS media queries). -->
+                <div id="trail-picker" class="trail-picker" hidden>
+                    <div class="trail-picker-handle" aria-hidden="true"></div>
+                    <div class="trail-picker-header">
+                        <span class="trail-picker-title">Load Trail</span>
+                        <button id="trail-picker-close" class="trail-picker-close" type="button" aria-label="Close">
+                            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <line x1="18" y1="6" x2="6" y2="18"></line>
+                                <line x1="6" y1="6" x2="18" y2="18"></line>
+                            </svg>
+                        </button>
+                    </div>
+                    <div class="trail-picker-search-wrap">
+                        <svg class="trail-picker-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                            <circle cx="11" cy="11" r="7"></circle>
+                            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                        </svg>
+                        <input type="text" id="trail-picker-search" class="trail-picker-search"
+                               placeholder="Search trails..." autocomplete="off" spellcheck="false">
+                    </div>
+                    <ul id="trail-picker-list" class="trail-picker-list" role="listbox"></ul>
                 </div>
                 <!-- Long-press / right-click context menu: appears at the click
                      position with a single "Route to here" action. Populated
@@ -206,16 +243,42 @@ export class MapDisplay {
         // Load MapLibre CSS + JS + PMTiles adapter. Order matters:
         // pmtiles registers into maplibregl.addProtocol at map-init time,
         // so both scripts must be present before initMap runs.
+        //
+        // Reuses an existing <script> tag if one is already in the DOM,
+        // but waits for its `load` event (or checks a `data-loaded` marker
+        // for tags that finished earlier). Naive `if (tag) resolve()`
+        // returns while the script is still executing, which lets a
+        // second MapDisplay instance race past into initMap with the
+        // globals still undefined — exactly what happens when
+        // initAuthenticatedApp navigates twice at boot.
         const loadScript = (src) => new Promise((resolve, reject) => {
-            // Reuse an existing tag if the script is already in the DOM
-            // (defends against duplicate loads across page transitions).
-            if (document.querySelector(`script[src="${src}"]`)) { resolve(); return; }
+            const existing = document.querySelector(`script[src="${src}"]`);
+            if (existing) {
+                if (existing.dataset.loaded === '1') return resolve();
+                existing.addEventListener('load', () => resolve(), { once: true });
+                existing.addEventListener('error',
+                    () => reject(new Error(`Failed to load ${src}`)), { once: true });
+                return;
+            }
             const s = document.createElement('script');
             s.src = src;
-            s.onload = () => resolve();
+            s.onload = () => { s.dataset.loaded = '1'; resolve(); };
             s.onerror = () => reject(new Error(`Failed to load ${src}`));
             document.head.appendChild(s);
         });
+
+        // Poll until a global appears. Even after `load` fires, some UMD
+        // bundles set their global in a microtask; a second pass through
+        // the event loop lets that settle before initMap reads it.
+        const waitForGlobal = async (name, timeoutMs = 5000) => {
+            const start = Date.now();
+            while (typeof window[name] === 'undefined') {
+                if (Date.now() - start > timeoutMs) {
+                    throw new Error(`${name} script loaded but global never appeared`);
+                }
+                await new Promise(r => setTimeout(r, 25));
+            }
+        };
 
         if (!document.querySelector('link[href="/libs/maplibre/maplibre-gl.css"]')) {
             const link = document.createElement('link');
@@ -226,9 +289,11 @@ export class MapDisplay {
 
         if (!window.maplibregl) {
             await loadScript('/libs/maplibre/maplibre-gl.js');
+            await waitForGlobal('maplibregl');
         }
         if (!window.pmtiles) {
             await loadScript('/libs/pmtiles/pmtiles.js');
+            await waitForGlobal('pmtiles');
         }
         this.maplibreLoaded = true;
     }
@@ -271,10 +336,16 @@ export class MapDisplay {
             if (this.trackingMode !== 'free') this.setTrackingMode('free');
         });
 
-        // Add location marker when map loads
+        // Add location marker when map loads. `_mapLoaded` is set here so
+        // showTrail() (which can race against the load event) can tell
+        // whether it's safe to add sources/layers immediately vs. defer
+        // until this callback runs.
+        this._mapLoaded = false;
         this.map.on('load', () => {
+            this._mapLoaded = true;
             this.addLocationLayers();
             this.setupRouting();
+            if (this._pendingTrail) this._applyPendingTrail();
         });
 
         // React to Simulate Location toggle at runtime — recolor the dot
@@ -403,6 +474,8 @@ export class MapDisplay {
                 const trip = this.routeOverlay.getTrip();
                 if (trip) this.routeOverlay.setRoute(trip);
             }
+            // Re-apply the pending trail after a theme swap wipes sources.
+            if (this._pendingTrail) this._applyPendingTrail();
         });
     }
 
@@ -495,6 +568,109 @@ export class MapDisplay {
         });
     }
 
+    // Trail overlay — a single polyline drawn in the trail's user-picked
+    // color. Called by the Trails page via router deep-link (#map/trail/<id>).
+    // Owns its own source ('trail-line') and layers ('trail-line-casing',
+    // 'trail-line-main'). Only called AFTER `_mapLoaded` flips true inside
+    // initMap's on('load') handler, so we can trust the style is ready
+    // without gating on `isStyleLoaded()` — that method has quirks and
+    // returns false transiently even after the load event has fired.
+    _ensureTrailLayers() {
+        if (!this.map) return false;
+        if (this.map.getSource('trail-line')) return true;
+        try {
+            this.map.addSource('trail-line', {
+                type: 'geojson',
+                data: { type: 'FeatureCollection', features: [] }
+            });
+            // Casing gives contrast against light basemap styles — matches
+            // how route-overlay draws the routing line.
+            this.map.addLayer({
+                id: 'trail-line-casing',
+                type: 'line',
+                source: 'trail-line',
+                layout: { 'line-cap': 'round', 'line-join': 'round' },
+                paint: {
+                    'line-color': '#ffffff',
+                    'line-width': 8,
+                    'line-opacity': 0.7
+                }
+            });
+            this.map.addLayer({
+                id: 'trail-line-main',
+                type: 'line',
+                source: 'trail-line',
+                layout: { 'line-cap': 'round', 'line-join': 'round' },
+                paint: {
+                    'line-color': this._pendingTrail?.color || '#43a047',
+                    'line-width': 5,
+                    'line-opacity': 1.0
+                }
+            });
+            return true;
+        } catch (err) {
+            console.error('[trail] failed to add trail source/layers:', err);
+            return false;
+        }
+    }
+
+    // geojson: server-parsed FeatureCollection with a `bbox` and a single
+    // LineString feature (produced by the backend at upload time).
+    // color:   hex string like '#a1b2c3'.
+    showTrail(geojson, color) {
+        this._pendingTrail = { geojson, color };
+        if (!this.map) return;
+        // `_mapLoaded` flips to true inside initMap's on('load') handler.
+        // If it's already true, apply immediately; otherwise leave the
+        // pending state — the on('load') handler picks it up. Using a
+        // class flag rather than `map.loaded()` because the latter also
+        // requires all tiles to be idle, which may still be false long
+        // after the style is loaded and ready for sources/layers.
+        if (this._mapLoaded) this._applyPendingTrail();
+    }
+
+    _applyPendingTrail() {
+        if (!this._pendingTrail || !this.map) return;
+        const { geojson, color } = this._pendingTrail;
+
+        const bbox = geojson && Array.isArray(geojson.bbox) ? geojson.bbox : null;
+        if (!bbox || bbox.length !== 4) return;
+
+        if (!this._ensureTrailLayers()) return;
+
+        if (color) {
+            try { this.map.setPaintProperty('trail-line-main', 'line-color', color); }
+            catch (_) {}
+        }
+        const src = this.map.getSource('trail-line');
+        if (!src) return;
+        src.setData(geojson);
+
+        // Drop out of vehicle-follow so the next GPS fix doesn't recenter
+        // the camera on the vehicle and undo the fit-to-trail below. The
+        // user can tap the recenter button to go back to tracking.
+        this.setTrackingMode('free');
+
+        const [w, s, e, n] = bbox;
+        this.map.fitBounds([[w, s], [e, n]], {
+            padding: { top: 100, bottom: 80, left: 60, right: 60 },
+            maxZoom: 16,
+            duration: 700
+        });
+
+        // Flip the map button into "clear trail" mode.
+        this._updateTrailButton();
+    }
+
+    clearTrail() {
+        this._pendingTrail = null;
+        if (this.map) {
+            const src = this.map.getSource('trail-line');
+            if (src) src.setData({ type: 'FeatureCollection', features: [] });
+        }
+        this._updateTrailButton();
+    }
+
     // Restyle the three user-location layers to reflect the current live vs.
     // simulated GNSS color. Safe to call before map load — bails out when the
     // layers aren't present yet.
@@ -566,6 +742,150 @@ export class MapDisplay {
             trackBtn.addEventListener('click', () => this.cycleTrackingMode());
         }
         this.updateTrackModeButton();
+
+        // Dual-mode trail button. Behavior is driven off `_hasTrailLoaded`
+        // (instance state) rather than a DOM data-attribute — dataset
+        // reads can get out of sync with the class flag when the button
+        // markup is re-rendered, but this instance boolean is the single
+        // source of truth.
+        const trailBtn = document.getElementById('trail-btn');
+        if (trailBtn) {
+            trailBtn.addEventListener('click', () => {
+                if (this._hasTrailLoaded) this.clearTrail();
+                else this.openTrailPicker();
+            });
+        }
+        this._updateTrailButton();
+        this._setupTrailPicker();
+    }
+
+    // Refresh the trail button's icon + title based on current overlay
+    // state. Called after showTrail applies + after clearTrail wipes.
+    _updateTrailButton() {
+        const btn = document.getElementById('trail-btn');
+        if (!btn) return;
+        this._hasTrailLoaded = !!(this.map && this.map.getSource
+            && this.map.getSource('trail-line')
+            && this._pendingTrail);
+        if (this._hasTrailLoaded) {
+            btn.dataset.mode = 'clear';
+            btn.title = 'Clear trail';
+            btn.setAttribute('aria-label', 'Clear trail');
+            btn.innerHTML = `
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                     stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                     aria-hidden="true">
+                    <path d="M4 20l4-8 4 4 4-10 4 14"></path>
+                    <line x1="4" y1="4" x2="20" y2="20"></line>
+                </svg>`;
+        } else {
+            btn.dataset.mode = 'pick';
+            btn.title = 'Browse trails';
+            btn.setAttribute('aria-label', 'Browse trails');
+            btn.innerHTML = `
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                     stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                     aria-hidden="true">
+                    <path d="M4 20l4-8 4 4 4-10 4 14"></path>
+                </svg>`;
+        }
+    }
+
+    _setupTrailPicker() {
+        const drawer = document.getElementById('trail-picker');
+        const closeBtn = document.getElementById('trail-picker-close');
+        const search = document.getElementById('trail-picker-search');
+        const list = document.getElementById('trail-picker-list');
+        if (!drawer || !closeBtn || !search || !list) return;
+
+        closeBtn.addEventListener('click', () => this.closeTrailPicker());
+
+        // Live search — filters the cached list; no debounce needed for
+        // the ~dozens of trails a user typically has.
+        search.addEventListener('input', () => this._renderTrailPickerList());
+
+        // Row click via delegation — data-id carries the trail id.
+        list.addEventListener('click', async (e) => {
+            const li = e.target.closest('[data-id]');
+            if (!li) return;
+            const id = li.dataset.id;
+            this.closeTrailPicker();
+            await this._loadTrailById(id);
+        });
+    }
+
+    async openTrailPicker() {
+        const drawer = document.getElementById('trail-picker');
+        const search = document.getElementById('trail-picker-search');
+        const list = document.getElementById('trail-picker-list');
+        if (!drawer || !list) return;
+
+        // Fetch fresh list every open so a trail added in another tab
+        // shows up immediately.
+        list.innerHTML = '<li class="trail-picker-empty">Loading…</li>';
+        drawer.hidden = false;
+        try {
+            this._trailPickerCache = await API.getTrails();
+        } catch (err) {
+            console.error('[trail-picker] failed to load trails:', err);
+            this._trailPickerCache = [];
+        }
+        this._renderTrailPickerList();
+        if (search) {
+            search.value = '';
+            // Auto-focus only on wide screens — on phones a focus() would
+            // open the on-screen keyboard immediately, covering the list.
+            if (window.matchMedia('(min-width: 900px)').matches) {
+                setTimeout(() => search.focus(), 50);
+            }
+        }
+    }
+
+    closeTrailPicker() {
+        const drawer = document.getElementById('trail-picker');
+        if (drawer) drawer.hidden = true;
+    }
+
+    _renderTrailPickerList() {
+        const list = document.getElementById('trail-picker-list');
+        const search = document.getElementById('trail-picker-search');
+        if (!list) return;
+        const q = ((search && search.value) || '').trim().toLowerCase();
+        const all = Array.isArray(this._trailPickerCache) ? this._trailPickerCache : [];
+        const filtered = q
+            ? all.filter(t => (t.name || '').toLowerCase().includes(q))
+            : all;
+        if (!filtered.length) {
+            list.innerHTML = `<li class="trail-picker-empty">${
+                all.length ? 'No trails match your search.' : 'No trails saved yet.'
+            }</li>`;
+            return;
+        }
+        list.innerHTML = filtered.map(t => {
+            const name = escapeHtml(t.name || 'Untitled');
+            const color = escapeHtml(t.color || '#888888');
+            const pts = t.bounds?.pointCount
+                ? `${t.bounds.pointCount.toLocaleString()} points`
+                : '';
+            return `
+                <li class="trail-picker-row" data-id="${escapeHtml(t.id)}" role="option">
+                    <span class="trail-picker-swatch" style="background:${color}"></span>
+                    <span class="trail-picker-name">${name}</span>
+                    <span class="trail-picker-meta">${pts}</span>
+                </li>
+            `;
+        }).join('');
+    }
+
+    async _loadTrailById(id) {
+        try {
+            const meta = (this._trailPickerCache || []).find(t => t.id === id);
+            const color = meta?.color || '#43a047';
+            const geojson = await API.getTrailGeoJSON(id);
+            this.showTrail(geojson, color);
+        } catch (err) {
+            console.error('[trail-picker] failed to load trail:', err);
+        }
     }
 
     // Icon markup for each tracking mode. Kept as a static map so
@@ -1515,3 +1835,4 @@ export class MapDisplay {
         this.hasReceivedLocation = false;
     }
 }
+
