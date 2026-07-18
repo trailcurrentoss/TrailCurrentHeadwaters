@@ -64,7 +64,11 @@ export class AppShell {
         target.innerHTML = this._renderShell();
         this.root = target.querySelector('.app-shell');
         this._applyLayout(this._layout);
-        this._applyMode(modeController.getMode());
+        // Sync mode DOM only — content dispatch is skipped because the
+        // router hasn't been initialized yet and the mode page handler
+        // hasn't been registered. app.js drives the initial render
+        // (router.navigate / setModePageHandler) after mount() returns.
+        this._syncModeDOM(modeController.getMode());
 
         // Mount nav components into their slots
         this.sidebarNav.mount(
@@ -272,7 +276,7 @@ export class AppShell {
         this.root.dataset.layout = layout;
     }
 
-    _applyMode(mode) {
+    _syncModeDOM(mode) {
         if (!this.root) return;
         this.root.dataset.mode = mode;
 
@@ -282,6 +286,11 @@ export class AppShell {
             btn.classList.toggle('active', active);
             btn.setAttribute('aria-selected', String(active));
         });
+    }
+
+    _applyMode(mode) {
+        this._syncModeDOM(mode);
+        if (!this.root) return;
 
         // Camping = router owns #main-content, nav visible.
         // Driving/Storage = mode page owns #main-content, nav hidden (CSS via

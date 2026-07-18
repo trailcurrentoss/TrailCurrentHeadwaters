@@ -1,0 +1,4 @@
+# spreet binary is downloaded on demand — don't commit platform-specific bytes.
+bin/
+# scratch space used during builds
+tmp/

@@ -111,12 +111,9 @@ class App {
         this.showAppUI();
 
         // Initialize router — bound to #main-content owned by AppShell.
-        // NOTE ordering: AppShell.mount() (called from showAppUI() above)
-        // triggers _applyMode → router.navigate() during boot, BEFORE
-        // router.init has been called with the content element. That
-        // initial navigate bails out with "contentElement is null" (logged
-        // but harmless). We re-navigate below to actually render the
-        // initial page now that the router is fully wired.
+        // AppShell.mount() (from showAppUI() above) only syncs mode DOM;
+        // it does NOT dispatch content routing during initial boot. We
+        // wire the router, then trigger the initial navigate below.
         // Config, Deployments, Maps, and Alarms are no longer top-level
         // pages — they live inside the consolidated Settings screen at
         // #settings/network, #settings/deploy, #settings/maps, and

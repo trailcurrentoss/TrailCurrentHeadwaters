@@ -3118,7 +3118,9 @@ body {
     box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
     padding: 4px;
     min-width: 160px;
-    transform: translate(-8px, 8px);
+    /* Center horizontally on the tap point, place bottom edge 20 px above
+       it so the user's finger doesn't cover the menu. */
+    transform: translate(-50%, calc(-100% - 20px));
 }
 .map-context-menu[hidden] { display: none !important; }
 .map-context-menu-item {

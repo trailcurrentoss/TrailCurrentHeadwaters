@@ -42,6 +42,14 @@ export class MapDisplay {
         this._activeRoute = null;        // { destination, costing } — set on successful executeRoute
         this._lastRecomputeAt = 0;
         this._offRouteStreak = 0;        // consecutive off-route GPS ticks
+        // Currently-displayed trail id (GPX overlay). Tracked so the map
+        // page can persist it across route-mounted/unmounted cycles.
+        this._activeTrailId = null;
+        // Optional listeners the page module attaches to persist state
+        // across navigation. onRouteChange fires with { destination, costing }
+        // or null; onTrailChange fires with a trail id or null.
+        this.onRouteChange = null;
+        this.onTrailChange = null;
     }
 
     render() {
@@ -477,6 +485,10 @@ export class MapDisplay {
             // Re-apply the pending trail after a theme swap wipes sources.
             if (this._pendingTrail) this._applyPendingTrail();
         });
+
+        // Routing stack is now ready — kick a resume if the page seeded
+        // one before GPS or routing were live.
+        this._maybeResumeRoute();
     }
 
     addLocationLayers() {
@@ -617,8 +629,14 @@ export class MapDisplay {
     // geojson: server-parsed FeatureCollection with a `bbox` and a single
     // LineString feature (produced by the backend at upload time).
     // color:   hex string like '#a1b2c3'.
-    showTrail(geojson, color) {
+    // id:      optional trail id — persisted so the map page can restore
+    //          the overlay after navigating away and back.
+    showTrail(geojson, color, id = null) {
         this._pendingTrail = { geojson, color };
+        this._activeTrailId = id || null;
+        if (typeof this.onTrailChange === 'function') {
+            try { this.onTrailChange(this._activeTrailId); } catch (_) {}
+        }
         if (!this.map) return;
         // `_mapLoaded` flips to true inside initMap's on('load') handler.
         // If it's already true, apply immediately; otherwise leave the
@@ -664,11 +682,15 @@ export class MapDisplay {
 
     clearTrail() {
         this._pendingTrail = null;
+        this._activeTrailId = null;
         if (this.map) {
             const src = this.map.getSource('trail-line');
             if (src) src.setData({ type: 'FeatureCollection', features: [] });
         }
         this._updateTrailButton();
+        if (typeof this.onTrailChange === 'function') {
+            try { this.onTrailChange(null); } catch (_) {}
+        }
     }
 
     // Restyle the three user-location layers to reflect the current live vs.
@@ -882,7 +904,7 @@ export class MapDisplay {
             const meta = (this._trailPickerCache || []).find(t => t.id === id);
             const color = meta?.color || '#43a047';
             const geojson = await API.getTrailGeoJSON(id);
-            this.showTrail(geojson, color);
+            this.showTrail(geojson, color, id);
         } catch (err) {
             console.error('[trail-picker] failed to load trail:', err);
         }
@@ -955,8 +977,11 @@ export class MapDisplay {
 
         // Snap the camera to the appropriate follow pose. If we don't yet
         // have a fix, just fix the bearing so the map already looks right
-        // when the first location arrives.
-        const opts = { duration: 400 };
+        // when the first location arrives. Reset transform padding — a
+        // preceding search-result fitBounds/easeTo leaves bottom-heavy
+        // padding on the transform, which would otherwise push the follow
+        // center toward the top of the screen.
+        const opts = { duration: 400, padding: { top: 0, right: 0, bottom: 0, left: 0 } };
         if (mode === 'north-up') opts.bearing = 0;
         if (mode === 'heading-up' && Number.isFinite(this.currentHeading)) {
             opts.bearing = this.currentHeading;
@@ -1053,9 +1078,15 @@ export class MapDisplay {
         for (const km of MapDisplay.SEARCH_RADII_KM) {
             attempts.push({ ...this.bboxAroundCenter(center, km), expanded: true });
         }
+        // Final fallback: unbounded global search, still soft-biased toward
+        // the current view via lat/lon on the backend. Handles cross-country
+        // queries like searching "Chicago" from San Francisco.
+        attempts.push({ expanded: true, unbounded: true });
         for (const a of attempts) {
             const url = `/geocode/search?q=${encodeURIComponent(q)}&limit=25`
-                + `&viewbox=${a.west},${a.north},${a.east},${a.south}&bounded=1`;
+                + (a.unbounded
+                    ? ''
+                    : `&viewbox=${a.west},${a.north},${a.east},${a.south}&bounded=1`);
             let data;
             try {
                 data = await API.request(url);
@@ -1142,6 +1173,18 @@ export class MapDisplay {
         // Keep the sorted list on the instance so preview-tap and pin-select
         // stay in sync without re-fetching.
         this._searchResults = results;
+
+        // TEMP: diagnose "some results don't move the map / don't show a pin"
+        console.table(results.map((r, i) => ({
+            i,
+            name: this.primaryLabel(r),
+            lat: r.lat,
+            lon: r.lon,
+            latType: typeof r.lat,
+            lonType: typeof r.lon,
+            hasBbox: Array.isArray(r.bbox) && r.bbox.length === 4,
+            bbox: Array.isArray(r.bbox) ? r.bbox.join(',') : null
+        })));
 
         resultsEl.innerHTML = closeMarkup + handleMarkup + results.map((r, i) => {
             const primary = this.primaryLabel(r);
@@ -1255,11 +1298,25 @@ export class MapDisplay {
         const minLat = Math.min(anchor.lat, closest.lat);
         const maxLat = Math.max(anchor.lat, closest.lat);
         this.setTrackingMode('free');
-        this.map.fitBounds([[minLon, minLat], [maxLon, maxLat]], {
+        const opts = {
             padding: this.cameraPaddingForResultsCard(),
             maxZoom: 15,
             duration: 700
-        });
+        };
+        // Preflight: MapLibre silently no-ops fitBounds when a small bbox
+        // combined with a large mobile-drawer padding leaves no room for the
+        // bounds to fit at any zoom. Fall back to flyTo the midpoint.
+        const cam = this.map.cameraForBounds([[minLon, minLat], [maxLon, maxLat]], opts);
+        if (cam) {
+            this.map.easeTo({ ...cam, duration: 700 });
+        } else {
+            this.map.flyTo({
+                center: [(minLon + maxLon) / 2, (minLat + maxLat) / 2],
+                zoom: 15,
+                duration: 700,
+                padding: opts.padding
+            });
+        }
     }
 
     renderSearchError() {
@@ -1357,17 +1414,61 @@ export class MapDisplay {
         // isn't repositioned, so bottom padding stays at the baseline.
         const padding = this.cameraPaddingForResultsCard();
 
+        // TEMP: diagnose "some results don't recenter the map"
+        const beforeCenter = this.map.getCenter();
+        const beforeZoom = this.map.getZoom();
+        const mapRect = this.map.getContainer().getBoundingClientRect();
+        console.log('[selectSearchResult]', {
+            idx,
+            name: this.primaryLabel(r),
+            lat: r.lat,
+            lon: r.lon,
+            bbox: r.bbox,
+            path: (r.bbox && r.bbox.length === 4) ? 'fitBounds' : 'flyTo',
+            padding,
+            mapSize: { w: Math.round(mapRect.width), h: Math.round(mapRect.height) },
+            unpaddedH: Math.round(mapRect.height - padding.top - padding.bottom),
+            unpaddedW: Math.round(mapRect.width - padding.left - padding.right),
+            beforeCenter: [beforeCenter.lng, beforeCenter.lat],
+            beforeZoom
+        });
+        // Check camera state 900 ms later (past the 700 ms animation duration)
+        // to see if it ACTUALLY moved — sidesteps the moveend/movestart race
+        // with the GPS-driven easeTo. This is the real "did it work?" signal.
+        setTimeout(() => {
+            const c = this.map.getCenter();
+            const z = this.map.getZoom();
+            const moved = Math.abs(c.lng - beforeCenter.lng) > 1e-4
+                || Math.abs(c.lat - beforeCenter.lat) > 1e-4
+                || Math.abs(z - beforeZoom) > 0.01;
+            console.log(`[selectSearchResult] +900ms ${moved ? 'MOVED' : 'DID NOT MOVE'}`, {
+                idx,
+                name: this.primaryLabel(r),
+                afterCenter: [c.lng, c.lat],
+                afterZoom: z,
+                dLng: (c.lng - beforeCenter.lng).toFixed(6),
+                dLat: (c.lat - beforeCenter.lat).toFixed(6),
+                dZoom: (z - beforeZoom).toFixed(4)
+            });
+        }, 900);
+
         // Fit to bbox when available (Nominatim returns [south, north, west, east]),
-        // otherwise fly to point at zoom 15.
+        // otherwise fly to point at zoom 15. Preflight fitBounds with
+        // cameraForBounds — for tiny bboxes (single POIs) combined with heavy
+        // mobile drawer padding, MapLibre can't compute a valid camera and
+        // silently no-ops; fall back to flyTo so the map still recenters.
+        const fitOpts = { padding, maxZoom: 17, duration: 700 };
+        let cam = null;
         if (r.bbox && r.bbox.length === 4) {
             const [south, north, west, east] = r.bbox;
-            this.map.fitBounds([[west, south], [east, north]], {
-                padding, maxZoom: 17, duration: 700
-            });
+            cam = this.map.cameraForBounds([[west, south], [east, north]], fitOpts);
+        }
+        if (cam) {
+            this.map.easeTo({ ...cam, duration: 700 });
         } else {
             this.map.flyTo({
                 center: [r.lon, r.lat],
-                zoom: 15,
+                zoom: 17,
                 duration: 700,
                 padding
             });
@@ -1380,20 +1481,28 @@ export class MapDisplay {
     // however much of the viewport the card actually occupies on the bottom.
     cameraPaddingForResultsCard() {
         const base = 60;
+        const padding = { top: base, right: base, left: base, bottom: base };
         const resultsEl = document.getElementById('map-search-results');
-        let bottomExtra = 0;
-        if (resultsEl && !resultsEl.hidden && this.map) {
-            const cardRect = resultsEl.getBoundingClientRect();
-            const mapRect = this.map.getContainer().getBoundingClientRect();
-            // Only add extra when the card overlaps the bottom of the map
-            // (mobile bottom-card layout). Desktop dropdown sits at the top
-            // under the search box and doesn't need this correction.
-            const overlap = mapRect.bottom - cardRect.top;
-            if (overlap > 0 && cardRect.top > mapRect.top + mapRect.height / 2) {
-                bottomExtra = Math.min(overlap, mapRect.height * 0.6);
-            }
-        }
-        return { top: base, right: base, left: base, bottom: base + bottomExtra };
+        if (!resultsEl || resultsEl.hidden || !this.map) return padding;
+
+        const cardRect = resultsEl.getBoundingClientRect();
+        const mapRect = this.map.getContainer().getBoundingClientRect();
+        // Identify the mobile bottom-sheet layout by the drawer's BOTTOM edge
+        // aligning with the map's bottom edge (both anchored above the fixed
+        // bottom nav via `bottom: calc(80px + safe-area)`). Checking the
+        // drawer's TOP position instead breaks for tall drawers — with many
+        // results the drawer can reach ~55 vh, pushing its top above the map
+        // midpoint even though it's still a bottom sheet.
+        const isBottomSheet = cardRect.bottom >= mapRect.bottom - 20;
+        if (!isBottomSheet) return padding;
+
+        const overlap = mapRect.bottom - cardRect.top;
+        if (overlap <= 0) return padding;
+        // Cap at 60% of map height so a nearly-full-screen drawer still
+        // leaves a comfortable slot above it for the pin rather than
+        // collapsing the un-padded region to a sliver.
+        padding.bottom = base + Math.min(overlap, mapRect.height * 0.6);
+        return padding;
     }
 
     clearSearchResults() {
@@ -1558,6 +1667,9 @@ export class MapDisplay {
             // Route preview should show the whole trip, not follow — user
             // taps Go to start navigation, which re-enters heading-up.
             this.setTrackingMode('free');
+            if (typeof this.onRouteChange === 'function') {
+                try { this.onRouteChange({ destination, costing }); } catch (_) {}
+            }
         } catch (err) {
             console.error('[route] request failed:', err);
             let msg = 'Route request failed.';
@@ -1578,7 +1690,39 @@ export class MapDisplay {
         if (this.turnList) this.turnList.clear();
         if (this.nextManeuverBanner) this.nextManeuverBanner.clear();
         this._activeRoute = null;
+        this._pendingResumeRoute = null;
         this._offRouteStreak = 0;
+        if (typeof this.onRouteChange === 'function') {
+            try { this.onRouteChange(null); } catch (_) {}
+        }
+    }
+
+    // Restore an active route across page navigation. Called by the map
+    // page on re-entry when a route was previously running. Silent about
+    // GPS/routing readiness — dispatch is deferred until both the routing
+    // stack (setupRouting on map load) and a GPS fix are available.
+    resumeRoute(route) {
+        if (!route || !route.destination) return;
+        this._pendingResumeRoute = { destination: route.destination, costing: route.costing || 'auto' };
+        this._maybeResumeRoute();
+    }
+
+    _maybeResumeRoute() {
+        if (!this._pendingResumeRoute) return;
+        if (!this.routeOverlay || !this.turnList) return;
+        const hasGps = !!(this.currentPosition
+            && typeof this.currentPosition.lat === 'number'
+            && typeof this.currentPosition.lng === 'number');
+        if (!hasGps) return;
+        const { destination, costing } = this._pendingResumeRoute;
+        this._pendingResumeRoute = null;
+        const origin = {
+            lat: this.currentPosition.lat,
+            lon: this.currentPosition.lng,
+            name: 'Current Location',
+            kind: 'gps'
+        };
+        this.executeRoute(origin, destination, costing);
     }
 
     // Minimum distance from (lat, lon) to any point on the current route.
@@ -1737,6 +1881,9 @@ export class MapDisplay {
                 center: [longitude, latitude],
                 zoom,
                 duration: isFirstPosition ? 1000 : 500,
+                // Neutralize any leftover transform padding from search-result
+                // camera moves so the vehicle sits at the geometric center.
+                padding: { top: 0, right: 0, bottom: 0, left: 0 },
             };
             if (this.trackingMode === 'heading-up'
                     && Number.isFinite(this.currentHeading)) {
@@ -1764,6 +1911,10 @@ export class MapDisplay {
         // most once per 30 s and only after 3 consecutive off-route ticks
         // — see maybeRecomputeOffRoute for the guardrails.
         this.maybeRecomputeOffRoute(latitude, longitude);
+
+        // If the page re-entered mid-route, this is the tick that lets
+        // resumeRoute finally dispatch. No-op when nothing is pending.
+        this._maybeResumeRoute();
     }
 
     // Kept for external callers (nothing inside this file uses it anymore —

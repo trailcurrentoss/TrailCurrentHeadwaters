@@ -49,9 +49,31 @@ This file is a living document. When we add a new runtime dependency, container 
 
 ### Sprite atlas
 
-- **Source of sprite artwork:** OpenMapTiles reference sprites.
-- **License:** BSD-3-Clause (bundled alongside the styles).
-- **Where:** [`containers/frontend/public/maps-static/sprites/`](containers/frontend/public/maps-static/sprites/)
+The MapLibre sprite (packed PNG + JSON index used to render POI icons, road
+shields, and other symbol layers) is generated from several sources.
+
+- **POI icons — Mapbox Maki v8.0.0**
+  - **License:** CC0 1.0 Universal (Public Domain Dedication)
+  - **Upstream:** <https://github.com/mapbox/maki/tree/v8.0.0>
+  - **Copyright:** Mapbox and contributors, dedicated to the public domain.
+  - Icons are renamed at build time from `foo-bar.svg` → `foo_bar_11.svg` to
+    match the `{class}_11` naming the OpenMapTiles v3 style expects at
+    runtime. Additional `<class>_11.svg` aliases are generated for OMT POI
+    class values that don't map 1:1 to a Maki filename (`sports_centre` →
+    Maki `pitch`, `office` → Maki `commercial`, etc.). The alias table lives
+    in [`containers/frontend/tools/map-sprite/build.sh`](containers/frontend/tools/map-sprite/build.sh).
+- **US road shields, `oneway` arrow, `wave` pattern, ferry-terminal &
+  bicycle-rental icons** — TrailCurrent project artwork, MIT (matches the
+  rest of this repo). Preserved verbatim across sprite rebuilds via the
+  `PROTECTED` allowlist in `build.sh`.
+- **Build tool — spreet v0.13.1** (used by contributors, not shipped)
+  - **License:** MIT
+  - **Upstream:** <https://github.com/flother/spreet>
+
+- **Runtime files:**
+  [`containers/frontend/public/maps-static/sprites/`](containers/frontend/public/maps-static/sprites/)
+- **How to regenerate:**
+  [`containers/frontend/tools/map-sprite/README.md`](containers/frontend/tools/map-sprite/README.md)
 
 ### Node/npm transitive frontend deps
 

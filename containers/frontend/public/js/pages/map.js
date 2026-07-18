@@ -4,6 +4,13 @@ import { API } from '../api.js';
 
 let mapDisplay = null;
 
+// Persist across cleanup so navigating away from the map (and back) does
+// not wipe the active GPX overlay or the in-progress route. Cleared only
+// when the user explicitly clears either — MapDisplay fires onTrailChange
+// /onRouteChange with null for that.
+let savedTrailId = null;
+let savedRoute = null;   // { destination, costing }
+
 export const mapPage = {
     render() {
         return `
@@ -23,11 +30,20 @@ export const mapPage = {
     async init(subPath) {
         try {
             mapDisplay = new MapDisplay('map-display-container');
+            mapDisplay.onTrailChange = (id) => { savedTrailId = id; };
+            mapDisplay.onRouteChange = (route) => { savedRoute = route; };
             document.getElementById('map-display-container').innerHTML = mapDisplay.render();
             await mapDisplay.init();
 
-            const trailId = parseTrailIdFromSubPath(subPath);
+            // Deep-link trail takes precedence; otherwise re-hydrate the
+            // last trail the user had loaded. loadTrailOverlay both applies
+            // the overlay and re-seeds savedTrailId via onTrailChange.
+            const trailId = parseTrailIdFromSubPath(subPath) || savedTrailId;
             if (trailId) await loadTrailOverlay(trailId);
+
+            // Re-issue the previously active route. resumeRoute defers
+            // until routing is set up and GPS is available.
+            if (savedRoute) mapDisplay.resumeRoute(savedRoute);
         } catch (error) {
             console.error('Failed to initialize map:', error);
             document.getElementById('map-display-container').innerHTML =
@@ -62,7 +78,7 @@ async function loadTrailOverlay(id) {
     }
     try {
         const geojson = await API.getTrailGeoJSON(id);
-        if (mapDisplay) mapDisplay.showTrail(geojson, color);
+        if (mapDisplay) mapDisplay.showTrail(geojson, color, id);
     } catch (err) {
         console.error('[map] failed to load trail GeoJSON:', err);
     }

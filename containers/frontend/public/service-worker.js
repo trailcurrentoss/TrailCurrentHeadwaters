@@ -148,14 +148,28 @@ self.addEventListener('fetch', (event) => {
         return;
     }
 
+    // Skip Range requests entirely. PMTiles fetches slices of the tile
+    // archive with a Range header and the server responds 206 Partial
+    // Content — which the Cache API refuses to store (put() throws on
+    // any status other than 200). Letting these fall through to the
+    // browser's native fetch keeps map tile loading working and avoids
+    // the "Partial response (status code 206) is unsupported" TypeError.
+    if (request.headers.get('range')) {
+        return;
+    }
+
     // Network-first strategy: try the network, fall back to cache when offline
     event.respondWith(
         fetch(request)
             .then((networkResponse) => {
-                if (networkResponse.ok) {
+                // Only cache full 200 responses. `response.ok` is true for
+                // any 2xx, but Cache.put() explicitly rejects 206 (and
+                // opaque redirects), so gate on status === 200.
+                if (networkResponse.status === 200) {
                     const responseToCache = networkResponse.clone();
                     caches.open(CACHE_NAME)
-                        .then((cache) => cache.put(request, responseToCache));
+                        .then((cache) => cache.put(request, responseToCache))
+                        .catch(() => { /* cache write is best-effort */ });
                 }
                 return networkResponse;
             })
