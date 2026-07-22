@@ -16,6 +16,7 @@ import { alarmsGroup } from './groups/alarms.js';
 import { networkGroup } from './groups/network.js';
 import { mapsGroup } from './groups/maps.js';
 import { voiceGroup } from './groups/voice.js';
+import { camerasGroup } from './groups/cameras.js';
 import { deployGroup } from './groups/deploy.js';
 import { cloudGroup } from './groups/cloud.js';
 import { systemGroup } from './groups/system.js';
@@ -29,6 +30,7 @@ const GROUPS = [
     networkGroup,
     mapsGroup,
     voiceGroup,
+    camerasGroup,
     deployGroup,
     cloudGroup,
     systemGroup,

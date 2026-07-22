@@ -12,9 +12,14 @@ FROM node:24-slim
 # multicast and don't ship libnss-mdns). At runtime we mount the host's
 # /run/dbus and /var/run/avahi-daemon sockets so the resolver talks to
 # the host's avahi-daemon instead of needing one in the container.
+#
+# ffmpeg reads V4L2 from /dev/video* and produces MJPEG streams for the
+# camera-streamer service. UVC cameras like the C920 output MJPEG
+# natively, so ffmpeg does zero transcoding — `-c:v copy` passes JPEG
+# frames through untouched at effectively zero CPU cost.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-        ca-certificates openssl avahi-utils dbus \
+        ca-certificates openssl avahi-utils dbus ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 ENV NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt

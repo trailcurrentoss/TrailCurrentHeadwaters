@@ -549,6 +549,36 @@ class API {
     static async getTrailGeoJSON(id) {
         return this.request(`/trails/${encodeURIComponent(id)}/geojson`);
     }
+
+    // Cameras — user-added USB video capture devices. Backend enumerates
+    // /host/sys/class/video4linux/. See backend/src/routes/cameras.js.
+    static async getCameras() {
+        return this.request('/cameras');
+    }
+
+    static async getAvailableCameras() {
+        return this.request('/cameras/available');
+    }
+
+    static async addCamera(hwId, name) {
+        return this.request('/cameras', {
+            method: 'POST',
+            body: JSON.stringify({ hwId, name })
+        });
+    }
+
+    static async updateCamera(id, data) {
+        return this.request(`/cameras/${encodeURIComponent(id)}`, {
+            method: 'PATCH',
+            body: JSON.stringify(data)
+        });
+    }
+
+    static async deleteCamera(id) {
+        return this.request(`/cameras/${encodeURIComponent(id)}`, {
+            method: 'DELETE'
+        });
+    }
 }
 
 // WebSocket connection for real-time updates

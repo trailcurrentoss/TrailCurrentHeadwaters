@@ -382,7 +382,21 @@ module.exports.authMiddleware = (db) => {
             return next();
         }
 
-        const authHeader = req.headers.authorization;
+        // Auth token normally rides in the Authorization header. HTML
+        // elements that fetch resources — <img src>, <video src>, EventSource,
+        // etc. — cannot attach custom headers, so we ALSO accept the same
+        // tokens via ?token= / ?apiKey= query params. Restricted to GET so
+        // no state-changing operation ever authenticates via URL params
+        // (which can leak into logs, referer headers, and browser history).
+        let authHeader = req.headers.authorization;
+        if (!authHeader && req.method === 'GET') {
+            if (typeof req.query.token === 'string' && req.query.token) {
+                authHeader = `Bearer ${req.query.token}`;
+            } else if (typeof req.query.apiKey === 'string' && req.query.apiKey) {
+                authHeader = req.query.apiKey;
+            }
+        }
+
         const isBrowserNavigation = () => {
             const accept = req.headers.accept || '';
             return accept.includes('text/html') && !req.xhr && req.headers['x-requested-with'] !== 'XMLHttpRequest';

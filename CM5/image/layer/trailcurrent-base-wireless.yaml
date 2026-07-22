@@ -150,22 +150,6 @@ mmdebstrap:
       WantedBy=multi-user.target
       EOF
 
-    # ── disable-usb systemd service (save power) ────────────────────
-    - |
-      cat > "$1/etc/systemd/system/disable-usb.service" << 'EOF'
-      [Unit]
-      Description=Disable USB hub to save power
-      After=multi-user.target
-
-      [Service]
-      Type=oneshot
-      RemainAfterExit=yes
-      ExecStart=/bin/bash -c 'for port in /sys/bus/usb/devices/[0-9]-[0-9]; do [ -e "$port/driver" ] && echo "$(basename $port)" > /sys/bus/usb/drivers/usb/unbind || true; done'
-
-      [Install]
-      WantedBy=multi-user.target
-      EOF
-
     # ── cpu-performance systemd service ──────────────────────────────
     # Locks all CPU cores to the 'performance' governor (max frequency)
     # at boot and keeps them there. The default 'ondemand' governor was
@@ -582,7 +566,7 @@ mmdebstrap:
     - install -m 644 "$SRCROOT/layer/files/motd" "$1/etc/motd"
 
     # ── Enable all services ──────────────────────────────────────────
-    - $BDEBSTRAP_HOOKS/enable-units "$1" can0 disable-usb cpu-performance docker trailcurrent-firstboot trailcurrent-load-images trailcurrent-compose-up cantomqtt discovery-mdns deployment-watcher map-watcher os-settings trailcurrent-setup-ap chrony time-from-bearing
+    - $BDEBSTRAP_HOOKS/enable-units "$1" can0 cpu-performance docker trailcurrent-firstboot trailcurrent-load-images trailcurrent-compose-up cantomqtt discovery-mdns deployment-watcher map-watcher os-settings trailcurrent-setup-ap chrony time-from-bearing
 
     # ── Add default user to docker group ─────────────────────────────
     - chroot "$1" usermod -aG docker "$IGconf_device_user1"

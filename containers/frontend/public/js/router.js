@@ -133,7 +133,7 @@ class Router {
         // Update More button active state when an overflow page is active on small screens
         const moreBtn = document.getElementById('nav-more-btn');
         if (moreBtn) {
-            const overflowPages = ['water', 'airquality', 'map', 'trails', 'peregrine', 'playbill', 'settings'];
+            const overflowPages = ['water', 'airquality', 'map', 'trails', 'monitoring', 'peregrine', 'playbill', 'settings'];
             const isOverflowActive = overflowPages.includes(activePage);
             // Show More as active if overflow page is active and we're on small screen
             moreBtn.classList.toggle('active', isOverflowActive && window.innerWidth <= 480);

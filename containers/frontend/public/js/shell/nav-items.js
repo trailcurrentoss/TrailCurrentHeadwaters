@@ -36,6 +36,11 @@ export const PRIMARY_ITEMS = [
         page: 'trails',
         label: 'Trails',
         svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20l4-8 4 4 4-10 4 14"></path></svg>'
+    },
+    {
+        page: 'monitoring',
+        label: 'Monitor',
+        svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="23 7 16 12 23 17 23 7"></polygon><rect x="1" y="5" width="15" height="14" rx="2" ry="2"></rect></svg>'
     }
 ];
 
@@ -67,11 +72,13 @@ export const SYSTEM_ITEMS = [
 // sidebar carries every primary item (there's vertical room); the bottom
 // nav keeps the six most-frequently-used ones and pushes the rest into
 // the More menu alongside the System items.
-export const BOTTOM_NAV_PRIMARY = PRIMARY_ITEMS.filter(it => it.page !== 'trails');
+const BOTTOM_NAV_OVERFLOW_PAGES = new Set(['trails', 'monitoring']);
+export const BOTTOM_NAV_PRIMARY = PRIMARY_ITEMS.filter(it => !BOTTOM_NAV_OVERFLOW_PAGES.has(it.page));
 
-// Trails rides in the More menu on narrow screens. Ordered above System
-// items so it stays adjacent to the primary group it belongs to.
+// Trails and Monitor ride in the More menu on narrow screens. Ordered
+// above System items so they stay adjacent to the primary group they
+// belong to.
 export const BOTTOM_NAV_OVERFLOW = [
-    ...PRIMARY_ITEMS.filter(it => it.page === 'trails'),
+    ...PRIMARY_ITEMS.filter(it => BOTTOM_NAV_OVERFLOW_PAGES.has(it.page)),
     ...SYSTEM_ITEMS
 ];

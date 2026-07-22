@@ -171,6 +171,57 @@ if [ -f "data/keys/ca.crt" ]; then
     fi
 fi
 
+# Step 0: Pre-flight checks
+# --------------------------
+# These run BEFORE any destructive action (no `docker compose down` yet,
+# no image loads yet). If any of them fail we abort with a clear error
+# and the currently-running system is untouched — the user retries with
+# a fixed package. Every check here should be something that would
+# otherwise cause a partial / broken deployment. Add to this section
+# whenever we discover a new class of silent OTA blocker.
+echo ""
+echo "Step 0: Pre-flight checks..."
+
+# 0.1 — at least one image tar is present. Nothing to deploy otherwise;
+# common if the package was truncated during transfer.
+if ! ls images/*.tar >/dev/null 2>&1; then
+    echo "  ERROR: no images/*.tar files present in this package."
+    echo "         The deployment archive may be corrupt or was created without"
+    echo "         first running build-and-save-images.sh."
+    exit 1
+fi
+
+# 0.2 — docker-compose.yml validates as effective config. Catches YAML
+# typos, unknown fields, missing env vars, and profile references BEFORE
+# we tear down the running stack.
+if ! docker compose config -q 2>/tmp/compose-config-err; then
+    echo "  ERROR: docker-compose.yml failed validation."
+    sed 's/^/         /' /tmp/compose-config-err
+    exit 1
+fi
+
+# 0.3 — disk space at the Docker root is at least 2x the aggregate tar
+# size. `docker load` needs headroom for both the extracted layers AND
+# the incoming tar contents; running out here leaves the daemon in a
+# half-loaded state and blocks recovery until the user frees space.
+TAR_BYTES=$(du -cb images/*.tar 2>/dev/null | tail -n1 | awk '{print $1}')
+if [ -n "$TAR_BYTES" ] && [ "$TAR_BYTES" -gt 0 ]; then
+    NEED_BYTES=$((TAR_BYTES * 2))
+    DOCKER_DIR=$(docker info --format '{{.DockerRootDir}}' 2>/dev/null || echo /var/lib/docker)
+    AVAIL_BYTES=$(df -B1 --output=avail "$DOCKER_DIR" 2>/dev/null | tail -n1 | tr -d ' ')
+    if [ -n "$AVAIL_BYTES" ] && [ "$AVAIL_BYTES" -lt "$NEED_BYTES" ]; then
+        NEED_MB=$((NEED_BYTES / 1024 / 1024))
+        AVAIL_MB=$((AVAIL_BYTES / 1024 / 1024))
+        echo "  ERROR: insufficient disk space at $DOCKER_DIR"
+        echo "         need ~${NEED_MB} MB (2x aggregate image tar size)"
+        echo "         have ${AVAIL_MB} MB free"
+        echo "         Recover space with: docker system prune -a --volumes"
+        exit 1
+    fi
+fi
+
+echo "  Pre-flight OK"
+
 # Step 1: Stop existing services
 echo ""
 echo "Step 1: Stopping existing services..."

@@ -5,6 +5,7 @@ const path = require('path');
 const crypto = require('crypto');
 const Busboy = require('busboy');
 const mqttService = require('../mqtt');
+const { MAX_UPLOAD_BYTES } = require('../utils/upload-limits');
 
 const DEPLOYMENT_DIR = process.env.DEPLOYMENT_STORAGE_PATH || '/app/deployments';
 
@@ -24,7 +25,7 @@ module.exports = (db) => {
     router.post('/upload', (req, res) => {
         const busboy = Busboy({
             headers: req.headers,
-            limits: { fileSize: 20 * 1024 * 1024 * 1024 } // 20GB limit — matches nginx client_max_body_size
+            limits: { fileSize: MAX_UPLOAD_BYTES }
         });
 
         let version = null;

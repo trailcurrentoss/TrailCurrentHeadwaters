@@ -6,6 +6,7 @@ const crypto = require('crypto');
 const { randomUUID } = require('crypto');
 const Busboy = require('busboy');
 const mqttService = require('../mqtt');
+const { MAX_UPLOAD_BYTES } = require('../utils/upload-limits');
 
 // Bind-mount from host ./data/maps -> /app/maps. Matches the pattern used
 // by ./data/deployments -> /app/deployments. On the host the directory is
@@ -57,12 +58,9 @@ module.exports = (db) => {
     // MAPS_ROOT (trailcurrent), and publishes a local MQTT notification so
     // map-watcher.py can pick it up.
     router.post('/upload', (req, res) => {
-        // ~130 GB North America bundle is the expected max — allow plenty of
-        // headroom. Busboy's limit is a hard upper bound; nginx's
-        // client_max_body_size 0 handles the transport side.
         const busboy = Busboy({
             headers: req.headers,
-            limits: { fileSize: 200 * 1024 * 1024 * 1024 }
+            limits: { fileSize: MAX_UPLOAD_BYTES }
         });
 
         let fileProcessed = false;

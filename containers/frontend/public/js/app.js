@@ -15,6 +15,7 @@ import { trailsPage } from './pages/trails.js';
 import { wizardPage } from './pages/wizard.js';
 import { playbillPage } from './pages/playbill.js';
 import { peregrinePage } from './pages/peregrine.js';
+import { monitoringPage } from './pages/monitoring.js';
 import { drivingPage } from './pages/driving.js';
 import { storagePage } from './pages/storage.js';
 import { alarmBell } from './components/alarm-bell.js';
@@ -130,6 +131,7 @@ class App {
             .register('trails', trailsPage)
             .register('playbill', playbillPage)
             .register('peregrine', peregrinePage)
+            .register('monitoring', monitoringPage)
             .register('settings', settingsPage);
 
         // Render the initial page now that the router is bound + populated.

@@ -9957,3 +9957,546 @@ input[type="range"] {
     .trail-action-btn span { display: none; }
     .trail-action-btn { padding: 8px 10px; }
 }
+
+/* =====================================================================
+   Settings > Cameras & Monitoring
+   ===================================================================== */
+.cam-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 8px;
+}
+
+.cam-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 12px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+}
+
+.cam-row.is-disconnected {
+    opacity: 0.62;
+}
+
+.cam-row-main {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+    flex: 1 1 auto;
+}
+
+.cam-row-text {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    flex: 1 1 auto;
+}
+
+.cam-row-name-line {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
+.cam-name-input {
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    color: var(--text-primary);
+    font-size: 0.98rem;
+    font-weight: 600;
+    padding: 4px 6px;
+    width: 100%;
+    max-width: 260px;
+    min-width: 0;
+}
+.cam-name-input:hover {
+    border-color: var(--border-color);
+}
+.cam-name-input:focus {
+    outline: none;
+    border-color: var(--primary);
+    background: var(--bg-card-hover);
+}
+
+.cam-row-sub {
+    color: var(--text-muted);
+    font-size: 0.82rem;
+    margin-top: 2px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.cam-status {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex: 0 0 auto;
+}
+.cam-status-connected {
+    background: var(--success);
+    box-shadow: 0 0 0 2px rgba(82, 164, 65, 0.18);
+}
+.cam-status-disconnected {
+    background: var(--gray-500);
+}
+
+.cam-row-actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-shrink: 0;
+}
+
+.cam-remove-btn {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 6px;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: color 0.2s ease, background 0.2s ease;
+}
+.cam-remove-btn:hover {
+    color: var(--danger);
+    background: var(--bg-card-hover);
+}
+.cam-remove-btn ion-icon {
+    font-size: 18px;
+}
+
+.cam-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    padding: 28px 16px;
+    color: var(--text-muted);
+}
+.cam-empty ion-icon {
+    font-size: 40px;
+    margin-bottom: 8px;
+    color: var(--gray-500);
+}
+.cam-empty-title {
+    font-size: 0.98rem;
+    color: var(--text-primary);
+    font-weight: 600;
+    margin-bottom: 2px;
+}
+.cam-empty-sub {
+    font-size: 0.85rem;
+}
+
+.cam-add-wrap {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-top: 8px;
+}
+
+.cam-picker {
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+.cam-picker-title {
+    font-weight: 600;
+    color: var(--text-primary);
+    font-size: 0.95rem;
+}
+.cam-picker-status {
+    color: var(--text-muted);
+    font-size: 0.9rem;
+    padding: 6px 2px;
+}
+
+.cam-picker-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.cam-avail-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 12px;
+    background: transparent;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    color: var(--text-primary);
+    cursor: pointer;
+    text-align: left;
+    transition: background 0.15s ease, border-color 0.15s ease;
+}
+.cam-avail-row:hover {
+    background: var(--bg-card-hover);
+    border-color: var(--primary);
+}
+.cam-avail-icon {
+    font-size: 22px;
+    color: var(--primary);
+    flex: 0 0 auto;
+}
+.cam-avail-text {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-width: 0;
+}
+.cam-avail-name {
+    font-weight: 600;
+    font-size: 0.95rem;
+}
+.cam-avail-sub {
+    font-size: 0.82rem;
+    color: var(--text-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.cam-avail-add {
+    font-size: 22px;
+    color: var(--primary);
+    flex: 0 0 auto;
+}
+
+.cam-picker-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+}
+
+.cam-btn-secondary {
+    background: transparent;
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    padding: 8px 14px;
+    cursor: pointer;
+    font-size: 0.9rem;
+    transition: background 0.15s ease, border-color 0.15s ease;
+}
+.cam-btn-secondary:hover {
+    background: var(--bg-card-hover);
+    border-color: var(--primary);
+}
+
+@media (max-width: 640px) {
+    .cam-row { flex-wrap: wrap; }
+    .cam-row-main { flex-basis: calc(100% - 4px); }
+    .cam-row-actions {
+        flex-basis: 100%;
+        justify-content: flex-end;
+    }
+    .cam-name-input { max-width: 100%; }
+}
+
+/* --- View button in the camera row --- */
+.cam-view-btn {
+    background: none;
+    border: none;
+    color: var(--primary);
+    cursor: pointer;
+    padding: 6px;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.2s ease;
+}
+.cam-view-btn:hover {
+    background: var(--bg-card-hover);
+}
+.cam-view-btn ion-icon {
+    font-size: 20px;
+}
+
+/* --- Live-view modal --- */
+.cam-viewer-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.85);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 2000;
+    padding: 20px;
+}
+
+.cam-viewer {
+    background: #000;
+    border-radius: 12px;
+    overflow: hidden;
+    max-width: min(1280px, 100%);
+    max-height: 100%;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+}
+
+.cam-viewer-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 14px;
+    background: var(--bg-card);
+    border-bottom: 1px solid var(--border-color);
+}
+
+.cam-viewer-title {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    color: var(--text-primary);
+}
+.cam-viewer-name {
+    font-weight: 600;
+    font-size: 1rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.cam-viewer-sub {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.cam-viewer-close {
+    background: none;
+    border: none;
+    color: var(--text-primary);
+    cursor: pointer;
+    padding: 4px;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.2s ease;
+}
+.cam-viewer-close:hover {
+    background: var(--bg-card-hover);
+}
+.cam-viewer-close ion-icon {
+    font-size: 24px;
+}
+
+.cam-viewer-stage {
+    background: #000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 200px;
+    position: relative;
+}
+
+.cam-viewer-image {
+    display: block;
+    max-width: 100%;
+    max-height: calc(100vh - 120px);
+    width: auto;
+    height: auto;
+    object-fit: contain;
+    /* Same iOS broken-image-glyph suppression as monitor-tile-img. */
+    color: transparent;
+    font-size: 0;
+}
+
+.cam-viewer-status {
+    color: var(--text-muted);
+    font-size: 0.95rem;
+    padding: 40px 20px;
+    text-align: center;
+}
+
+/* =====================================================================
+   Live Monitoring page — grid of live camera tiles
+   ===================================================================== */
+.page-monitoring {
+    padding: 20px;
+    max-width: 1600px;
+    margin: 0 auto;
+    box-sizing: border-box;
+}
+
+.monitoring-container {
+    margin-top: 12px;
+}
+
+.monitor-grid {
+    display: grid;
+    gap: 16px;
+    /* 1 col at narrow, 2 col around a tablet, 3+ at desktop. auto-fit
+       with a 380px min lets the grid absorb any viewport gracefully. */
+    grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+}
+@media (max-width: 480px) {
+    .monitor-grid { grid-template-columns: 1fr; gap: 12px; }
+    .page-monitoring { padding: 12px; }
+}
+
+.monitor-tile {
+    display: flex;
+    flex-direction: column;
+    padding: 0;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    overflow: hidden;
+    cursor: pointer;
+    text-align: left;
+    transition: border-color 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
+}
+.monitor-tile:hover {
+    border-color: var(--primary);
+    transform: translateY(-1px);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+}
+.monitor-tile:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+}
+
+.monitor-tile-frame {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    background: #000;
+    overflow: hidden;
+}
+
+.monitor-tile-img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    /* If the image fails to load (auth error, camera unplugged mid-view,
+       backend restart, etc.), iOS Safari otherwise renders its broken-
+       image glyph — a `?` in a box — centered on the tile. `color:
+       transparent` hides both the glyph and any alt text so a failed
+       stream degrades to just the black frame with the LIVE badge and
+       caption still visible. */
+    color: transparent;
+    font-size: 0;
+}
+
+.monitor-tile-live-badge {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: rgba(0, 0, 0, 0.65);
+    color: #fff;
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    padding: 4px 8px;
+    border-radius: 6px;
+    pointer-events: none;
+}
+.monitor-tile-live-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--danger);
+    box-shadow: 0 0 6px var(--danger);
+    animation: monitor-live-pulse 1.6s ease-in-out infinite;
+}
+@keyframes monitor-live-pulse {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: 0.35; }
+}
+
+.monitor-tile-caption {
+    padding: 10px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+.monitor-tile-name {
+    font-size: 0.98rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.monitor-tile-sub {
+    font-size: 0.82rem;
+    color: var(--text-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* --- status / empty states --- */
+.monitor-status,
+.monitor-empty {
+    padding: 60px 20px;
+    text-align: center;
+    color: var(--text-muted);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+}
+.monitor-status-error {
+    color: var(--danger);
+}
+.monitor-status-sub {
+    color: var(--text-muted);
+    font-size: 0.9rem;
+}
+.monitor-empty-icon {
+    color: var(--gray-500);
+    margin-bottom: 4px;
+}
+.monitor-empty-title {
+    font-size: 1.05rem;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+.monitor-empty-sub {
+    font-size: 0.9rem;
+    max-width: 380px;
+    margin-bottom: 8px;
+}
+.monitor-empty-cta,
+.monitor-retry-btn {
+    margin-top: 8px;
+    background: var(--primary);
+    color: var(--btn-text);
+    border: none;
+    border-radius: 8px;
+    padding: 10px 18px;
+    font-size: 0.95rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s ease;
+}
+.monitor-empty-cta:hover,
+.monitor-retry-btn:hover {
+    background: var(--primary-hover);
+}

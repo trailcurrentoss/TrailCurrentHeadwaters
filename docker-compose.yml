@@ -51,6 +51,16 @@ services:
       # don't propagate mDNS multicast.
       - /var/run/avahi-daemon/socket:/var/run/avahi-daemon/socket
       - /run/dbus/system_bus_socket:/run/dbus/system_bus_socket
+      # V4L2 nodes for USB cameras. /dev bind-mounted so hot-plugged
+      # cameras appear inside the container without a restart.
+      # `device_cgroup_rules` grants access to all V4L2 devices
+      # (character-major 81 covers /dev/video*, /dev/media*, /dev/v4l/*).
+      # Narrower than `privileged: true`, wider than a static device list —
+      # the trade we want for a single-tenant embedded device where cameras
+      # come and go on user-facing USB ports.
+      - /dev:/dev
+    device_cgroup_rules:
+      - 'c 81:* rmw'
     restart: unless-stopped # Import for reboots
     depends_on:
       - mosquitto

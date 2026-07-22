@@ -19,6 +19,7 @@ const fs = require('fs');
 const path = require('path');
 const { randomUUID } = require('crypto');
 const Busboy = require('busboy');
+const { MAX_UPLOAD_BYTES } = require('../utils/upload-limits');
 
 const TRAILS_ROOT = process.env.TRAILS_STORAGE_PATH || '/app/trails';
 const ACTIVE_DIR = path.join(TRAILS_ROOT, 'active');
@@ -28,10 +29,6 @@ const NAME_MAX = 60;
 // Hex color like #a1b2c3. Rejecting anything else keeps whatever we hand
 // to MapLibre's `line-color` paint property directly usable.
 const COLOR_RE = /^#[0-9a-fA-F]{6}$/;
-// Trails aren't map bundles — a 25 MB cap covers any realistic GPX track
-// (a full continental thru-hike is well under a megabyte). Reject early
-// so a stray upload doesn't fill the disk.
-const MAX_GPX_BYTES = 25 * 1024 * 1024;
 
 function ensureDirs() {
     try { fs.mkdirSync(ACTIVE_DIR, { recursive: true }); } catch (_) {}
@@ -164,7 +161,7 @@ module.exports = (db) => {
         try {
             bb = Busboy({
                 headers: req.headers,
-                limits: { fileSize: MAX_GPX_BYTES, files: 1 }
+                limits: { fileSize: MAX_UPLOAD_BYTES, files: 1 }
             });
         } catch (err) {
             return res.status(400).json({ error: 'Invalid multipart request' });
@@ -217,7 +214,7 @@ module.exports = (db) => {
         bb.on('finish', async () => {
             if (responded) return;
 
-            if (truncated) return fail(413, `GPX file exceeds ${MAX_GPX_BYTES} bytes`);
+            if (truncated) return fail(413, `GPX file exceeds ${MAX_UPLOAD_BYTES} bytes`);
             if (!filePath) return fail(400, 'GPX file is required');
 
             const name = String(fields.name || '').trim().slice(0, NAME_MAX);

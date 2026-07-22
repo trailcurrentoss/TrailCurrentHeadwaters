@@ -32,6 +32,7 @@ const peregrineRoutes = require('./routes/peregrine');
 const alarmsRoutes = require('./routes/alarms');
 const geocodeRoutes = require('./routes/geocode');
 const trailsRoutes = require('./routes/trails');
+const camerasRoutes = require('./routes/cameras');
 
 const app = express();
 const server = http.createServer(app);
@@ -99,6 +100,7 @@ async function startServer() {
         app.use('/api/alarms', alarmsRoutes(db));
         app.use('/api/geocode', geocodeRoutes());
         app.use('/api/trails', trailsRoutes(db));
+        app.use('/api/cameras', camerasRoutes(db));
 
         // Error handling middleware
         app.use((err, req, res, next) => {
@@ -128,6 +130,18 @@ async function startServer() {
         const peregrineCa = require('./services/peregrine-ca');
         peregrineCa.reinstallFromDb(db).catch(err =>
             console.error('[Startup] Peregrine CA reinstall failed:', err.message));
+
+        // Hydrate camera streams: any camera left `enabled=true` when the
+        // backend was last stopped should have its ffmpeg pipeline
+        // running again. If the physical camera is currently unplugged
+        // the streamer will fail-and-backoff harmlessly until it returns.
+        const cameraStreamer = require('./services/camera-streamer');
+        db.collection('cameras').find({ enabled: true }).toArray()
+            .then(cams => {
+                for (const cam of cams) cameraStreamer.startStream(cam);
+                if (cams.length) console.log(`[Startup] Started ${cams.length} camera stream(s)`);
+            })
+            .catch(err => console.error('[Startup] Camera stream hydration failed:', err.message));
 
         // Initialize MQTT service
         mqttService.connect(db, broadcast);
