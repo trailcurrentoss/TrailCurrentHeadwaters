@@ -2,11 +2,6 @@ const express = require('express');
 const { listConnectedCameras } = require('../services/camera-detect');
 const streamer = require('../services/camera-streamer');
 
-// MJPEG multipart boundary. Any short ASCII token works — clients split
-// on `--<boundary>`. The value is copied into the Content-Type header
-// verbatim, so it must not contain characters that need quoting.
-const MJPEG_BOUNDARY = 'tcframe';
-
 const NAME_MAX = 32;
 
 function sanitizeName(raw, fallback) {
@@ -177,8 +172,9 @@ module.exports = (db) => {
     });
 
     // GET /api/cameras/:id/status — lightweight streamer health poll.
-    // Used by the frontend to show frame-count / uptime / error state
-    // without opening the stream itself.
+    // Reports encoder uptime, access-unit count, keyframe cadence, and
+    // last ffmpeg stderr line. The live video itself is delivered over
+    // the WebSocket at /ws/cameras/:id — this endpoint is view-only.
     router.get('/:id/status', async (req, res) => {
         try {
             const doc = await cameras.findOne({ _id: req.params.id });
@@ -190,80 +186,6 @@ module.exports = (db) => {
         } catch (err) {
             console.error('[Cameras route] GET /:id/status failed:', err);
             res.status(500).json({ error: 'Failed to fetch status' });
-        }
-    });
-
-    // GET /api/cameras/:id/stream — live MJPEG feed.
-    //
-    // Emits multipart/x-mixed-replace with `image/jpeg` frames. Both a
-    // browser <img src="..."> and an ESP32-P4 with a hand-rolled HTTP
-    // client can consume this directly. The ESP32-P4 hits its hardware
-    // JPEG decoder on each frame; the browser paints via <img>.
-    //
-    // Subscribes to the streamer with a write function; the streamer
-    // starts ffmpeg lazily if we're the first subscriber and stops it
-    // after an idle grace period once the last subscriber disconnects.
-    // Backpressure: if the socket buffer is above its high-water mark,
-    // we drop frames (setting `writable=false`) rather than accumulate
-    // them in memory. A slow phone on marginal WiFi degrades to lower
-    // effective fps instead of taking the whole backend down.
-    router.get('/:id/stream', async (req, res) => {
-        try {
-            const doc = await cameras.findOne({ _id: req.params.id });
-            if (!doc) return res.status(404).json({ error: 'Camera not found' });
-            if (!doc.enabled) return res.status(409).json({ error: 'Camera is not enabled' });
-
-            res.writeHead(200, {
-                'Content-Type': `multipart/x-mixed-replace; boundary=${MJPEG_BOUNDARY}`,
-                'Cache-Control': 'no-store, no-cache, must-revalidate, private',
-                'Pragma': 'no-cache',
-                'Connection': 'close',
-                // CORS: allow ESP32-P4 clients on the LAN to fetch this
-                // without preflight (image requests are simple, so this
-                // is mainly for JS-based fallback clients).
-                'Access-Control-Allow-Origin': '*',
-            });
-
-            let closed = false;
-            let writable = true;
-            let subscription = null;
-
-            // Node stream backpressure: res.write() returns false when
-            // the internal buffer is above highWaterMark. When that
-            // happens we stop calling write() until 'drain' fires. Any
-            // frames the streamer publishes in between get dropped for
-            // this subscriber only — other subscribers keep their pace.
-            res.on('drain', () => { writable = true; });
-
-            const writeFrame = (jpeg) => {
-                if (closed || !writable) return;
-                const header = `\r\n--${MJPEG_BOUNDARY}\r\nContent-Type: image/jpeg\r\nContent-Length: ${jpeg.length}\r\n\r\n`;
-                try {
-                    res.write(header);
-                    // The chunk that carries the actual frame is the one
-                    // whose return value we track — it's the payload that
-                    // dominates buffer occupancy.
-                    writable = res.write(jpeg);
-                } catch {
-                    // Socket died between writes; cleanup runs below.
-                    closed = true;
-                }
-            };
-
-            subscription = streamer.subscribe(doc, writeFrame);
-
-            const cleanup = () => {
-                if (closed) return;
-                closed = true;
-                if (subscription) streamer.unsubscribe(req.params.id, subscription);
-                try { res.end(); } catch { /* ignore */ }
-            };
-            req.on('close', cleanup);
-            req.on('error', cleanup);
-            res.on('error', cleanup);
-        } catch (err) {
-            console.error('[Cameras route] GET /:id/stream failed:', err);
-            if (!res.headersSent) res.status(500).json({ error: 'Failed to open stream' });
         }
     });
 

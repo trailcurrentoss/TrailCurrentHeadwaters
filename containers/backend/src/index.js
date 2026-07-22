@@ -119,8 +119,10 @@ async function startServer() {
             res.status(404).json({ error: 'Not found' });
         });
 
-        // Setup WebSocket
-        const { broadcast } = setupWebSocket(server);
+        // Setup WebSocket — /ws for the broadcast channel, /ws/cameras/<id>
+        // for per-camera H.264 streams (auth-gated inside the upgrade
+        // handler using the same ?token= session pattern as HTTP GETs).
+        const { broadcast } = setupWebSocket(server, db);
 
         // Make broadcast available to routes if needed
         app.set('broadcast', broadcast);
@@ -132,7 +134,7 @@ async function startServer() {
             console.error('[Startup] Peregrine CA reinstall failed:', err.message));
 
         // Camera streams are on-demand: ffmpeg spawns only when the
-        // first HTTP subscriber connects to /api/cameras/:id/stream and
+        // first WebSocket subscriber connects to /ws/cameras/<id> and
         // shuts down after an idle grace period once the last one
         // disconnects. Nothing to hydrate at boot — enabled cameras
         // just become STREAMABLE, not actively streaming. This keeps

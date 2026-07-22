@@ -70,6 +70,15 @@ class Router {
             return;
         }
 
+        // Suppress re-entry. Setting window.location.hash below fires a
+        // hashchange event; app.js's hashchange listener re-enters
+        // navigate() with the same path. Without this guard, EVERY hash-
+        // driven navigation double-runs — cleanup + init both fire twice,
+        // and any page that opens network connections in init() (like
+        // the monitoring stream tiles) issues duplicate requests.
+        if (this.currentPath === fullPath) return;
+        this.currentPath = fullPath;
+
         // Cleanup current page
         if (this.currentPage && this.currentPage.cleanup) {
             this.currentPage.cleanup();

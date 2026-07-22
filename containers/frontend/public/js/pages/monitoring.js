@@ -1,28 +1,16 @@
 // Live Monitoring page.
 //
 // Grid of live-view tiles for every camera currently enabled AND
-// physically connected. Tap a tile to open the full-screen viewer modal
-// (native <img> path with canvas-shim fallback, same primitive used by
-// the row-level "View" button in Settings > Cameras & Monitoring).
+// physically connected. Tap a tile to open the full-screen viewer modal.
 //
-// The tiles themselves use plain <img src="…/stream"> — reliable in
-// Firefox and Safari, works in recent Chrome, and if a tile misbehaves
-// the user still has the modal's full fallback logic one tap away.
+// Video is delivered over WebSocket as H.264 Annex-B access units and
+// decoded natively via the WebCodecs VideoDecoder API into a <canvas>.
+// See components/h264-stream.js for the transport + decode implementation.
 
-import { API, AuthStore } from '../api.js';
+import { API } from '../api.js';
 import { router } from '../router.js';
 import { CameraViewer } from '../components/camera-viewer.js';
-
-// Build a stream URL with the session token as a query param. HTML
-// <img src> can't attach an Authorization header, so the backend
-// middleware also accepts ?token=/?apiKey= on GET requests. Cache-bust
-// with `t=` so a re-mount doesn't reuse a dead stream from image cache.
-function streamUrl(cameraId) {
-    const token = AuthStore.getToken();
-    const parts = [`t=${Date.now()}`];
-    if (token) parts.push(`token=${encodeURIComponent(token)}`);
-    return `/api/cameras/${encodeURIComponent(cameraId)}/stream?${parts.join('&')}`;
-}
+import { mountStreamToCanvas } from '../components/h264-stream.js';
 
 let cameras = [];
 let loading = true;
@@ -32,6 +20,11 @@ let visibilityListener = null;
 let pageHideListener = null;
 let viewer = null;
 
+// Active stream handles keyed by camera id. Each entry is a stream we
+// spawned for the current render; close() them all on re-render, on
+// navigation-away, on visibility change, on pagehide.
+const activeStreams = new Map();
+
 function escapeHtml(s) {
     return String(s == null ? '' : s)
         .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -40,12 +33,11 @@ function escapeHtml(s) {
 function escapeAttr(s) { return escapeHtml(s); }
 
 function renderTile(cam) {
-    const src = streamUrl(cam.id);
     return `
         <button class="monitor-tile" data-action="expand" data-id="${escapeAttr(cam.id)}"
                 aria-label="View ${escapeAttr(cam.name)} full screen">
             <div class="monitor-tile-frame">
-                <img class="monitor-tile-img" src="${src}" alt="${escapeAttr(cam.name)}">
+                <canvas class="monitor-tile-canvas" data-tile-id="${escapeAttr(cam.id)}"></canvas>
                 <div class="monitor-tile-live-badge">
                     <span class="monitor-tile-live-dot"></span>LIVE
                 </div>
@@ -106,17 +98,46 @@ function renderInner() {
     return `<div class="monitor-grid">${streamable.map(renderTile).join('')}</div>`;
 }
 
+// Spawn an H.264 stream for each tile canvas currently in the DOM,
+// after any previously-active streams have been closed. Called after
+// every paint that includes tiles.
+function mountStreams() {
+    tearDownStreams();
+    document.querySelectorAll('canvas.monitor-tile-canvas').forEach(canvas => {
+        const id = canvas.dataset.tileId;
+        if (!id) return;
+        const stream = mountStreamToCanvas(id, canvas, {
+            onError: (err) => {
+                console.warn(`[monitoring] stream error for ${id}:`, err.message);
+            },
+        });
+        activeStreams.set(id, stream);
+    });
+}
+
+// Close every active stream — releases the WebSocket immediately,
+// which fires ws.on('close') on the backend so the streamer's
+// on-demand lifecycle can shut ffmpeg down after the idle grace period.
+function tearDownStreams() {
+    for (const stream of activeStreams.values()) {
+        try { stream.close(); } catch { /* ignore */ }
+    }
+    activeStreams.clear();
+}
+
 function paint() {
     const container = document.getElementById('monitoring-container');
-    if (container) container.innerHTML = renderInner();
+    if (!container) return;
+    container.innerHTML = renderInner();
+    // Only spawn streams if we're painting tiles (not the status/empty state).
+    if (!loading && !loadError && cameras.some(c => c.enabled && c.connected)) {
+        mountStreams();
+    }
 }
 
 // Hard cap on how long we'll wait for the camera list before giving up
 // and surfacing an error. Under normal conditions the response arrives
-// in ~50 ms on the LAN. A stalled request usually means the browser's
-// per-host connection pool is saturated (leaked MJPEG streams, mostly
-// an iOS Safari failure mode); showing a "Retry" button beats a
-// silent "Loading…" that never resolves.
+// in ~50 ms on the LAN.
 const CAMERAS_LIST_TIMEOUT_MS = 8000;
 
 async function loadCameras() {
@@ -141,29 +162,6 @@ async function loadCameras() {
     paint();
 }
 
-// 1×1 transparent GIF. Setting img.src to a valid tiny image is the
-// only reliable way to abort an in-flight multipart/x-mixed-replace
-// connection: `img.src = ''` triggers "load the document URL" in some
-// browsers, and just removing the element doesn't guarantee an
-// immediate socket close (browsers hold connections in a settling
-// period). Loading a valid completed image forces the multipart XHR
-// to be aborted right now.
-const BLANK_GIF = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
-
-function tearDownStreams() {
-    // Streams are HTTP/1.1 persistent connections. Chrome caps these at
-    // 6 per origin. If they aren't reliably closed on navigation-away,
-    // a few round-trips of "leave and come back" saturate the pool and
-    // block API.getCameras() from ever getting a connection — the
-    // symptom is "Loading cameras…" forever on second visit.
-    document.querySelectorAll('.monitor-tile-img').forEach(img => {
-        try {
-            img.src = BLANK_GIF;
-            img.remove();
-        } catch { /* ignore */ }
-    });
-}
-
 function wireListeners() {
     const container = document.getElementById('monitoring-container');
     if (!container) return;
@@ -185,24 +183,20 @@ function wireListeners() {
     };
     container.addEventListener('click', containerClickListener);
 
-    // Kill streams the instant the tab/app is hidden. Without this, iOS
-    // Safari suspends JavaScript but keeps the MJPEG connections open;
-    // when the user returns, those sockets are half-alive and count
-    // against Safari's 4-per-host HTTP/1.1 limit, saturating the pool
-    // for every OTHER page in the app. Repaint on visible restarts the
-    // streams with fresh URLs.
+    // Belt-and-suspenders for edge cases where cleanup() might not fire:
+    // - iOS Safari tab backgrounding (visibilitychange)
+    // - Safari BFCache navigation, native browser back button (pagehide)
+    // Both close streams if they fire; on visible=true we repaint to
+    // spawn fresh streams. Router cleanup() handles the common SPA case.
     visibilityListener = () => {
         if (document.visibilityState === 'hidden') {
             tearDownStreams();
-        } else if (document.visibilityState === 'visible' && !loading) {
+        } else if (document.visibilityState === 'visible' && !loading && !loadError) {
             paint();
         }
     };
     document.addEventListener('visibilitychange', visibilityListener);
 
-    // pagehide fires on Safari BFCache navigations and on true unload.
-    // Belt-and-suspenders for visibilitychange, which iOS sometimes
-    // skips when the user swipes back or switches apps quickly.
     pageHideListener = () => tearDownStreams();
     window.addEventListener('pagehide', pageHideListener);
 }

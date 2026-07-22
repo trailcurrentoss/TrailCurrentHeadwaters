@@ -13,10 +13,11 @@ FROM node:24-slim
 # /run/dbus and /var/run/avahi-daemon sockets so the resolver talks to
 # the host's avahi-daemon instead of needing one in the container.
 #
-# ffmpeg reads V4L2 from /dev/video* and produces MJPEG streams for the
-# camera-streamer service. UVC cameras like the C920 output MJPEG
-# natively, so ffmpeg does zero transcoding — `-c:v copy` passes JPEG
-# frames through untouched at effectively zero CPU cost.
+# ffmpeg reads V4L2 from /dev/video*, transcodes to H.264 baseline
+# (ultrafast + zerolatency via libx264, or h264_v4l2m2m where the kernel
+# driver supports it), and pipes an Annex-B elementary stream to
+# camera-streamer. The Debian ffmpeg build ships with both libx264 and
+# the v4l2m2m encoder wrapper.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates openssl avahi-utils dbus ffmpeg \

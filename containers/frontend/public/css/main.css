@@ -10317,9 +10317,7 @@ input[type="range"] {
     width: auto;
     height: auto;
     object-fit: contain;
-    /* Same iOS broken-image-glyph suppression as monitor-tile-img. */
-    color: transparent;
-    font-size: 0;
+    background: #000;
 }
 
 .cam-viewer-status {
@@ -10385,19 +10383,15 @@ input[type="range"] {
     overflow: hidden;
 }
 
-.monitor-tile-img {
+.monitor-tile-canvas {
     display: block;
     width: 100%;
     height: 100%;
+    /* Frames are decoded via createImageBitmap and drawn to the canvas
+       at their native resolution; object-fit-style cover comes from
+       CSS (fill the tile, crop overflow). */
     object-fit: cover;
-    /* If the image fails to load (auth error, camera unplugged mid-view,
-       backend restart, etc.), iOS Safari otherwise renders its broken-
-       image glyph — a `?` in a box — centered on the tile. `color:
-       transparent` hides both the glyph and any alt text so a failed
-       stream degrades to just the black frame with the LIVE badge and
-       caption still visible. */
-    color: transparent;
-    font-size: 0;
+    background: #000;
 }
 
 .monitor-tile-live-badge {

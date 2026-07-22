@@ -2,29 +2,51 @@
 
 // Camera live-stream service.
 //
-// One ffmpeg process per camera, spawned ON DEMAND when the first HTTP
-// subscriber connects and shut down after a grace period once the last
-// subscriber disconnects. Under idle the entire pipeline is zero-cost.
+// One ffmpeg process per camera, spawned ON DEMAND when the first
+// WebSocket subscriber connects and shut down after a grace period once
+// the last one disconnects. Under idle the entire pipeline is zero-cost.
 //
-// UVC cameras (Logitech C920 etc.) emit MJPEG natively, so ffmpeg is
-// invoked with `-c:v copy` — JPEG frames pass through untouched with
-// effectively no transcode CPU.
+// ffmpeg captures the UVC camera's native MJPEG, transcodes to H.264
+// baseline (ultrafast + zerolatency), and writes an Annex-B elementary
+// stream to stdout. We split that stream into NAL units, group NALs into
+// access units (one AU = one frame), cache the current parameter sets
+// (SPS/PPS) and the most recent keyframe access unit, and fan every AU
+// out to subscribers as a single binary WebSocket message.
 //
-// The route handler drives the lifecycle via two calls:
-//
-//   const sub = streamer.subscribe(cameraDoc, writeFrameFn)
-//   ...
+// Public API (unchanged from the MJPEG version so route wiring is
+// identical):
+//   const sub = streamer.subscribe(cameraDoc, sendAuFn)
 //   streamer.unsubscribe(cameraId, sub)
+//   streamer.stopStream(cameraId)
+//   streamer.getStatus(cameraId)
+//   streamer.stopAll()
 //
-// The route also owns backpressure — writeFrameFn is called for every
-// frame, but the route is free to drop calls when the underlying socket
-// is above its high-water mark (see cameras.js).
+// sendAuFn is invoked as sendAuFn(auBuffer, { isKeyframe, timestampUs }).
+// A new subscriber gets the cached parameter-set + keyframe AU pushed
+// synchronously from subscribe(), so the client's WebCodecs decoder can
+// start producing a first frame within one keyframe interval (≤ 1 s at
+// -g 30).
 
 const { spawn } = require('child_process');
 
-const CAPTURE_WIDTH = 1280;
-const CAPTURE_HEIGHT = 720;
-const CAPTURE_FPS = 30;
+// Capture and encode parameters.
+//
+// The CM5 (BCM2712) has no hardware H.264 encoder — Pi 5 dropped the
+// VideoCore encoder that Pi 4 had. libx264 in software is our only
+// option, and its CPU cost scales roughly with pixel-count × fps. At
+// 1280x720@30 with two cameras we burn ~1.5 CPU cores; dropping to
+// 960x540@24 halves the pixel budget and lands us near 0.7 cores total
+// while still looking clean when downscaled into a 380 px monitor tile
+// or upscaled for full-screen viewing. The C920 supports 960x540
+// natively so no scaling happens at capture.
+//
+// If a future CM7 or similar gains a hardware encoder, switch this
+// service to h264_v4l2m2m and these values can jump back to 1280x720@30.
+const CAPTURE_WIDTH = 960;
+const CAPTURE_HEIGHT = 540;
+const CAPTURE_FPS = 24;
+const KEYFRAME_INTERVAL = 24;    // 1 s at 24 fps — new joiners see picture fast
+const TARGET_BITRATE = '1500k';
 
 // Grace period before an idle stream shuts down ffmpeg. Keeps a stream
 // alive across quick nav-away-nav-back so we don't restart-spam ffmpeg,
@@ -36,13 +58,60 @@ const IDLE_SHUTDOWN_MS = 10_000;
 // left, we let it die.
 const RESTART_BACKOFF_MS = [1000, 2000, 4000, 8000, 16000, 30000];
 
-// JPEG Start-Of-Image marker. Frames in the mjpeg muxer output are a
-// bare concatenation of JPEGs; splitting on SOI gives one frame each.
-const SOI = Buffer.from([0xff, 0xd8]);
-
 // Sanity guard: if the ingest buffer grows past this without producing
-// a frame, we've lost sync. Reset and re-anchor on the next SOI.
-const MAX_FRAME_BUFFER_BYTES = 4 * 1024 * 1024;
+// a NAL, we've lost sync. Reset and re-anchor on the next start code.
+const MAX_BUFFER_BYTES = 4 * 1024 * 1024;
+
+// H.264 NAL unit types (nal_unit_type from RBSP byte, low 5 bits).
+const NAL_TYPE_SLICE_NON_IDR = 1;
+const NAL_TYPE_SLICE_IDR     = 5;
+const NAL_TYPE_SEI           = 6;
+const NAL_TYPE_SPS           = 7;
+const NAL_TYPE_PPS           = 8;
+const NAL_TYPE_AUD           = 9;
+
+function isSliceNal(t) { return t === NAL_TYPE_SLICE_NON_IDR || t === NAL_TYPE_SLICE_IDR; }
+function isParamNal(t) { return t === NAL_TYPE_SPS || t === NAL_TYPE_PPS || t === NAL_TYPE_SEI; }
+
+// Search buf[from..] for the next Annex-B start code. Returns
+// { pos, prefixLen } where pos is the index of the first 0x00 and
+// prefixLen is 3 (for 00 00 01) or 4 (for 00 00 00 01), or null.
+function findStartCode(buf, from) {
+    const n = buf.length;
+    for (let i = from; i + 3 <= n; i++) {
+        if (buf[i] !== 0) continue;
+        if (buf[i + 1] !== 0) continue;
+        if (buf[i + 2] === 1) return { pos: i, prefixLen: 3 };
+        if (i + 4 <= n && buf[i + 2] === 0 && buf[i + 3] === 1) return { pos: i, prefixLen: 4 };
+    }
+    return null;
+}
+
+// Given a NAL that starts with an Annex-B start code prefix, return the
+// nal_unit_type from the byte immediately after the prefix.
+function nalTypeOf(nal) {
+    // Skip the start code prefix — either 3 or 4 bytes.
+    const off = (nal[2] === 1) ? 3 : 4;
+    if (off >= nal.length) return 0;
+    return nal[off] & 0x1f;
+}
+
+// For a slice NAL (types 1, 5), return true iff `first_mb_in_slice == 0`
+// — i.e., this slice is the first slice of a new picture, and therefore
+// marks a new access-unit boundary.
+//
+// slice_header starts with `first_mb_in_slice` encoded as ue(v)
+// (unsigned Exp-Golomb). Value 0 is encoded as the single bit `1`,
+// so we just need to check the top bit of the byte immediately after
+// the NAL header. This lets a multi-slice encoder (e.g. one that leaves
+// x264's default sliced-threads on) still be parsed correctly without
+// implementing a full Exp-Golomb decoder.
+function sliceStartsNewPicture(nal) {
+    const scLen = (nal[2] === 1) ? 3 : 4;
+    const bodyByte = scLen + 1;   // first slice_header byte, after NAL header
+    if (bodyByte >= nal.length) return false;
+    return (nal[bodyByte] & 0x80) !== 0;
+}
 
 class StreamState {
     constructor(cameraDoc) {
@@ -50,32 +119,48 @@ class StreamState {
         this.proc = null;
         this.stopping = false;
         this.restartAttempt = 0;
-        this.frameBuf = Buffer.alloc(0);
-        this.lastFrame = null;
-        this.lastFrameAt = 0;
+
+        this.buf = Buffer.alloc(0);
+        this.currentAu = [];           // NAL Buffers being accumulated for the in-flight AU
+        this.currentAuHasSlice = false;
+        this.currentAuHasIdr = false;
+
+        // Catch-up cache — pushed synchronously to every new subscriber.
+        this.cachedSps = null;
+        this.cachedPps = null;
+        this.cachedKeyframeAu = null;  // Complete AU Buffer with SPS+PPS+IDR
+
         this.startedAt = 0;
-        this.frameCount = 0;
+        this.auCount = 0;
+        this.keyframeCount = 0;
+        this.lastAuAt = 0;
+        this.lastKeyframeAt = 0;
         this.lastError = null;
-        this.subscribers = new Set();   // Set<Function>
+
+        this.subscribers = new Set();  // Set<(auBuffer, meta) => void>
         this.idleTimer = null;
     }
 
     subscribe(callback) {
         this.subscribers.add(callback);
-        // Cancel any pending idle-shutdown — someone's watching again.
         if (this.idleTimer) {
             clearTimeout(this.idleTimer);
             this.idleTimer = null;
         }
-        // Start ffmpeg lazily on first subscriber.
         if (!this.proc && !this.stopping) {
             this.spawnFfmpeg();
         }
-        // Push the most recent frame immediately so the client sees an
-        // image within milliseconds of connecting, rather than waiting
-        // for the next capture tick (up to ~33 ms at 30 fps).
-        if (this.lastFrame) {
-            try { callback(this.lastFrame); } catch { /* subscriber error, will cleanup on its own */ }
+        // Push cached catch-up bytes immediately so the client's
+        // VideoDecoder has parameter sets + a keyframe to anchor on.
+        // Without this, the first live delta frame the client sees would
+        // error out because no key has been seen yet.
+        if (this.cachedKeyframeAu) {
+            try {
+                callback(this.cachedKeyframeAu, {
+                    isKeyframe: true,
+                    timestampUs: this.microsNow(),
+                });
+            } catch { /* subscriber's error path handles it */ }
         }
         return callback;
     }
@@ -101,20 +186,59 @@ class StreamState {
         const args = [
             '-hide_banner',
             '-loglevel', 'warning',
+            // Input: UVC MJPEG at target resolution/fps. The camera transports
+            // MJPEG natively so decode overhead is minimal.
             '-f', 'v4l2',
             '-input_format', 'mjpeg',
             '-video_size', `${CAPTURE_WIDTH}x${CAPTURE_HEIGHT}`,
             '-framerate', String(CAPTURE_FPS),
             '-i', dev,
-            '-c:v', 'copy',
-            '-f', 'mjpeg',
+            // Encode: software x264 in the fastest possible latency mode.
+            // - ultrafast + zerolatency: no lookahead, no B-frames, no CABAC
+            //   reordering that would delay first-frame output.
+            // - baseline profile L3.1: universally supported by browser
+            //   WebCodecs decoders (avc1.42E01E).
+            // - keyint = 30: one keyframe per second so new subscribers
+            //   see a picture within a second of connecting.
+            // - repeat-headers: SPS/PPS prepended to every keyframe so
+            //   the wire stream is self-descriptive even if the client
+            //   started listening mid-GOP.
+            '-c:v', 'libx264',
+            '-preset', 'ultrafast',
+            '-tune', 'zerolatency',
+            '-profile:v', 'baseline',
+            '-level:v', '3.1',
+            '-pix_fmt', 'yuv420p',
+            '-g', String(KEYFRAME_INTERVAL),
+            '-bf', '0',
+            // sliced-threads=0: `-tune zerolatency` implicitly enables
+            // sliced-threads, which produces one slice per CPU thread
+            // per picture. Downstream WebCodecs decoders expect one
+            // access unit per picture; if we let x264 emit 4 slices,
+            // even a robust AU splitter has to correctly identify
+            // slice-boundaries-within-a-picture vs new-picture-slices.
+            // Forcing single-slice per picture keeps the wire format
+            // trivially unambiguous. Ultrafast + baseline at 720p30
+            // easily fits in one CM5 core, so we lose nothing.
+            '-x264-params', `keyint=${KEYFRAME_INTERVAL}:min-keyint=${KEYFRAME_INTERVAL}:scenecut=0:repeat-headers=1:sliced-threads=0`,
+            '-b:v', TARGET_BITRATE,
+            // Video-only pipeline. V4L2 doesn't expose the camera's
+            // microphone (that's an ALSA device we never open), but -an
+            // makes the intent explicit and guards against any future
+            // ffmpeg autodetection surprises.
+            '-an',
+            '-f', 'h264',
             '-',
         ];
         const proc = spawn('ffmpeg', args, { stdio: ['ignore', 'pipe', 'pipe'] });
         this.proc = proc;
         this.startedAt = Date.now();
-        this.frameCount = 0;
-        this.frameBuf = Buffer.alloc(0);
+        this.auCount = 0;
+        this.keyframeCount = 0;
+        this.buf = Buffer.alloc(0);
+        this.currentAu = [];
+        this.currentAuHasSlice = false;
+        this.currentAuHasIdr = false;
 
         proc.stdout.on('data', (chunk) => this.ingest(chunk));
 
@@ -128,11 +252,8 @@ class StreamState {
 
         proc.on('exit', (code, signal) => {
             const uptime = Date.now() - this.startedAt;
-            console.log(`[camera-streamer ${this.camera._id}] ffmpeg exited code=${code} signal=${signal} uptime=${uptime}ms frames=${this.frameCount} subscribers=${this.subscribers.size}`);
+            console.log(`[camera-streamer ${this.camera._id}] ffmpeg exited code=${code} signal=${signal} uptime=${uptime}ms aus=${this.auCount} subscribers=${this.subscribers.size}`);
             this.proc = null;
-            // Only auto-restart if there are still subscribers waiting.
-            // If we exited because IDLE_SHUTDOWN killed us, subscribers
-            // is 0 and we stay dead until a new subscribe() comes in.
             if (this.subscribers.size === 0) return;
             if (this.stopping) return;
             const delay = RESTART_BACKOFF_MS[Math.min(this.restartAttempt, RESTART_BACKOFF_MS.length - 1)];
@@ -149,71 +270,147 @@ class StreamState {
             console.error(`[camera-streamer ${this.camera._id}] ffmpeg spawn error:`, err);
         });
 
-        console.log(`[camera-streamer ${this.camera._id}] started ffmpeg on ${dev} @ ${CAPTURE_WIDTH}x${CAPTURE_HEIGHT}@${CAPTURE_FPS} (${this.subscribers.size} subscriber(s))`);
+        console.log(`[camera-streamer ${this.camera._id}] started ffmpeg on ${dev} @ ${CAPTURE_WIDTH}x${CAPTURE_HEIGHT}@${CAPTURE_FPS} → H.264 (${this.subscribers.size} subscriber(s))`);
     }
 
-    // Efficient frame splitter. Uses native Buffer.indexOf (SIMD-fast in
-    // recent Node) instead of a JS byte-by-byte scan, and only searches
-    // the newly-appended tail on each ingest — never re-scans the old
-    // buffer contents.
+    // Split the incoming byte stream into NAL units by scanning for
+    // Annex-B start codes, then feed each NAL to the AU accumulator.
     ingest(chunk) {
-        // Track how many bytes were already in the buffer BEFORE this
-        // chunk. New SOIs can only appear at or after (prevLen - 1) —
-        // one byte back covers the case where the previous chunk ended
-        // on 0xFF and this chunk starts with 0xD8.
-        const prevLen = this.frameBuf.length;
-        this.frameBuf = prevLen ? Buffer.concat([this.frameBuf, chunk]) : Buffer.from(chunk);
+        this.buf = this.buf.length ? Buffer.concat([this.buf, chunk]) : Buffer.from(chunk);
 
-        let searchFrom = prevLen > 0 ? prevLen - 1 : 0;
-
-        // Anchor on first SOI if we haven't yet (frameBuf starts with
-        // SOI once anchored). Only runs once per camera lifetime, or
-        // after a resync from overflow.
-        if (this.frameBuf.length < 2) return;
-        if (this.frameBuf[0] !== 0xff || this.frameBuf[1] !== 0xd8) {
-            const firstSoi = this.frameBuf.indexOf(SOI);
-            if (firstSoi < 0) {
-                // No anchor yet; trim to last byte to preserve a possible
-                // half-marker at the boundary.
-                if (this.frameBuf.length > 1) {
-                    this.frameBuf = this.frameBuf.subarray(this.frameBuf.length - 1);
-                }
-                return;
+        // Anchor on the first start code we see. Anything before it is
+        // pre-roll from ffmpeg and gets dropped.
+        let firstSc = findStartCode(this.buf, 0);
+        if (!firstSc) {
+            if (this.buf.length > MAX_BUFFER_BYTES) {
+                console.warn(`[camera-streamer ${this.camera._id}] no NAL start code in ${this.buf.length}B — resetting`);
+                this.buf = Buffer.alloc(0);
             }
-            this.frameBuf = this.frameBuf.subarray(firstSoi);
-            searchFrom = 2;
+            return;
+        }
+        if (firstSc.pos > 0) {
+            this.buf = this.buf.subarray(firstSc.pos);
         }
 
-        // Emit every complete frame in the buffer. A frame runs from one
-        // SOI (inclusive) to just before the next SOI. Only the last SOI
-        // stays in the buffer for the next chunk to complete.
-        while (searchFrom < this.frameBuf.length) {
-            const nextSoi = this.frameBuf.indexOf(SOI, searchFrom);
-            if (nextSoi < 0) break;
-            const frame = this.frameBuf.subarray(0, nextSoi);
-            this.publishFrame(frame);
-            this.frameBuf = this.frameBuf.subarray(nextSoi);
-            searchFrom = 2;
+        // Emit every complete NAL. A NAL runs from one start code
+        // (inclusive) up to just before the next start code. Only the
+        // last, incomplete NAL stays in the buffer for the next chunk.
+        while (true) {
+            const scHere = findStartCode(this.buf, 0);
+            if (!scHere) break;
+            const scNext = findStartCode(this.buf, scHere.prefixLen);
+            if (!scNext) break;
+            const nal = Buffer.from(this.buf.subarray(0, scNext.pos));
+            this.processNal(nal);
+            this.buf = this.buf.subarray(scNext.pos);
         }
 
-        if (this.frameBuf.length > MAX_FRAME_BUFFER_BYTES) {
-            console.warn(`[camera-streamer ${this.camera._id}] frame buffer overflow (${this.frameBuf.length}B) — resetting`);
-            this.frameBuf = Buffer.alloc(0);
+        if (this.buf.length > MAX_BUFFER_BYTES) {
+            console.warn(`[camera-streamer ${this.camera._id}] NAL buffer overflow (${this.buf.length}B) — resetting`);
+            this.buf = Buffer.alloc(0);
+            this.currentAu = [];
+            this.currentAuHasSlice = false;
+            this.currentAuHasIdr = false;
         }
     }
 
-    publishFrame(frame) {
-        // Copy off the slice so the shared frameBuf can be safely resliced.
-        const jpeg = Buffer.from(frame);
-        this.lastFrame = jpeg;
-        this.lastFrameAt = Date.now();
-        this.frameCount++;
-        this.restartAttempt = 0;   // healthy production = reset backoff
+    // Group NALs into access units. An AU boundary occurs when we see
+    // an AUD (nal_unit_type 9), a parameter set that follows a slice,
+    // or a new slice after we've already added one.
+    processNal(nal) {
+        const t = nalTypeOf(nal);
+
+        // Cache latest parameter sets — pushed to new subscribers.
+        if (t === NAL_TYPE_SPS) this.cachedSps = nal;
+        else if (t === NAL_TYPE_PPS) this.cachedPps = nal;
+
+        if (t === NAL_TYPE_AUD) {
+            // AUD marks a new AU start explicitly.
+            this.flushCurrentAu();
+            this.currentAu.push(nal);
+            return;
+        }
+        if (isParamNal(t) && this.currentAuHasSlice) {
+            // Parameter set after slice ⇒ new AU begins.
+            this.flushCurrentAu();
+        }
+        if (isSliceNal(t) && this.currentAuHasSlice && sliceStartsNewPicture(nal)) {
+            // A slice whose first_mb_in_slice == 0 is the first slice of
+            // a new picture — flush the previous picture's slices as one
+            // AU. Slices that continue the current picture (multi-slice
+            // encoding) stay in currentAu.
+            this.flushCurrentAu();
+        }
+
+        this.currentAu.push(nal);
+        if (isSliceNal(t)) {
+            this.currentAuHasSlice = true;
+            if (t === NAL_TYPE_SLICE_IDR) this.currentAuHasIdr = true;
+        }
+    }
+
+    flushCurrentAu() {
+        if (this.currentAu.length === 0) return;
+        const au = Buffer.concat(this.currentAu);
+        const isKeyframe = this.currentAuHasIdr;
+
+        this.currentAu = [];
+        this.currentAuHasSlice = false;
+        this.currentAuHasIdr = false;
+
+        this.publishAu(au, isKeyframe);
+    }
+
+    publishAu(au, isKeyframe) {
+        const nowUs = this.microsNow();
+        this.auCount++;
+        this.lastAuAt = Date.now();
+        this.restartAttempt = 0;
+
+        if (isKeyframe) {
+            // Prepend SPS/PPS if they aren't already in the AU. x264 with
+            // repeat-headers=1 puts them in every IDR AU, but the guard
+            // makes the code robust to encoder-config drift.
+            let toCache = au;
+            const hasSps = this.auContainsNalType(au, NAL_TYPE_SPS);
+            const hasPps = this.auContainsNalType(au, NAL_TYPE_PPS);
+            if ((!hasSps || !hasPps) && this.cachedSps && this.cachedPps) {
+                const parts = [];
+                if (!hasSps) parts.push(this.cachedSps);
+                if (!hasPps) parts.push(this.cachedPps);
+                parts.push(au);
+                toCache = Buffer.concat(parts);
+            }
+            this.cachedKeyframeAu = toCache;
+            this.keyframeCount++;
+            this.lastKeyframeAt = Date.now();
+            au = toCache;
+        }
+
         for (const cb of this.subscribers) {
-            try { cb(jpeg); } catch (err) {
+            try { cb(au, { isKeyframe, timestampUs: nowUs }); }
+            catch (err) {
                 console.warn(`[camera-streamer ${this.camera._id}] subscriber threw:`, err.message);
             }
         }
+    }
+
+    auContainsNalType(au, targetType) {
+        let i = 0;
+        while (i < au.length - 3) {
+            const sc = findStartCode(au, i);
+            if (!sc) return false;
+            const off = sc.pos + sc.prefixLen;
+            if (off < au.length && (au[off] & 0x1f) === targetType) return true;
+            i = off;
+        }
+        return false;
+    }
+
+    microsNow() {
+        // WebCodecs timestamps are microseconds. We just need monotonic.
+        const [s, ns] = process.hrtime();
+        return s * 1_000_000 + Math.floor(ns / 1000);
     }
 
     killFfmpeg(reason) {
@@ -238,20 +435,17 @@ class StreamState {
         return {
             running: !!this.proc,
             subscribers: this.subscribers.size,
-            frameCount: this.frameCount,
+            frameCount: this.auCount,             // kept name for status-endpoint compat
+            keyframeCount: this.keyframeCount,
             uptimeMs: this.startedAt ? Date.now() - this.startedAt : 0,
-            lastFrameAgoMs: this.lastFrameAt ? Date.now() - this.lastFrameAt : null,
+            lastFrameAgoMs: this.lastAuAt ? Date.now() - this.lastAuAt : null,
+            lastKeyframeAgoMs: this.lastKeyframeAt ? Date.now() - this.lastKeyframeAt : null,
             lastError: this.lastError,
         };
     }
 }
 
-// Registry of stream states keyed by camera _id. Entries persist across
-// idle-shutdown cycles so a re-subscribe finds the same state (with the
-// most recent metadata, backoff counter, etc.) and just spawns a fresh
-// ffmpeg. Entries are only removed on explicit stopStream() — when a
-// camera is disabled or deleted.
-const streams = new Map();
+const streams = new Map();   // cameraId → StreamState
 
 function subscribe(cameraDoc, callback) {
     const id = cameraDoc._id;
@@ -260,8 +454,6 @@ function subscribe(cameraDoc, callback) {
         state = new StreamState(cameraDoc);
         streams.set(id, state);
     } else {
-        // Refresh the doc in case the camera was renamed / re-detected
-        // at a new devPath since we last saw it.
         state.camera = cameraDoc;
     }
     return state.subscribe(callback);
