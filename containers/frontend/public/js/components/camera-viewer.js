@@ -11,7 +11,22 @@
 import { AuthStore } from '../api.js';
 
 const FIRST_FRAME_TIMEOUT_MS = 2500;
+// Absolute ceiling for "modal opened but no frame ever arrived" —
+// covers img mode (2.5s) + canvas mode + some slack. If this fires the
+// user sees an error with a Retry button instead of "Connecting…"
+// forever, which is what happens when either the connection pool is
+// saturated or the backend has stopped emitting frames for this camera.
+const OVERALL_CONNECT_TIMEOUT_MS = 8000;
 const MULTIPART_BOUNDARY_RE = /boundary=([^;]+)/i;
+
+// 1×1 transparent GIF used to reliably abort in-flight multipart/x-
+// mixed-replace connections on <img>. `img.src = ''` has undefined
+// browser behavior (some load the document URL); swapping to a valid
+// tiny complete image forces the multipart XHR to close cleanly. This
+// matters most on iOS Safari, which caps HTTP/1.1 at 4 per host —
+// leaked stream connections saturate the pool and block ALL other
+// requests to the same origin (including API polls) until they age out.
+const BLANK_GIF = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
 
 // Build a stream URL with the session token as a query param. HTML
 // <img src> and the canvas-shim fetch both need auth on the URL; the
@@ -38,6 +53,8 @@ export class CameraViewer {
         this.img = null;
         this.abortController = null;
         this.firstFrameTimer = null;
+        this.overallTimer = null;
+        this.firstFrameSeen = false;
         this.mode = null;           // 'img' | 'canvas'
         this.onKeyDown = null;
         this.currentCamera = null;
@@ -46,6 +63,7 @@ export class CameraViewer {
     open(camera) {
         if (this.overlay) this.close();
         this.currentCamera = camera;
+        this.firstFrameSeen = false;
 
         const title = escapeHtml(camera.name || 'Camera');
         const sub = escapeHtml(camera.model || '');
@@ -79,7 +97,61 @@ export class CameraViewer {
         this.onKeyDown = (e) => { if (e.key === 'Escape') this.close(); };
         window.addEventListener('keydown', this.onKeyDown);
 
+        // Absolute ceiling: if no frame arrives from any code path in
+        // OVERALL_CONNECT_TIMEOUT_MS, give up and show an error with a
+        // retry button instead of leaving the user on "Connecting…".
+        this.overallTimer = setTimeout(() => {
+            if (!this.firstFrameSeen) this.showConnectFailure();
+        }, OVERALL_CONNECT_TIMEOUT_MS);
+
         this.startImgMode(camera);
+    }
+
+    showConnectFailure() {
+        if (!this.overlay) return;
+        // Kill anything still running so we don't keep a leaked stream open.
+        if (this.img) {
+            try { this.img.src = BLANK_GIF; } catch { /* ignore */ }
+            this.img.remove();
+            this.img = null;
+        }
+        if (this.canvas) { this.canvas.remove(); this.canvas = null; this.canvasCtx = null; }
+        if (this.abortController) {
+            try { this.abortController.abort(); } catch { /* ignore */ }
+            this.abortController = null;
+        }
+        clearTimeout(this.firstFrameTimer);
+        clearTimeout(this.overallTimer);
+        this.firstFrameTimer = null;
+        this.overallTimer = null;
+        this.mode = null;
+
+        const stage = this.overlay.querySelector('#cam-viewer-stage');
+        if (!stage) return;
+        stage.innerHTML = `
+            <div class="cam-viewer-error">
+                <div class="cam-viewer-error-title">Couldn't start the stream</div>
+                <div class="cam-viewer-error-sub">The camera may be offline, or another connection may be blocking new streams. Try again in a moment.</div>
+                <button class="cam-viewer-retry-btn" type="button">Retry</button>
+            </div>
+        `;
+        const retry = stage.querySelector('.cam-viewer-retry-btn');
+        if (retry) {
+            retry.addEventListener('click', () => {
+                const cam = this.currentCamera;
+                if (!cam) return;
+                this.close();
+                this.open(cam);
+            });
+        }
+    }
+
+    markFirstFrame() {
+        this.firstFrameSeen = true;
+        clearTimeout(this.firstFrameTimer);
+        clearTimeout(this.overallTimer);
+        this.firstFrameTimer = null;
+        this.overallTimer = null;
     }
 
     startImgMode(camera) {
@@ -118,7 +190,16 @@ export class CameraViewer {
         console.log(`[camera-viewer] falling back to canvas shim (${reason})`);
         this.mode = 'canvas';
         clearTimeout(this.firstFrameTimer);
-        if (this.img) { this.img.remove(); this.img = null; }
+        if (this.img) {
+            // Same reliable multipart-connection abort we use in close():
+            // just removing the element doesn't guarantee the browser
+            // closes the socket. Swap src to a valid completed image
+            // first so the multipart XHR is aborted immediately, then
+            // remove the element.
+            try { this.img.src = BLANK_GIF; } catch { /* ignore */ }
+            this.img.remove();
+            this.img = null;
+        }
 
         const stage = this.overlay.querySelector('#cam-viewer-stage');
         const status = this.overlay.querySelector('#cam-viewer-status');
@@ -211,8 +292,8 @@ export class CameraViewer {
             this.abortController = null;
         }
         if (this.img) {
-            // Blanking src stops the multipart connection.
-            this.img.src = '';
+            // Reliable multipart-connection abort (see BLANK_GIF note).
+            try { this.img.src = BLANK_GIF; } catch { /* ignore */ }
             this.img.remove();
             this.img = null;
         }

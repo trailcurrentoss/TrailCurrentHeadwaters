@@ -2,70 +2,102 @@
 
 // Camera live-stream service.
 //
-// Runs one ffmpeg process per enabled camera, pulling MJPEG frames from
-// /dev/videoN and fanning them out to any number of HTTP subscribers.
-// UVC cameras (e.g. Logitech C920) output MJPEG natively, so ffmpeg is
-// invoked with `-c:v copy` — JPEG frames pass through untouched at
-// essentially zero CPU cost.
+// One ffmpeg process per camera, spawned ON DEMAND when the first HTTP
+// subscriber connects and shut down after a grace period once the last
+// subscriber disconnects. Under idle the entire pipeline is zero-cost.
 //
-// Wire format on the client side is HTTP multipart/x-mixed-replace, but
-// this service does NOT emit multipart HTTP — it emits raw JPEG frames
-// via subscriber callbacks. The route handler wraps each frame in
-// per-connection multipart boundaries. This keeps ffmpeg output clean
-// and makes fanout trivial.
+// UVC cameras (Logitech C920 etc.) emit MJPEG natively, so ffmpeg is
+// invoked with `-c:v copy` — JPEG frames pass through untouched with
+// effectively no transcode CPU.
+//
+// The route handler drives the lifecycle via two calls:
+//
+//   const sub = streamer.subscribe(cameraDoc, writeFrameFn)
+//   ...
+//   streamer.unsubscribe(cameraId, sub)
+//
+// The route also owns backpressure — writeFrameFn is called for every
+// frame, but the route is free to drop calls when the underlying socket
+// is above its high-water mark (see cameras.js).
 
 const { spawn } = require('child_process');
-const EventEmitter = require('events');
 
-// V4L2 capture params. 1280x720 @ 30 fps in native MJPEG is the target
-// profile chosen because it (a) hits the ESP32-P4's hardware JPEG
-// decoder sweet spot (720p @ 88 fps ceiling), (b) matches every modern
-// UVC webcam's supported modes, and (c) stays under ~5 Mbps on LAN.
 const CAPTURE_WIDTH = 1280;
 const CAPTURE_HEIGHT = 720;
 const CAPTURE_FPS = 30;
 
-// Restart backoff for ffmpeg crashes. A physically-unplugged camera
-// makes ffmpeg exit immediately in a tight loop — exponential backoff
-// keeps the log manageable while still recovering quickly on a real
-// hiccup.
+// Grace period before an idle stream shuts down ffmpeg. Keeps a stream
+// alive across quick nav-away-nav-back so we don't restart-spam ffmpeg,
+// but shuts things down quickly when the user is genuinely gone.
+const IDLE_SHUTDOWN_MS = 10_000;
+
+// Backoff schedule for ffmpeg auto-restart after unexpected exit. Only
+// kicks in when there are still subscribers; if the last subscriber
+// left, we let it die.
 const RESTART_BACKOFF_MS = [1000, 2000, 4000, 8000, 16000, 30000];
 
-// JPEG frames start with 0xFF 0xD8 (Start Of Image) and end with
-// 0xFF 0xD9 (End Of Image). The mjpeg muxer from ffmpeg emits a clean
-// concatenation of frames, no wrapping. We split on SOI: when we spot
-// a new SOI, the frame that just ended is complete and gets published.
-const SOI_B0 = 0xff;
-const SOI_B1 = 0xd8;
+// JPEG Start-Of-Image marker. Frames in the mjpeg muxer output are a
+// bare concatenation of JPEGs; splitting on SOI gives one frame each.
+const SOI = Buffer.from([0xff, 0xd8]);
 
-class StreamState extends EventEmitter {
+// Sanity guard: if the ingest buffer grows past this without producing
+// a frame, we've lost sync. Reset and re-anchor on the next SOI.
+const MAX_FRAME_BUFFER_BYTES = 4 * 1024 * 1024;
+
+class StreamState {
     constructor(cameraDoc) {
-        super();
-        this.setMaxListeners(0);   // arbitrary number of frame subscribers
         this.camera = cameraDoc;
         this.proc = null;
         this.stopping = false;
         this.restartAttempt = 0;
         this.frameBuf = Buffer.alloc(0);
-        this.lastFrame = null;         // most recent JPEG bytes, for new subscribers
+        this.lastFrame = null;
         this.lastFrameAt = 0;
         this.startedAt = 0;
         this.frameCount = 0;
         this.lastError = null;
+        this.subscribers = new Set();   // Set<Function>
+        this.idleTimer = null;
     }
 
-    start() {
-        if (this.proc) return;
-        this.stopping = false;
-        this.spawnFfmpeg();
+    subscribe(callback) {
+        this.subscribers.add(callback);
+        // Cancel any pending idle-shutdown — someone's watching again.
+        if (this.idleTimer) {
+            clearTimeout(this.idleTimer);
+            this.idleTimer = null;
+        }
+        // Start ffmpeg lazily on first subscriber.
+        if (!this.proc && !this.stopping) {
+            this.spawnFfmpeg();
+        }
+        // Push the most recent frame immediately so the client sees an
+        // image within milliseconds of connecting, rather than waiting
+        // for the next capture tick (up to ~33 ms at 30 fps).
+        if (this.lastFrame) {
+            try { callback(this.lastFrame); } catch { /* subscriber error, will cleanup on its own */ }
+        }
+        return callback;
+    }
+
+    unsubscribe(callback) {
+        this.subscribers.delete(callback);
+        if (this.subscribers.size === 0 && this.proc && !this.idleTimer) {
+            this.idleTimer = setTimeout(() => {
+                this.idleTimer = null;
+                if (this.subscribers.size === 0) {
+                    this.killFfmpeg('idle');
+                }
+            }, IDLE_SHUTDOWN_MS);
+        }
+    }
+
+    subscriberCount() {
+        return this.subscribers.size;
     }
 
     spawnFfmpeg() {
         const dev = this.camera.devPath;
-        // -f v4l2:            capture from Video4Linux2
-        // -input_format mjpeg: negotiate MJPEG native output (zero transcode)
-        // -c:v copy:          pass frames through, don't re-encode
-        // -f mjpeg -:         emit a bare MJPEG stream to stdout
         const args = [
             '-hide_banner',
             '-loglevel', 'warning',
@@ -96,13 +128,20 @@ class StreamState extends EventEmitter {
 
         proc.on('exit', (code, signal) => {
             const uptime = Date.now() - this.startedAt;
-            console.log(`[camera-streamer ${this.camera._id}] ffmpeg exited code=${code} signal=${signal} uptime=${uptime}ms frames=${this.frameCount}`);
+            console.log(`[camera-streamer ${this.camera._id}] ffmpeg exited code=${code} signal=${signal} uptime=${uptime}ms frames=${this.frameCount} subscribers=${this.subscribers.size}`);
             this.proc = null;
+            // Only auto-restart if there are still subscribers waiting.
+            // If we exited because IDLE_SHUTDOWN killed us, subscribers
+            // is 0 and we stay dead until a new subscribe() comes in.
+            if (this.subscribers.size === 0) return;
             if (this.stopping) return;
-            // Auto-restart with backoff.
             const delay = RESTART_BACKOFF_MS[Math.min(this.restartAttempt, RESTART_BACKOFF_MS.length - 1)];
             this.restartAttempt = Math.min(this.restartAttempt + 1, RESTART_BACKOFF_MS.length - 1);
-            setTimeout(() => { if (!this.stopping) this.spawnFfmpeg(); }, delay);
+            setTimeout(() => {
+                if (this.subscribers.size > 0 && !this.proc && !this.stopping) {
+                    this.spawnFfmpeg();
+                }
+            }, delay);
         });
 
         proc.on('error', (err) => {
@@ -110,79 +149,96 @@ class StreamState extends EventEmitter {
             console.error(`[camera-streamer ${this.camera._id}] ffmpeg spawn error:`, err);
         });
 
-        console.log(`[camera-streamer ${this.camera._id}] started ffmpeg on ${dev} @ ${CAPTURE_WIDTH}x${CAPTURE_HEIGHT}@${CAPTURE_FPS}`);
+        console.log(`[camera-streamer ${this.camera._id}] started ffmpeg on ${dev} @ ${CAPTURE_WIDTH}x${CAPTURE_HEIGHT}@${CAPTURE_FPS} (${this.subscribers.size} subscriber(s))`);
     }
 
+    // Efficient frame splitter. Uses native Buffer.indexOf (SIMD-fast in
+    // recent Node) instead of a JS byte-by-byte scan, and only searches
+    // the newly-appended tail on each ingest — never re-scans the old
+    // buffer contents.
     ingest(chunk) {
-        // Append to rolling buffer, then extract complete frames.
-        // A complete frame runs from one SOI to just before the next SOI.
-        this.frameBuf = this.frameBuf.length ? Buffer.concat([this.frameBuf, chunk]) : chunk;
+        // Track how many bytes were already in the buffer BEFORE this
+        // chunk. New SOIs can only appear at or after (prevLen - 1) —
+        // one byte back covers the case where the previous chunk ended
+        // on 0xFF and this chunk starts with 0xD8.
+        const prevLen = this.frameBuf.length;
+        this.frameBuf = prevLen ? Buffer.concat([this.frameBuf, chunk]) : Buffer.from(chunk);
 
-        // Scan for SOI markers. Start from index 1 so we can look back
-        // one byte to confirm 0xFF 0xD8.
-        let searchFrom = 1;
-        let lastSoi = -1;
-        // Find the first SOI to anchor
-        for (let i = 0; i < this.frameBuf.length - 1; i++) {
-            if (this.frameBuf[i] === SOI_B0 && this.frameBuf[i + 1] === SOI_B1) {
-                lastSoi = i;
-                searchFrom = i + 2;
-                break;
-            }
-        }
-        if (lastSoi < 0) return;   // no SOI yet — keep buffering
+        let searchFrom = prevLen > 0 ? prevLen - 1 : 0;
 
-        // Find subsequent SOIs; the bytes between them are complete frames.
-        while (searchFrom < this.frameBuf.length - 1) {
-            let nextSoi = -1;
-            for (let i = searchFrom; i < this.frameBuf.length - 1; i++) {
-                if (this.frameBuf[i] === SOI_B0 && this.frameBuf[i + 1] === SOI_B1) {
-                    nextSoi = i;
-                    break;
+        // Anchor on first SOI if we haven't yet (frameBuf starts with
+        // SOI once anchored). Only runs once per camera lifetime, or
+        // after a resync from overflow.
+        if (this.frameBuf.length < 2) return;
+        if (this.frameBuf[0] !== 0xff || this.frameBuf[1] !== 0xd8) {
+            const firstSoi = this.frameBuf.indexOf(SOI);
+            if (firstSoi < 0) {
+                // No anchor yet; trim to last byte to preserve a possible
+                // half-marker at the boundary.
+                if (this.frameBuf.length > 1) {
+                    this.frameBuf = this.frameBuf.subarray(this.frameBuf.length - 1);
                 }
+                return;
             }
-            if (nextSoi < 0) break;
-            const frame = this.frameBuf.subarray(lastSoi, nextSoi);
-            this.publishFrame(frame);
-            lastSoi = nextSoi;
-            searchFrom = nextSoi + 2;
+            this.frameBuf = this.frameBuf.subarray(firstSoi);
+            searchFrom = 2;
         }
 
-        // Retain from the last SOI forward (that's an in-progress frame).
-        this.frameBuf = this.frameBuf.subarray(lastSoi);
+        // Emit every complete frame in the buffer. A frame runs from one
+        // SOI (inclusive) to just before the next SOI. Only the last SOI
+        // stays in the buffer for the next chunk to complete.
+        while (searchFrom < this.frameBuf.length) {
+            const nextSoi = this.frameBuf.indexOf(SOI, searchFrom);
+            if (nextSoi < 0) break;
+            const frame = this.frameBuf.subarray(0, nextSoi);
+            this.publishFrame(frame);
+            this.frameBuf = this.frameBuf.subarray(nextSoi);
+            searchFrom = 2;
+        }
 
-        // Guardrail: if buffer grows unreasonably large, something is
-        // wrong with framing — drop and resync on the next SOI.
-        if (this.frameBuf.length > 4 * 1024 * 1024) {
+        if (this.frameBuf.length > MAX_FRAME_BUFFER_BYTES) {
             console.warn(`[camera-streamer ${this.camera._id}] frame buffer overflow (${this.frameBuf.length}B) — resetting`);
             this.frameBuf = Buffer.alloc(0);
         }
     }
 
     publishFrame(frame) {
-        this.lastFrame = frame;
+        // Copy off the slice so the shared frameBuf can be safely resliced.
+        const jpeg = Buffer.from(frame);
+        this.lastFrame = jpeg;
         this.lastFrameAt = Date.now();
         this.frameCount++;
-        this.restartAttempt = 0;   // first frame after boot = healthy
-        this.emit('frame', frame);
+        this.restartAttempt = 0;   // healthy production = reset backoff
+        for (const cb of this.subscribers) {
+            try { cb(jpeg); } catch (err) {
+                console.warn(`[camera-streamer ${this.camera._id}] subscriber threw:`, err.message);
+            }
+        }
+    }
+
+    killFfmpeg(reason) {
+        if (!this.proc) return;
+        console.log(`[camera-streamer ${this.camera._id}] stopping ffmpeg (${reason})`);
+        const proc = this.proc;
+        try { proc.kill('SIGTERM'); } catch { /* ignore */ }
+        setTimeout(() => { try { proc.kill('SIGKILL'); } catch { /* ignore */ } }, 2000);
     }
 
     stop() {
         this.stopping = true;
-        if (this.proc) {
-            try { this.proc.kill('SIGTERM'); } catch { /* ignore */ }
-            // Force-kill if ffmpeg doesn't exit in 2s
-            const proc = this.proc;
-            setTimeout(() => { try { proc.kill('SIGKILL'); } catch { /* ignore */ } }, 2000);
+        this.subscribers.clear();
+        if (this.idleTimer) {
+            clearTimeout(this.idleTimer);
+            this.idleTimer = null;
         }
-        this.removeAllListeners('frame');
+        this.killFfmpeg('shutdown');
     }
 
     getStatus() {
         return {
             running: !!this.proc,
+            subscribers: this.subscribers.size,
             frameCount: this.frameCount,
-            subscribers: this.listenerCount('frame'),
             uptimeMs: this.startedAt ? Date.now() - this.startedAt : 0,
             lastFrameAgoMs: this.lastFrameAt ? Date.now() - this.lastFrameAt : null,
             lastError: this.lastError,
@@ -190,16 +246,31 @@ class StreamState extends EventEmitter {
     }
 }
 
-// Registry of active streams keyed by camera _id.
+// Registry of stream states keyed by camera _id. Entries persist across
+// idle-shutdown cycles so a re-subscribe finds the same state (with the
+// most recent metadata, backoff counter, etc.) and just spawns a fresh
+// ffmpeg. Entries are only removed on explicit stopStream() — when a
+// camera is disabled or deleted.
 const streams = new Map();
 
-function startStream(cameraDoc) {
+function subscribe(cameraDoc, callback) {
     const id = cameraDoc._id;
-    if (streams.has(id)) return streams.get(id);
-    const state = new StreamState(cameraDoc);
-    streams.set(id, state);
-    state.start();
-    return state;
+    let state = streams.get(id);
+    if (!state) {
+        state = new StreamState(cameraDoc);
+        streams.set(id, state);
+    } else {
+        // Refresh the doc in case the camera was renamed / re-detected
+        // at a new devPath since we last saw it.
+        state.camera = cameraDoc;
+    }
+    return state.subscribe(callback);
+}
+
+function unsubscribe(cameraId, subscription) {
+    const state = streams.get(cameraId);
+    if (!state) return;
+    state.unsubscribe(subscription);
 }
 
 function stopStream(cameraId) {
@@ -210,13 +281,9 @@ function stopStream(cameraId) {
     return true;
 }
 
-function getStream(cameraId) {
-    return streams.get(cameraId) || null;
-}
-
 function getStatus(cameraId) {
     const state = streams.get(cameraId);
-    return state ? state.getStatus() : { running: false };
+    return state ? state.getStatus() : { running: false, subscribers: 0 };
 }
 
 function stopAll() {
@@ -225,9 +292,9 @@ function stopAll() {
 }
 
 module.exports = {
-    startStream,
+    subscribe,
+    unsubscribe,
     stopStream,
-    getStream,
     getStatus,
     stopAll,
 };

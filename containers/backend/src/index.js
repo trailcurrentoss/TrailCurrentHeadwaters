@@ -131,17 +131,12 @@ async function startServer() {
         peregrineCa.reinstallFromDb(db).catch(err =>
             console.error('[Startup] Peregrine CA reinstall failed:', err.message));
 
-        // Hydrate camera streams: any camera left `enabled=true` when the
-        // backend was last stopped should have its ffmpeg pipeline
-        // running again. If the physical camera is currently unplugged
-        // the streamer will fail-and-backoff harmlessly until it returns.
-        const cameraStreamer = require('./services/camera-streamer');
-        db.collection('cameras').find({ enabled: true }).toArray()
-            .then(cams => {
-                for (const cam of cams) cameraStreamer.startStream(cam);
-                if (cams.length) console.log(`[Startup] Started ${cams.length} camera stream(s)`);
-            })
-            .catch(err => console.error('[Startup] Camera stream hydration failed:', err.message));
+        // Camera streams are on-demand: ffmpeg spawns only when the
+        // first HTTP subscriber connects to /api/cameras/:id/stream and
+        // shuts down after an idle grace period once the last one
+        // disconnects. Nothing to hydrate at boot — enabled cameras
+        // just become STREAMABLE, not actively streaming. This keeps
+        // the backend at ~0% CPU when nobody is watching.
 
         // Initialize MQTT service
         mqttService.connect(db, broadcast);

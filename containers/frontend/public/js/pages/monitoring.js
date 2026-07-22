@@ -28,6 +28,8 @@ let cameras = [];
 let loading = true;
 let loadError = null;
 let containerClickListener = null;
+let visibilityListener = null;
+let pageHideListener = null;
 let viewer = null;
 
 function escapeHtml(s) {
@@ -109,12 +111,26 @@ function paint() {
     if (container) container.innerHTML = renderInner();
 }
 
+// Hard cap on how long we'll wait for the camera list before giving up
+// and surfacing an error. Under normal conditions the response arrives
+// in ~50 ms on the LAN. A stalled request usually means the browser's
+// per-host connection pool is saturated (leaked MJPEG streams, mostly
+// an iOS Safari failure mode); showing a "Retry" button beats a
+// silent "Loading…" that never resolves.
+const CAMERAS_LIST_TIMEOUT_MS = 8000;
+
 async function loadCameras() {
     loading = true;
     loadError = null;
     paint();
     try {
-        const data = await API.getCameras();
+        const data = await Promise.race([
+            API.getCameras(),
+            new Promise((_, reject) => setTimeout(
+                () => reject(new Error(`Timed out after ${CAMERAS_LIST_TIMEOUT_MS / 1000}s`)),
+                CAMERAS_LIST_TIMEOUT_MS
+            )),
+        ]);
         cameras = Array.isArray(data.cameras) ? data.cameras : [];
     } catch (err) {
         console.error('[monitoring] load failed:', err);
@@ -125,12 +141,26 @@ async function loadCameras() {
     paint();
 }
 
+// 1×1 transparent GIF. Setting img.src to a valid tiny image is the
+// only reliable way to abort an in-flight multipart/x-mixed-replace
+// connection: `img.src = ''` triggers "load the document URL" in some
+// browsers, and just removing the element doesn't guarantee an
+// immediate socket close (browsers hold connections in a settling
+// period). Loading a valid completed image forces the multipart XHR
+// to be aborted right now.
+const BLANK_GIF = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+
 function tearDownStreams() {
-    // Zero every <img src> so the browser closes each multipart HTTP
-    // connection immediately. Without this the streams would keep
-    // running in the image cache after we navigate away.
+    // Streams are HTTP/1.1 persistent connections. Chrome caps these at
+    // 6 per origin. If they aren't reliably closed on navigation-away,
+    // a few round-trips of "leave and come back" saturate the pool and
+    // block API.getCameras() from ever getting a connection — the
+    // symptom is "Loading cameras…" forever on second visit.
     document.querySelectorAll('.monitor-tile-img').forEach(img => {
-        try { img.src = ''; } catch { /* ignore */ }
+        try {
+            img.src = BLANK_GIF;
+            img.remove();
+        } catch { /* ignore */ }
     });
 }
 
@@ -154,6 +184,27 @@ function wireListeners() {
         }
     };
     container.addEventListener('click', containerClickListener);
+
+    // Kill streams the instant the tab/app is hidden. Without this, iOS
+    // Safari suspends JavaScript but keeps the MJPEG connections open;
+    // when the user returns, those sockets are half-alive and count
+    // against Safari's 4-per-host HTTP/1.1 limit, saturating the pool
+    // for every OTHER page in the app. Repaint on visible restarts the
+    // streams with fresh URLs.
+    visibilityListener = () => {
+        if (document.visibilityState === 'hidden') {
+            tearDownStreams();
+        } else if (document.visibilityState === 'visible' && !loading) {
+            paint();
+        }
+    };
+    document.addEventListener('visibilitychange', visibilityListener);
+
+    // pagehide fires on Safari BFCache navigations and on true unload.
+    // Belt-and-suspenders for visibilitychange, which iOS sometimes
+    // skips when the user swipes back or switches apps quickly.
+    pageHideListener = () => tearDownStreams();
+    window.addEventListener('pagehide', pageHideListener);
 }
 
 function unwireListeners() {
@@ -162,6 +213,15 @@ function unwireListeners() {
         container.removeEventListener('click', containerClickListener);
     }
     containerClickListener = null;
+
+    if (visibilityListener) {
+        document.removeEventListener('visibilitychange', visibilityListener);
+        visibilityListener = null;
+    }
+    if (pageHideListener) {
+        window.removeEventListener('pagehide', pageHideListener);
+        pageHideListener = null;
+    }
 }
 
 export const monitoringPage = {

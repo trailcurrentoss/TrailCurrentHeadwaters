@@ -124,8 +124,9 @@ module.exports = (db) => {
     });
 
     // PATCH /api/cameras/:id — update rename or enable/disable. Body may
-    // contain any subset of { name, enabled }. Enabling a camera boots
-    // the ffmpeg streamer for it; disabling stops it.
+    // contain any subset of { name, enabled }. Enabling merely marks the
+    // camera as available for streaming; ffmpeg boots lazily on first
+    // viewer connect. Disabling immediately stops any running stream.
     router.patch('/:id', async (req, res) => {
         try {
             const { id } = req.params;
@@ -148,9 +149,7 @@ module.exports = (db) => {
             if (!doc || !doc._id) {
                 return res.status(404).json({ error: 'Camera not found' });
             }
-            if (body.enabled === true) {
-                streamer.startStream(doc);
-            } else if (body.enabled === false) {
+            if (body.enabled === false) {
                 streamer.stopStream(id);
             }
             res.json(toApiShape(doc));
@@ -201,16 +200,18 @@ module.exports = (db) => {
     // client can consume this directly. The ESP32-P4 hits its hardware
     // JPEG decoder on each frame; the browser paints via <img>.
     //
-    // We subscribe this response to the camera's frame emitter and write
-    // one multipart part per frame. On socket close we unsubscribe so
-    // ffmpeg doesn't keep pumping frames into a dead pipe.
+    // Subscribes to the streamer with a write function; the streamer
+    // starts ffmpeg lazily if we're the first subscriber and stops it
+    // after an idle grace period once the last subscriber disconnects.
+    // Backpressure: if the socket buffer is above its high-water mark,
+    // we drop frames (setting `writable=false`) rather than accumulate
+    // them in memory. A slow phone on marginal WiFi degrades to lower
+    // effective fps instead of taking the whole backend down.
     router.get('/:id/stream', async (req, res) => {
         try {
             const doc = await cameras.findOne({ _id: req.params.id });
             if (!doc) return res.status(404).json({ error: 'Camera not found' });
             if (!doc.enabled) return res.status(409).json({ error: 'Camera is not enabled' });
-
-            const state = streamer.getStream(req.params.id) || streamer.startStream(doc);
 
             res.writeHead(200, {
                 'Content-Type': `multipart/x-mixed-replace; boundary=${MJPEG_BOUNDARY}`,
@@ -224,28 +225,37 @@ module.exports = (db) => {
             });
 
             let closed = false;
+            let writable = true;
+            let subscription = null;
+
+            // Node stream backpressure: res.write() returns false when
+            // the internal buffer is above highWaterMark. When that
+            // happens we stop calling write() until 'drain' fires. Any
+            // frames the streamer publishes in between get dropped for
+            // this subscriber only — other subscribers keep their pace.
+            res.on('drain', () => { writable = true; });
 
             const writeFrame = (jpeg) => {
-                if (closed) return;
+                if (closed || !writable) return;
                 const header = `\r\n--${MJPEG_BOUNDARY}\r\nContent-Type: image/jpeg\r\nContent-Length: ${jpeg.length}\r\n\r\n`;
                 try {
                     res.write(header);
-                    res.write(jpeg);
-                } catch { /* socket died between writes, cleanup runs below */ }
+                    // The chunk that carries the actual frame is the one
+                    // whose return value we track — it's the payload that
+                    // dominates buffer occupancy.
+                    writable = res.write(jpeg);
+                } catch {
+                    // Socket died between writes; cleanup runs below.
+                    closed = true;
+                }
             };
 
-            // Push the most recent frame immediately so the client sees
-            // an image before waiting for the next capture tick (up to
-            // ~33ms savings at 30 fps, but a much smoother "connect =
-            // instant picture" feel).
-            if (state.lastFrame) writeFrame(state.lastFrame);
-
-            state.on('frame', writeFrame);
+            subscription = streamer.subscribe(doc, writeFrame);
 
             const cleanup = () => {
                 if (closed) return;
                 closed = true;
-                state.removeListener('frame', writeFrame);
+                if (subscription) streamer.unsubscribe(req.params.id, subscription);
                 try { res.end(); } catch { /* ignore */ }
             };
             req.on('close', cleanup);
