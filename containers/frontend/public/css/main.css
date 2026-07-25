@@ -5117,13 +5117,7 @@ body {
     border-left: 3px solid var(--danger);
 }
 
-/* Vehicle Leveler Configuration (in module modal) */
-.leveler-config {
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
-}
-
+/* Stacked field group inside module modal (borealis, etc.) */
 .leveler-field-group {
     display: flex;
     flex-direction: column;

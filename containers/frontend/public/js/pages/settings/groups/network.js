@@ -132,35 +132,6 @@ export const networkGroup = {
                             </div>
                         </div>
 
-                        <div class="leveler-config" id="leveler-config" style="display: none;">
-                            <label class="form-label">Leveling Configuration</label>
-                            <p class="form-hint" style="margin-bottom: 12px;">Configure the IMU leveling sensor. Settings are sent to the module via CAN bus.</p>
-
-                            <div class="leveler-field-group">
-                                <label for="leveler-mounting" class="form-label">Mounting Surface</label>
-                                <select id="leveler-mounting" class="form-input">
-                                    <option value="0">Floor</option>
-                                    <option value="1">Left Wall</option>
-                                    <option value="2">Right Wall</option>
-                                </select>
-                                <p class="form-hint">Orientation of the IMU sensor in the vehicle</p>
-                            </div>
-
-                            <div class="leveler-field-group">
-                                <label for="leveler-vehicle-length" class="form-label">Vehicle Length (cm)</label>
-                                <input type="number" id="leveler-vehicle-length" class="form-input"
-                                       placeholder="e.g., 500" min="1" max="65535" value="500">
-                                <p class="form-hint">Total length of the vehicle in centimeters</p>
-                            </div>
-
-                            <div class="leveler-field-group">
-                                <label for="leveler-vehicle-width" class="form-label">Vehicle Width (cm)</label>
-                                <input type="number" id="leveler-vehicle-width" class="form-input"
-                                       placeholder="e.g., 200" min="1" max="65535" value="200">
-                                <p class="form-hint">Total width of the vehicle in centimeters</p>
-                            </div>
-                        </div>
-
                         <div class="borealis-config" id="borealis-config" style="display: none;">
                             <label class="form-label">Calibration</label>
                             <p class="form-hint" style="margin-bottom: 12px;">Adjust the temperature sensor offset. This value is sent to Borealis via CAN bus and persists across reboots.</p>
@@ -736,16 +707,14 @@ export const networkGroup = {
         document.getElementById('module-hostname').value = module.hostname || '';
         document.getElementById('module-hostname').disabled = true;
 
-        // Handle channel-based config (Torrent PDM, Switchback relay), leveler, borealis, or generic JSON
+        // Handle channel-based config (Torrent PDM, Switchback relay), borealis, or generic JSON.
+        // Plateau's vehicle-geometry config lives in Settings > Vehicle, not here.
         const isSwitchback = module.type === 'switchback' || module.type === 'switchback_relay';
         if (module.type === 'torrent' || isSwitchback) {
             const defaults = isSwitchback ? this.getSwitchbackDefaultChannels() : this.getDefaultChannels();
             const channels = module.config?.channels || defaults;
             this.togglePdmChannelsUI(module.type);
             this.renderChannelRows(channels, module.type);
-        } else if (module.type === 'aftline') {
-            this.togglePdmChannelsUI('aftline');
-            this.populateLevelerFields(module.config || {});
         } else if (module.type === 'borealis') {
             this.togglePdmChannelsUI('borealis');
             this.populateBorealisFields(module.config || {});
@@ -842,9 +811,6 @@ export const networkGroup = {
         let config = {};
         if (type === 'torrent' || type === 'switchback' || type === 'switchback_relay') {
             config = { channels: this.collectChannelData() };
-        } else if (type === 'aftline') {
-            config = this.collectLevelerData();
-            if (!config) return; // validation failed
         } else if (type === 'borealis') {
             config = this.collectBorealisData();
             if (!config) return; // validation failed
@@ -1087,13 +1053,9 @@ export const networkGroup = {
                 this.renderChannelRows(defaults, moduleType);
             }
         } else {
-            jsonGroup.style.display = (moduleType === 'aftline' || moduleType === 'borealis') ? 'none' : 'block';
+            jsonGroup.style.display = (moduleType === 'borealis') ? 'none' : 'block';
             channelsConfig.style.display = 'none';
         }
-
-        // Leveler config is independent of PDM channels
-        document.getElementById('leveler-config').style.display =
-            moduleType === 'aftline' ? 'block' : 'none';
 
         // Borealis config
         document.getElementById('borealis-config').style.display =
@@ -1145,37 +1107,6 @@ export const networkGroup = {
                 iconSelect.value = channels[i].icon || 'lightbulb';
             }
         });
-    },
-
-    populateLevelerFields(config) {
-        const mounting = document.getElementById('leveler-mounting');
-        const length = document.getElementById('leveler-vehicle-length');
-        const width = document.getElementById('leveler-vehicle-width');
-
-        if (mounting) mounting.value = config.mounting !== undefined ? config.mounting : 0;
-        if (length) length.value = config.vehicle_length_cm !== undefined ? config.vehicle_length_cm : 500;
-        if (width) width.value = config.vehicle_width_cm !== undefined ? config.vehicle_width_cm : 200;
-    },
-
-    collectLevelerData() {
-        const mounting = parseInt(document.getElementById('leveler-mounting').value);
-        const vehicleLength = parseInt(document.getElementById('leveler-vehicle-length').value);
-        const vehicleWidth = parseInt(document.getElementById('leveler-vehicle-width').value);
-
-        if (isNaN(vehicleLength) || vehicleLength < 1 || vehicleLength > 65535) {
-            this.showMessage('Vehicle length must be between 1 and 65535 cm', 'error');
-            return null;
-        }
-        if (isNaN(vehicleWidth) || vehicleWidth < 1 || vehicleWidth > 65535) {
-            this.showMessage('Vehicle width must be between 1 and 65535 cm', 'error');
-            return null;
-        }
-
-        return {
-            mounting: mounting,
-            vehicle_length_cm: vehicleLength,
-            vehicle_width_cm: vehicleWidth
-        };
     },
 
     populateBorealisFields(config) {

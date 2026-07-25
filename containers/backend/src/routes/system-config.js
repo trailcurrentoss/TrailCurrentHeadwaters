@@ -99,6 +99,36 @@ module.exports = (db) => {
             // strip it from this generic blob.
             delete data.peregrine_ca_pem;
 
+            // Migration: legacy installs stored vehicle geometry inside the
+            // plateau (or previously-mislabelled aftline) module's .config.
+            // Promote those to top-level system_config fields on first read
+            // so the new Vehicle settings surface has a single source of truth.
+            if (data.vehicle_mounting === undefined
+                || data.vehicle_length_cm === undefined
+                || data.vehicle_width_cm === undefined) {
+                const legacy = (data.mcu_modules || []).find(m =>
+                    (m.type === 'plateau' || m.type === 'aftline') && m.config
+                    && (m.config.mounting !== undefined
+                        || m.config.vehicle_length_cm !== undefined
+                        || m.config.vehicle_width_cm !== undefined));
+                if (legacy) {
+                    const migration = {};
+                    if (data.vehicle_mounting === undefined && legacy.config.mounting !== undefined) {
+                        migration.vehicle_mounting = legacy.config.mounting;
+                    }
+                    if (data.vehicle_length_cm === undefined && legacy.config.vehicle_length_cm !== undefined) {
+                        migration.vehicle_length_cm = legacy.config.vehicle_length_cm;
+                    }
+                    if (data.vehicle_width_cm === undefined && legacy.config.vehicle_width_cm !== undefined) {
+                        migration.vehicle_width_cm = legacy.config.vehicle_width_cm;
+                    }
+                    if (Object.keys(migration).length) {
+                        Object.assign(data, migration);
+                        await systemConfig.updateOne({ _id: 'main' }, { $set: migration });
+                    }
+                }
+            }
+
             res.json(data);
         } catch (error) {
             console.error('Error fetching system config:', error);
@@ -255,6 +285,33 @@ module.exports = (db) => {
                 updates.sms_throttle_window_minutes = val;
             }
 
+            // Vehicle configuration — top-level fields consumed by Plateau
+            // over CAN 0x36 subcmd 0x01. Independent of module registration:
+            // may be set before a Plateau module is discovered.
+            if (req.body.vehicle_mounting !== undefined) {
+                const v = Number(req.body.vehicle_mounting);
+                if (!Number.isInteger(v) || v < 0 || v > 2) {
+                    return res.status(400).json({ error: 'vehicle_mounting must be 0 (floor), 1 (left wall), or 2 (right wall)' });
+                }
+                updates.vehicle_mounting = v;
+            }
+
+            if (req.body.vehicle_length_cm !== undefined) {
+                const v = Number(req.body.vehicle_length_cm);
+                if (!Number.isInteger(v) || v < 1 || v > 65535) {
+                    return res.status(400).json({ error: 'vehicle_length_cm must be an integer between 1 and 65535' });
+                }
+                updates.vehicle_length_cm = v;
+            }
+
+            if (req.body.vehicle_width_cm !== undefined) {
+                const v = Number(req.body.vehicle_width_cm);
+                if (!Number.isInteger(v) || v < 1 || v > 65535) {
+                    return res.status(400).json({ error: 'vehicle_width_cm must be an integer between 1 and 65535' });
+                }
+                updates.vehicle_width_cm = v;
+            }
+
             if (mcu_modules !== undefined) {
                 if (!Array.isArray(mcu_modules)) {
                     return res.status(400).json({ error: 'mcu_modules must be an array' });
@@ -347,21 +404,27 @@ module.exports = (db) => {
                 }
             }
 
-            // Trigger Plateau config broadcast via CAN if an aftline module is present
-            if (mcu_modules !== undefined) {
-                const leveler = mcu_modules.find(m => m.type === 'aftline' && m.enabled !== false);
-                if (leveler && leveler.config) {
-                    const mqttService = require('../mqtt');
-                    try {
-                        const mounting = leveler.config.mounting !== undefined ? leveler.config.mounting : 0;
-                        const lengthCm = leveler.config.vehicle_length_cm !== undefined ? leveler.config.vehicle_length_cm : 500;
-                        const widthCm = leveler.config.vehicle_width_cm !== undefined ? leveler.config.vehicle_width_cm : 200;
+            // Trigger Plateau vehicle-config broadcast via CAN whenever any
+            // of the top-level vehicle_* fields change. Independent of module
+            // presence — Plateau firmware picks up the frame when listening;
+            // if it isn't online yet, the field is still persisted for next boot.
+            if (updates.vehicle_mounting !== undefined
+                || updates.vehicle_length_cm !== undefined
+                || updates.vehicle_width_cm !== undefined) {
+                const mqttService = require('../mqtt');
+                try {
+                    const current = await systemConfig.findOne({ _id: 'main' });
+                    const mounting = updates.vehicle_mounting !== undefined ? updates.vehicle_mounting
+                        : (current && current.vehicle_mounting !== undefined ? current.vehicle_mounting : 0);
+                    const lengthCm = updates.vehicle_length_cm !== undefined ? updates.vehicle_length_cm
+                        : (current && current.vehicle_length_cm !== undefined ? current.vehicle_length_cm : 500);
+                    const widthCm = updates.vehicle_width_cm !== undefined ? updates.vehicle_width_cm
+                        : (current && current.vehicle_width_cm !== undefined ? current.vehicle_width_cm : 200);
 
-                        console.log('[System Config] Publishing Plateau config to CAN bus');
-                        mqttService.publishPlateauConfig(mounting, lengthCm, widthCm);
-                    } catch (error) {
-                        console.error('[System Config] Error publishing Plateau config:', error);
-                    }
+                    console.log('[System Config] Publishing Plateau vehicle config to CAN bus');
+                    mqttService.publishPlateauConfig(mounting, lengthCm, widthCm);
+                } catch (error) {
+                    console.error('[System Config] Error publishing Plateau vehicle config:', error);
                 }
             }
 

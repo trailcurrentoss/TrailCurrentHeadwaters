@@ -18,6 +18,7 @@ const MCU_MODULES = [
     { id: 'reservoir', name: 'Reservoir' },
     { id: 'borealis', name: 'Borealis' },
     { id: 'aftline', name: 'Aftline' },
+    { id: 'plateau', name: 'Plateau' },
     { id: 'picket', name: 'Picket' },
     { id: 'bearing', name: 'Bearing' },
     { id: 'therma', name: 'Therma' },

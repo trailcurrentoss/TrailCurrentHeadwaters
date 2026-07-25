@@ -12,6 +12,7 @@
 
 import { router } from '../../router.js';
 import { generalGroup } from './groups/general.js';
+import { vehicleGroup } from './groups/vehicle.js';
 import { alarmsGroup } from './groups/alarms.js';
 import { networkGroup } from './groups/network.js';
 import { mapsGroup } from './groups/maps.js';
@@ -26,6 +27,7 @@ import { aboutGroup } from './groups/about.js';
 // Group order = display order on landing / rail.
 const GROUPS = [
     generalGroup,
+    vehicleGroup,
     alarmsGroup,
     networkGroup,
     mapsGroup,

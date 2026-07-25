@@ -269,6 +269,23 @@ const parsers = {
         }));
     },
 
+    // ── Plateau corner adjustments (0x038) ─────────────────────────
+    // Per-wheel lift needed (mm), normalized so the lowest corner = 0.
+    '0x038': (data, mqtt) => {
+        const decoded = decodeBitArrays(data);
+        const readInt16 = (hi, lo) => {
+            let v = (hi << 8) | lo;
+            if (v >= 0x8000) v -= 0x10000;
+            return v;
+        };
+        mqtt.publish('local/level/corners', JSON.stringify({
+            front_left_mm:  readInt16(decoded[0], decoded[1]),
+            front_right_mm: readInt16(decoded[2], decoded[3]),
+            rear_left_mm:   readInt16(decoded[4], decoded[5]),
+            rear_right_mm:  readInt16(decoded[6], decoded[7])
+        }));
+    },
+
     // ── Water tank levels (0x03e) — Reservoir module ─────────────────
     '0x03e': (data, mqtt) => {
         const decoded = decodeBitArrays(data);

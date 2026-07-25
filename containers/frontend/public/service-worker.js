@@ -55,6 +55,7 @@ const STATIC_ASSETS = [
     // Consolidated Settings — shell + per-group modules.
     '/js/pages/settings/index.js',
     '/js/pages/settings/groups/general.js',
+    '/js/pages/settings/groups/vehicle.js',
     '/js/pages/settings/groups/alarms.js',
     '/js/pages/settings/groups/network.js',
     '/js/pages/settings/groups/maps.js',

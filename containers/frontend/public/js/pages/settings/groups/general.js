@@ -5,7 +5,6 @@
 
 import { API } from '../../../api.js';
 import { units } from '../../../services/units.js';
-import { trailerConfig } from '../../../services/trailer-config.js';
 
 let settings = null;
 let currentTimezone = null;
@@ -15,15 +14,14 @@ export const generalGroup = {
         id: 'general',
         title: 'General',
         icon: 'options-outline',
-        sub: 'Display, units, trailer, time zone',
+        sub: 'Display, units, time zone',
     },
     searchIndex: [
-        { label: 'Dark Mode',        kw: 'theme appearance dark light display',                 anchor: 'theme-toggle' },
-        { label: 'Trailer Axles',    kw: 'trailer axles tire pressure single tandem triple',    anchor: 'trailer-axles-choices' },
-        { label: 'Speed Units',      kw: 'mph kph units speed',                                 anchor: 'units-speed-choices' },
-        { label: 'Temperature Units', kw: 'temperature celsius fahrenheit units',                anchor: 'units-temp-choices' },
-        { label: 'Elevation Units',  kw: 'elevation feet meters altitude units',                anchor: 'units-length-choices' },
-        { label: 'Time Zone',        kw: 'timezone iana timedatectl clock host',                anchor: 'settings-timezone-select' },
+        { label: 'Dark Mode',         kw: 'theme appearance dark light display',   anchor: 'theme-toggle' },
+        { label: 'Speed Units',       kw: 'mph kph units speed',                   anchor: 'units-speed-choices' },
+        { label: 'Temperature Units', kw: 'temperature celsius fahrenheit units',  anchor: 'units-temp-choices' },
+        { label: 'Elevation Units',   kw: 'elevation feet meters altitude units',  anchor: 'units-length-choices' },
+        { label: 'Time Zone',         kw: 'timezone iana timedatectl clock host',  anchor: 'settings-timezone-select' },
     ],
 
     render() {
@@ -72,24 +70,6 @@ function renderInner() {
                     id="theme-toggle"
                     aria-pressed="${settings.theme === 'dark'}">
             </button>
-        </div>
-
-        <!-- Trailer -->
-        <div class="card settings-item-vertical">
-            <div class="settings-item-header">
-                <span class="settings-label">Trailer</span>
-                <p class="settings-description">Number of axles on your trailer. Determines the tire slots and pressure readouts in Driving mode.</p>
-            </div>
-            <div class="settings-units-container">
-                <div class="settings-units-row">
-                    <span class="settings-units-label">Axles</span>
-                    <div class="settings-units-choices" id="trailer-axles-choices">
-                        <button class="settings-units-btn ${Number(settings.trailer_axles ?? 2) === 1 ? 'active' : ''}" data-trailer-axles="1">Single</button>
-                        <button class="settings-units-btn ${Number(settings.trailer_axles ?? 2) === 2 ? 'active' : ''}" data-trailer-axles="2">Tandem</button>
-                        <button class="settings-units-btn ${Number(settings.trailer_axles ?? 2) === 3 ? 'active' : ''}" data-trailer-axles="3">Triple</button>
-                    </div>
-                </div>
-            </div>
         </div>
 
         <!-- Units -->
@@ -189,25 +169,6 @@ function wireListeners() {
     setupUnitsGroup('units-speed-choices',  'data-units-speed',       'units_speed');
     setupUnitsGroup('units-temp-choices',   'data-units-temperature', 'units_temperature');
     setupUnitsGroup('units-length-choices', 'data-units-length',      'units_length');
-
-    // Trailer axles — same segmented control, but payload is numeric.
-    const axlesContainer = document.getElementById('trailer-axles-choices');
-    if (axlesContainer) {
-        axlesContainer.addEventListener('click', async (e) => {
-            const btn = e.target.closest('.settings-units-btn[data-trailer-axles]');
-            if (!btn) return;
-            const value = Number(btn.getAttribute('data-trailer-axles'));
-            if (![1, 2, 3].includes(value)) return;
-            axlesContainer.querySelectorAll('.settings-units-btn').forEach(b =>
-                b.classList.toggle('active', b === btn));
-            try {
-                settings = await API.setSettings({ trailer_axles: value });
-                trailerConfig.primeFromSettings(settings);
-            } catch (error) {
-                console.error('Failed to save trailer_axles:', error);
-            }
-        });
-    }
 
     // Time zone: apply
     const saveTzBtn = document.getElementById('save-timezone-btn');
