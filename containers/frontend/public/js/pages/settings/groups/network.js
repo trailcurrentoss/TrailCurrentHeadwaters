@@ -7,7 +7,12 @@
 // implementation.
 
 import { API, wsClient } from '../../../api.js';
-import { ICON_LIST } from '../../../components/pdm-icons.js';
+import {
+    FIRESIDE_ICONS,
+    ICON_GROUPS,
+    renderIconHtml,
+    resolveIcon,
+} from '../../../components/fireside-icons.js';
 
 let systemConfig = null;
 let modules = [];
@@ -160,6 +165,24 @@ export const networkGroup = {
 
             <!-- Modal backdrop -->
             <div class="modal-backdrop" id="modal-backdrop" style="display: none;"></div>
+
+            <!-- Icon picker modal -->
+            <div class="modal icon-picker-modal" id="icon-picker-modal" style="display: none;">
+                <div class="modal-content icon-picker-content">
+                    <div class="modal-header">
+                        <h2>Choose an Icon</h2>
+                        <button class="modal-close" id="icon-picker-close-btn" aria-label="Close">×</button>
+                    </div>
+                    <div class="icon-picker-toolbar">
+                        <input type="search" id="icon-picker-search" class="form-input"
+                               placeholder="Search icons…" autocomplete="off">
+                    </div>
+                    <div class="icon-picker-body" id="icon-picker-body">
+                        <!-- grid rendered dynamically -->
+                    </div>
+                </div>
+            </div>
+            <div class="modal-backdrop" id="icon-picker-backdrop" style="display: none;"></div>
         `;
     },
 
@@ -1076,37 +1099,161 @@ export const networkGroup = {
         return Array.from({ length: 8 }, (_, i) => ({
             channel: i + 1,
             name: `Relay ${i + 1}`,
-            icon: 'power-outlet',
+            icon: 'plug',
             type: 'other'
         }));
     },
 
     renderChannelRows(channels, moduleType) {
         const list = document.getElementById('pdm-channel-list');
-        const iconOptions = ICON_LIST.map(ic =>
-            `<option value="${ic.key}">${escapeHtml(ic.label)}</option>`
-        ).join('');
+        const isSwitchback = moduleType === 'switchback' || moduleType === 'switchback_relay';
+        const defaultIcon = isSwitchback ? 'plug' : 'lightbulb';
 
-        list.innerHTML = channels.map(ch => `
-            <div class="pdm-channel-row" data-channel="${ch.channel}">
-                <span class="pdm-channel-number">${ch.channel}</span>
-                <input type="text" class="form-input pdm-channel-name" value="${escapeHtml(ch.name)}" placeholder="Channel name">
-                <select class="form-input pdm-channel-icon">${iconOptions}</select>
-                <select class="form-input pdm-channel-type">
+        list.innerHTML = channels.map(ch => {
+            const iconId = ch.icon || defaultIcon;
+            const resolved = resolveIcon(iconId);
+            const stableKey = resolved.key;
+            return `
+            <div class="pdm-channel-card" data-channel="${ch.channel}">
+                <button type="button" class="pdm-channel-icon-btn"
+                        data-icon="${escapeHtml(stableKey)}"
+                        aria-label="Change icon for channel ${ch.channel}">
+                    ${renderIconHtml(stableKey, 'pdm-channel-icon-glyph')}
+                </button>
+                <label class="pdm-channel-label">
+                    <span class="pdm-channel-index">#${ch.channel}</span>
+                    <input type="text" class="form-input pdm-channel-name"
+                           value="${escapeHtml(ch.name)}"
+                           placeholder="Channel name" maxlength="24">
+                </label>
+                <select class="form-input pdm-channel-type" aria-label="Channel ${ch.channel} type">
                     <option value="light"${ch.type === 'light' ? ' selected' : ''}>Light</option>
                     <option value="general"${ch.type === 'general' ? ' selected' : ''}>General</option>
                     <option value="other"${ch.type === 'other' ? ' selected' : ''}>Other</option>
                 </select>
-            </div>
+            </div>`;
+        }).join('');
+
+        // Wire up icon-picker buttons — open modal, remember which card
+        // to write back to. Delegated so re-renders don't leak listeners.
+        if (!list._iconClickBound) {
+            list.addEventListener('click', (e) => {
+                const btn = e.target.closest('.pdm-channel-icon-btn');
+                if (!btn) return;
+                const card = btn.closest('.pdm-channel-card');
+                if (card) this.openIconPicker(card);
+            });
+            list._iconClickBound = true;
+        }
+    },
+
+    openIconPicker(targetCard) {
+        this._iconPickerTarget = targetCard;
+        const modal = document.getElementById('icon-picker-modal');
+        const backdrop = document.getElementById('icon-picker-backdrop');
+        if (!modal || !backdrop) return;
+
+        this.renderIconPickerGrid('');
+        modal.style.display = 'flex';
+        backdrop.style.display = 'block';
+
+        const searchEl = document.getElementById('icon-picker-search');
+        if (searchEl) {
+            searchEl.value = '';
+            if (!searchEl._bound) {
+                searchEl.addEventListener('input', () => {
+                    this.renderIconPickerGrid(searchEl.value);
+                });
+                searchEl._bound = true;
+            }
+            // Delay focus so mobile keyboards don't cover the modal
+            setTimeout(() => searchEl.focus(), 50);
+        }
+
+        const closeBtn = document.getElementById('icon-picker-close-btn');
+        if (closeBtn && !closeBtn._bound) {
+            closeBtn.addEventListener('click', () => this.closeIconPicker());
+            closeBtn._bound = true;
+        }
+        if (!backdrop._bound) {
+            backdrop.addEventListener('click', () => this.closeIconPicker());
+            backdrop._bound = true;
+        }
+    },
+
+    renderIconPickerGrid(query) {
+        const body = document.getElementById('icon-picker-body');
+        if (!body) return;
+
+        const q = (query || '').trim().toLowerCase();
+        const currentKey = this._iconPickerTarget?.querySelector('.pdm-channel-icon-btn')?.dataset.icon;
+
+        const filtered = q
+            ? FIRESIDE_ICONS.filter(ic =>
+                ic.label.toLowerCase().includes(q) ||
+                ic.key.toLowerCase().includes(q) ||
+                ic.group.toLowerCase().includes(q))
+            : FIRESIDE_ICONS;
+
+        // Group by ic.group in the canonical group order
+        const byGroup = new Map();
+        for (const ic of filtered) {
+            if (!byGroup.has(ic.group)) byGroup.set(ic.group, []);
+            byGroup.get(ic.group).push(ic);
+        }
+        const orderedGroups = ICON_GROUPS.filter(g => byGroup.has(g))
+            .concat([...byGroup.keys()].filter(g => !ICON_GROUPS.includes(g)));
+
+        if (orderedGroups.length === 0) {
+            body.innerHTML = `<p class="icon-picker-empty">No icons match "${escapeHtml(query)}"</p>`;
+            return;
+        }
+
+        body.innerHTML = orderedGroups.map(group => `
+            <section class="icon-picker-group">
+                <h3 class="icon-picker-group-title">${escapeHtml(group)}</h3>
+                <div class="icon-picker-grid">
+                    ${byGroup.get(group).map(ic => `
+                        <button type="button"
+                                class="icon-picker-tile${ic.key === currentKey ? ' selected' : ''}"
+                                data-icon="${escapeHtml(ic.key)}"
+                                title="${escapeHtml(ic.label)}"
+                                aria-label="${escapeHtml(ic.label)}">
+                            ${renderIconHtml(ic.key)}
+                            <span class="icon-picker-tile-label">${escapeHtml(ic.label)}</span>
+                        </button>
+                    `).join('')}
+                </div>
+            </section>
         `).join('');
 
-        // Set icon select values after rendering (selected attribute in options)
-        list.querySelectorAll('.pdm-channel-row').forEach((row, i) => {
-            const iconSelect = row.querySelector('.pdm-channel-icon');
-            if (iconSelect && channels[i]) {
-                iconSelect.value = channels[i].icon || 'lightbulb';
-            }
-        });
+        if (!body._bound) {
+            body.addEventListener('click', (e) => {
+                const tile = e.target.closest('.icon-picker-tile');
+                if (!tile) return;
+                this.selectIcon(tile.dataset.icon);
+            });
+            body._bound = true;
+        }
+    },
+
+    selectIcon(iconKey) {
+        const card = this._iconPickerTarget;
+        if (!card) { this.closeIconPicker(); return; }
+        const btn = card.querySelector('.pdm-channel-icon-btn');
+        if (btn) {
+            btn.dataset.icon = iconKey;
+            btn.innerHTML = renderIconHtml(iconKey, 'pdm-channel-icon-glyph');
+        }
+        this.closeIconPicker();
+    },
+
+    closeIconPicker() {
+        const modal = document.getElementById('icon-picker-modal');
+        const backdrop = document.getElementById('icon-picker-backdrop');
+        if (modal) modal.style.display = 'none';
+        if (backdrop) backdrop.style.display = 'none';
+        this._iconPickerTarget = null;
     },
 
     populateBorealisFields(config) {
@@ -1131,12 +1278,12 @@ export const networkGroup = {
     },
 
     collectChannelData() {
-        const rows = document.querySelectorAll('#pdm-channel-list .pdm-channel-row');
-        return Array.from(rows).map(row => ({
-            channel: parseInt(row.dataset.channel),
-            name: row.querySelector('.pdm-channel-name').value.trim() || `Channel ${row.dataset.channel}`,
-            icon: row.querySelector('.pdm-channel-icon').value,
-            type: row.querySelector('.pdm-channel-type').value
+        const cards = document.querySelectorAll('#pdm-channel-list .pdm-channel-card');
+        return Array.from(cards).map(card => ({
+            channel: parseInt(card.dataset.channel),
+            name: card.querySelector('.pdm-channel-name').value.trim() || `Channel ${card.dataset.channel}`,
+            icon: card.querySelector('.pdm-channel-icon-btn').dataset.icon,
+            type: card.querySelector('.pdm-channel-type').value
         }));
     },
 

@@ -1,7 +1,7 @@
 // Light button component
 import { API, wsClient } from '../api.js';
 import { brightnessModal } from './brightness-modal.js';
-import { getIconSvg } from './pdm-icons.js';
+import { renderIconHtml } from './fireside-icons.js';
 
 export class LightButton {
     constructor(light) {
@@ -15,7 +15,7 @@ export class LightButton {
         return `
             <div class="light-btn-wrapper">
                 <button class="light-btn ${stateClass}" data-light-id="${this.light.id}" aria-pressed="${this.light.state ? 'true' : 'false'}">
-                    ${getIconSvg(iconKey, !!this.light.state)}
+                    ${renderIconHtml(iconKey)}
                     <span>${this.light.name}</span>
                 </button>
                 ${showBrightness ? `
@@ -150,17 +150,15 @@ export class LightsGrid {
             btn.classList.toggle('on', updatedLight.state === 1);
             btn.setAttribute('aria-pressed', updatedLight.state === 1 ? 'true' : 'false');
 
-            // Re-render the icon with correct fill state
+            // Re-render the icon (state class on button governs styling)
             const light = this.lights.find(l => l.id === updatedLight.id);
             const iconKey = light?.icon || 'lightbulb';
-            const iconContainer = btn.querySelector('.light-icon');
-            if (iconContainer) {
+            const oldIcon = btn.querySelector('.fa-icon');
+            if (oldIcon) {
                 const temp = document.createElement('div');
-                temp.innerHTML = getIconSvg(iconKey, updatedLight.state === 1);
-                const newSvg = temp.querySelector('.light-icon');
-                if (newSvg) {
-                    iconContainer.replaceWith(newSvg);
-                }
+                temp.innerHTML = renderIconHtml(iconKey);
+                const newIcon = temp.firstElementChild;
+                if (newIcon) oldIcon.replaceWith(newIcon);
             }
         }
 

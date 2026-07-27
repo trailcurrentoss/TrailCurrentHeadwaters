@@ -1,7 +1,7 @@
 // Version suffix is bumped whenever the shell/nav topology changes so a
 // stale SW that failed to install can't hold clients back. In dev, this
 // literal string is the cache name; in prod, __GIT_SHA__ is replaced.
-const CACHE_NAME = 'rv-cache-__GIT_SHA__-shell-v6';
+const CACHE_NAME = 'rv-cache-__GIT_SHA__-shell-v7';
 const STATIC_ASSETS = [
     '/',
     '/index.html',
@@ -20,7 +20,8 @@ const STATIC_ASSETS = [
     '/js/components/plateau-status.js',
     '/js/components/light-button.js',
     '/js/components/map-display.js',
-    '/js/components/pdm-icons.js',
+    '/js/components/fireside-icons.js',
+    '/fonts/fa-solid-900.ttf',
     '/js/components/water-tanks.js',
     '/js/components/arc-gauge.js',
     '/js/components/trailer-diagram.js',
