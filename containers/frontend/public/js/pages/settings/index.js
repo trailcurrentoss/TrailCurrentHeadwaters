@@ -385,11 +385,17 @@ function onResize() {
     if (nowWide === wide) return;   // same layout, nothing to do
     wide = nowWide;
     rerenderShell();
-    // When flipping between layouts we lose the group's live state anyway
-    // (the mount container might not exist yet on wide→narrow flip if no
-    // group was active). Remount cleanly to keep listeners in sync.
+    // rerenderShell() already reparents the group's live DOM into the new
+    // shell's mount when both sides have one. Only remount from scratch
+    // when preservation didn't happen (e.g., narrow landing → wide, where
+    // the previous shell had no group mount). Remounting on top of a
+    // preserved DOM destroys in-flight state — most importantly, XHR
+    // uploads whose onprogress closures reference the progress-bar nodes.
     if (activeGroupId) {
-        mountActiveGroupContent(null);
+        const mount = document.getElementById('settings-v2-group-mount');
+        if (mount && !mount.firstChild) {
+            mountActiveGroupContent(null);
+        }
     }
 }
 
