@@ -98,6 +98,19 @@ RETAIN_VERSIONS = 2
 # `docker compose restart` silently no-ops and we move on.
 DATA_CONSUMER_SERVICES = ['photon', 'valhalla']
 
+# Tars that must stay packed rather than being extracted to a directory.
+#
+# Valhalla reads routing tiles either from a directory (`mjolnir.tile_dir`) or
+# from a single uncompressed tar it mmaps (`mjolnir.tile_extract`). The tar is
+# the fast path: residency is managed by the kernel page cache at page
+# granularity, so tiles are never copied onto Valhalla's heap and its tile
+# cache never overflows. Directory mode is the trap — see
+# ensure_valhalla_tuning() below for why it pegs the NVMe on long routes.
+#
+# Photon is the opposite case and is deliberately NOT listed here: its
+# embedded Lucene index has to be a real extracted directory tree.
+KEEP_PACKED_TARS = {'valhalla_tiles.tar'}
+
 mqtt_client = None
 shutting_down = False
 
@@ -281,23 +294,28 @@ def prune_versions():
 
 
 def extract_tar_artifacts(target_dir):
-    """Extract any .tar artifacts inside `target_dir` in place, verify the
+    """Extract .tar artifacts inside `target_dir` in place, verify the
     expected directory appeared (basename without .tar), and delete the
-    tarball. Photon and Valhalla containers bind-mount the extracted
-    directories directly; keeping tars around costs ~90 GB and blocks
-    consumer startup.
+    tarball. Photon bind-mounts the extracted directory directly, and the
+    ~95 GB photon_data.tar cannot be left lying around next to it.
+
+    Tars named in KEEP_PACKED_TARS are left exactly as-is — not extracted,
+    not deleted — because their consumer wants the tar itself.
 
     Returns (ok, error_message). Never raises.
 
     Convention: `photon_data.tar` MUST unpack a top-level `photon_data/`
-    directory; `valhalla_tiles.tar` MUST unpack `valhalla_tiles/`. If the
-    tar produces a different layout that's a build-side violation and we
-    fail loudly rather than silently leaving broken state.
+    directory. If the tar produces a different layout that's a build-side
+    violation and we fail loudly rather than silently leaving broken state.
     """
     for name in sorted(os.listdir(target_dir)):
         if not name.endswith('.tar'):
             continue
         tar_path = os.path.join(target_dir, name)
+        if name in KEEP_PACKED_TARS:
+            # Intentionally no extract and no delete. Valhalla mmaps this.
+            log(f"{name}: leaving packed (consumed as a tile extract)")
+            continue
         expected_dir = os.path.join(target_dir, name[:-len('.tar')])
         if os.path.isdir(expected_dir):
             # A previous run already extracted this tar. Idempotent: remove
@@ -328,6 +346,73 @@ def extract_tar_artifacts(target_dir):
     return True, None
 
 
+# Valhalla's default tile cache discards its ENTIRE contents once it exceeds
+# mjolnir.max_cache_size — including the tiles the in-flight search is actively
+# walking. A route whose tile working set exceeds the cache therefore re-reads
+# the same tiles from disk forever, saturating the NVMe until the box stops
+# scheduling userspace at all (sshd and nginx stop answering; journald can't
+# even persist the evidence). Observed twice on Denver->Alaska / Denver->NYC.
+#
+# The LRU cache evicts the single least-recently-used tile instead, so the
+# search wavefront stays resident and the loop cannot form.
+#
+# NOTE: max_cache_size is deliberately NOT raised here, despite being the
+# obvious-looking knob. Raising it raises Valhalla's heap ceiling, and this
+# device has no swap and no enforceable container memory limits (the kernel
+# cmdline carries cgroup_disable=memory, so `docker` mem limits are silently
+# ignored). Better eviction is free; a bigger cache trades an I/O failure for
+# a memory one. This is belt-and-braces anyway — with valhalla_tiles.tar kept
+# packed, tiles are served from the mmap'd extract and never land on the heap.
+VALHALLA_MJOLNIR_TUNING = {
+    'use_lru_mem_cache': True,
+    'lru_mem_cache_hard_control': True,
+}
+
+
+def ensure_valhalla_tuning(bundle_dir):
+    """Seed/patch <bundle_dir>/valhalla.json with VALHALLA_MJOLNIR_TUNING.
+
+    The valhalla container generates valhalla.json itself, but it runs with
+    update_existing_config=True, and that path only ADDS keys missing from its
+    generated defaults — it never overwrites a value already present. So a
+    partial config written here survives verbatim while the container fills in
+    everything else.
+
+    Call this against a STAGING directory, before the bundle is promoted.
+    Once a bundle is live the Photon container chowns the whole bundle tree to
+    its own uid (9011) and `trailcurrent` loses write access, so patching an
+    already-applied bundle fails — that's logged and skipped, not fatal.
+
+    Never raises; tuning is an optimisation and must not fail a bundle apply.
+    """
+    cfg_path = os.path.join(bundle_dir, 'valhalla.json')
+    try:
+        cfg = {}
+        if os.path.exists(cfg_path):
+            with open(cfg_path) as f:
+                cfg = json.load(f)
+            if not isinstance(cfg, dict):
+                log(f"warn: {cfg_path} is not a JSON object; leaving it alone")
+                return
+        mjolnir = cfg.get('mjolnir')
+        if not isinstance(mjolnir, dict):
+            mjolnir = {}
+        stale = sorted(k for k, v in VALHALLA_MJOLNIR_TUNING.items()
+                       if mjolnir.get(k) != v)
+        if not stale:
+            return
+        mjolnir.update(VALHALLA_MJOLNIR_TUNING)
+        cfg['mjolnir'] = mjolnir
+        tmp_path = cfg_path + '.tmp'
+        with open(tmp_path, 'w') as f:
+            json.dump(cfg, f, indent=2)
+            f.write('\n')
+        os.replace(tmp_path, cfg_path)
+        log(f"valhalla.json: set {', '.join(stale)}")
+    except (OSError, ValueError) as e:
+        log(f"warn: could not tune valhalla.json in {bundle_dir}: {e}")
+
+
 def current_bundle_region():
     """Read data/maps/current/manifest.json's region field. Returns
     (region, display_name) or (None, None) if there's no current bundle
@@ -352,6 +437,9 @@ def migrate_current_bundle_tars():
     extraction watcher build), extract them in place so Photon/Valhalla
     can consume the extracted directories on next start.
 
+    Tars in KEEP_PACKED_TARS are not "leftover" — they are the desired end
+    state — so they never trigger this migration.
+
     Silent no-op when there's no current bundle or the tars are already
     extracted.
     """
@@ -363,7 +451,8 @@ def migrate_current_bundle_tars():
         return
     if not os.path.isdir(target):
         return
-    leftover_tars = [n for n in os.listdir(target) if n.endswith('.tar')]
+    leftover_tars = [n for n in os.listdir(target)
+                     if n.endswith('.tar') and n not in KEEP_PACKED_TARS]
     if not leftover_tars:
         return
     log(f"Startup migration: extracting {len(leftover_tars)} leftover tar(s) in {target}")
@@ -539,16 +628,23 @@ def handle_available(payload_bytes):
         log("All artifact checksums verified")
 
         # --- Extract .tar artifacts in place ---
-        # Photon and Valhalla containers bind-mount the extracted directories
-        # (photon_data/, valhalla_tiles/), not the tarballs. Extract now,
-        # while we're still in staging — a failure here means we leave the
-        # existing `current` symlink untouched and abort the apply.
+        # Photon bind-mounts its extracted photon_data/ directory, so that tar
+        # is unpacked here. valhalla_tiles.tar stays packed (KEEP_PACKED_TARS)
+        # because Valhalla mmaps the tar directly. Do this while we're still in
+        # staging — a failure means we leave the existing `current` symlink
+        # untouched and abort the apply.
         ok, err = extract_tar_artifacts(staging_target)
         if not ok:
             log(f"Tar extract failed: {err}")
             shutil.rmtree(staging_target, ignore_errors=True)
             report_status(upload_id, 'failed', reason=err)
             return
+
+        # --- Pre-seed Valhalla tile-cache tuning ---
+        # Must happen while staging is still trailcurrent-owned: once this
+        # bundle goes live, Photon chowns the tree to uid 9011 and we lose
+        # write access. Non-fatal by design.
+        ensure_valhalla_tuning(staging_target)
 
         # --- Atomically promote staging_target -> final_target ---
         # os.rename on same filesystem is atomic. If a prior attempt left

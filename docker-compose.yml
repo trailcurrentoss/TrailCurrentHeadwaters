@@ -130,9 +130,23 @@ services:
       # already merged in on the build machine (per build/maps/build.sh).
       - build_admins=False
       - build_time_zones=False
-      # We deleted valhalla_tiles.tar during the map-watcher tar-extract step
-      # to save disk. Directory-mode loading is fine for our data volume.
-      - build_tar=False
+      # Serve tiles from the mmap'd tar extract, NOT from the tile directory.
+      #
+      # This is load-bearing, not a performance nicety. In directory mode
+      # Valhalla copies whole tile files onto its own heap and, once past
+      # mjolnir.max_cache_size, throws the entire cache away — including the
+      # tiles the running search still needs. A long route (Denver->NYC class)
+      # then re-reads the same tiles off the NVMe forever, starving every other
+      # process of disk until sshd/nginx stop answering and the box looks dead.
+      # It hung twice this way before we traced it. With the extract, residency
+      # is the kernel page cache's job and no such loop can form.
+      #
+      # Setting this True is idempotent and self-healing: run.sh's do_build_tar
+      # only builds when the tar is absent (`build_tar == True && ! -f
+      # $TILE_TAR`), so a bundle that already ships valhalla_tiles.tar — which
+      # map-watcher now deliberately leaves packed — is used as-is, and a bundle
+      # whose tar went missing gets one rebuilt from the tile directory once.
+      - build_tar=True
       # Refresh missing config keys in an existing valhalla.json if a prior
       # container version wrote a stale one into the bundle dir.
       - update_existing_config=True

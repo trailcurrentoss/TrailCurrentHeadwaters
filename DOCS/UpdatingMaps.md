@@ -5,9 +5,11 @@ Headwaters ships without any map data pre-installed. Every device gets its maps 
 A map bundle is a single `.zip` produced by `build/maps/build.sh` on your dev machine. It contains everything the device needs to render maps, search for places, and compute driving routes — 100% offline:
 
 - `tiles.pmtiles` — vector map tiles (PMTiles v3)
-- `photon_data/` — search index (Photon geocoder)
-- `valhalla_tiles/` — routing tiles (Valhalla)
+- `photon_data.tar` — search index (Photon geocoder); unpacked to `photon_data/` on the device
+- `valhalla_tiles.tar` — routing tiles (Valhalla); **stays packed** on the device
 - `manifest.json` — region, build date, per-artifact SHA256s
+
+Routing reads its tiles straight out of `valhalla_tiles.tar`, so the device deliberately leaves that one packed instead of unpacking it. Unpacking it is what caused long routes to freeze the device in July 2026 — see [`LongRouteFreeze.md`](LongRouteFreeze.md).
 
 If you're just getting started, you'll build a bundle once, upload it once, and never think about it again until you want fresher OSM data or a new region.
 
@@ -154,6 +156,10 @@ The Maps page has a **Roll back to previous version** button that appears whenev
 **Search returns nothing.** Check that the `photon` container is running: `docker ps | grep photon`. If it's not running, `map-watcher` may have failed to start it after apply — run `docker compose --profile maps up -d photon` on the device to bring it up manually.
 
 **Route request fails immediately.** Same as above but for `valhalla` container. Once brought up, Valhalla takes ~30–60 s to fully load its tile index before it will answer requests.
+
+**The whole device freezes while planning a long route, with the NVMe activity light solid.** This was a real fault, fixed in July 2026 — routing was re-reading the same tiles off the drive endlessly and starving every other service of disk. If you ever see it again, don't reach for more RAM; read [`LongRouteFreeze.md`](LongRouteFreeze.md), which covers the symptoms, the diagnosis steps, and how to confirm routing is on the fast path (`docker logs trailcurrent-valhalla-1 | grep -iE "extract|degraded"` should say `Tile extract successfully loaded`).
+
+**First startup after a software update takes several minutes, with heavy disk activity.** Expected and one-time, if the bundle already on the device predates the packed-tar change: routing rebuilds `valhalla_tiles.tar` from the unpacked directory once. It won't recur, and new bundle uploads skip it.
 
 **Upload rejected with "region-mismatch" in a browser response.** Not a bug — the device is asking for confirmation because you're changing regions. Look at the upload row in the Maps page; there should be a yellow confirmation bar.
 
