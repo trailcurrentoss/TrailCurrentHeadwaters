@@ -1,5 +1,5 @@
 const express = require('express');
-const { listConnectedCameras } = require('../services/camera-detect');
+const { listConnectedCameras, detectCameras } = require('../services/camera-detect');
 const streamer = require('../services/camera-streamer');
 
 const NAME_MAX = 32;
@@ -49,6 +49,16 @@ module.exports = (db) => {
     // GET /api/cameras — configured cameras + a `connected` flag telling
     // the frontend whether each one is currently physically present. Lets
     // the UI dim rows for cameras that were added but are now unplugged.
+    //
+    // Also flags `staleIdentity`: the stored entry is not currently matched
+    // by any detected camera, yet a camera of the same exact model IS
+    // plugged in and unconfigured. A plain unplugged camera and one whose
+    // computed hwId no longer matches its stored _id are indistinguishable
+    // in isolation, but that combination is a strong signal for the latter
+    // — the usual causes being the camera moving to a different USB port,
+    // or an upgrade changing how its identity is derived. Unlike an hwId
+    // collision this one IS operator-resolvable: remove the stale entry and
+    // add the camera again.
     router.get('/', async (req, res) => {
         try {
             const [configured, detected] = await Promise.all([
@@ -56,10 +66,22 @@ module.exports = (db) => {
                 Promise.resolve(listConnectedCameras()),
             ]);
             const connectedIds = new Set(detected.map(c => c.hwId));
-            const list = configured.map(doc => ({
-                ...toApiShape(doc),
-                connected: connectedIds.has(doc._id),
-            }));
+            const configuredIds = new Set(configured.map(d => d._id));
+            // Models present in hardware but not claimed by any stored entry.
+            const unclaimedModels = new Set(
+                detected
+                    .filter(c => !configuredIds.has(c.hwId))
+                    .map(c => `${c.vendorId}:${c.productId}`)
+            );
+            const list = configured.map(doc => {
+                const connected = connectedIds.has(doc._id);
+                return {
+                    ...toApiShape(doc),
+                    connected,
+                    staleIdentity: !connected
+                        && unclaimedModels.has(`${doc.vendorId}:${doc.productId}`),
+                };
+            });
             res.json({ cameras: list });
         } catch (err) {
             console.error('[Cameras route] GET / failed:', err);
@@ -69,15 +91,17 @@ module.exports = (db) => {
 
     // GET /api/cameras/available — hardware-detected cameras that have NOT
     // already been added. This is what the "Add Camera" picker loads.
+    // `conflicts` carries any hwId collisions so the picker can explain why
+    // a camera the operator can physically see is not in the list.
     router.get('/available', async (req, res) => {
         try {
-            const detected = listConnectedCameras();
+            const { cameras: detected, conflicts } = detectCameras();
             const existingIds = new Set(
                 (await cameras.find({}, { projection: { _id: 1 } }).toArray())
                     .map(d => d._id)
             );
             const available = detected.filter(c => !existingIds.has(c.hwId));
-            res.json({ cameras: available });
+            res.json({ cameras: available, conflicts });
         } catch (err) {
             console.error('[Cameras route] GET /available failed:', err);
             res.status(500).json({ error: 'Failed to enumerate cameras' });

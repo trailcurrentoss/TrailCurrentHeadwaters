@@ -16,6 +16,7 @@ const viewer = new CameraViewer();
 
 let cameras = [];        // configured cameras (from GET /api/cameras)
 let available = null;    // detected-but-not-added, populated on picker open
+let conflicts = [];      // hwId collisions reported alongside `available`
 let pickerOpen = false;
 let containerClickListener = null;
 let containerInputListener = null;
@@ -51,6 +52,20 @@ function renderCameraRow(cam) {
     const statusDot = connected
         ? `<span class="cam-status cam-status-connected" title="Connected"></span>`
         : `<span class="cam-status cam-status-disconnected" title="Not currently connected"></span>`;
+    // A camera of this model is plugged in, but it no longer matches this
+    // saved entry — so the entry is orphaned and the hardware is sitting in
+    // the Add Camera list instead. This one the operator can fix directly.
+    const staleNotice = (!connected && cam.staleIdentity)
+        ? `
+            <div class="cam-row-notice">
+                <ion-icon name="alert-circle-outline" aria-hidden="true"></ion-icon>
+                <span>This camera is plugged in but no longer matches its saved
+                entry — it may have been moved to a different USB port. Remove
+                this entry with the bin icon, then add the camera again from
+                “Add Camera” below. Its name and settings will need re-entering.</span>
+            </div>
+        `
+        : '';
     return `
         <div class="cam-row ${connected ? '' : 'is-disconnected'}" data-id="${escapeAttr(cam.id)}">
             <div class="cam-row-main">
@@ -63,6 +78,7 @@ function renderCameraRow(cam) {
                                aria-label="Camera name">
                     </div>
                     <div class="cam-row-sub">${escapeHtml(subtitleFor(cam))}</div>
+                    ${staleNotice}
                 </div>
             </div>
             <div class="cam-row-actions">
@@ -98,6 +114,47 @@ function renderCameraList() {
     return cameras.map(renderCameraRow).join('');
 }
 
+// Explains an hwId collision: two or more units of one model report an
+// identical serial, so Headwaters cannot tell them apart and only one can
+// be added. Deliberately does NOT suggest removing and re-adding cameras —
+// the duplicate IDs come from the hardware, so that would achieve nothing.
+// The actionable paths are a firmware/model swap or reporting it.
+function renderConflictNotice() {
+    if (!conflicts.length) return '';
+    const blocks = conflicts.map(c => {
+        const model = c.model || 'USB camera';
+        const count = c.devPaths.length;
+        const idPair = [c.vendorId, c.productId].filter(Boolean).join(':');
+        return `
+            <div class="cam-conflict-item">
+                <div class="cam-conflict-head">
+                    ${escapeHtml(String(count))} × ${escapeHtml(model)}
+                    ${idPair ? `<span class="cam-conflict-ids">(${escapeHtml(idPair)})</span>` : ''}
+                </div>
+                <div class="cam-conflict-body">
+                    These report the same serial number, so Headwaters cannot tell
+                    them apart — only one can be added. Removing and re-adding
+                    cameras will not help; the duplicate identity comes from the
+                    cameras themselves. Use one camera of this model, or report
+                    this so support for it can be added.
+                </div>
+                <div class="cam-conflict-detail">
+                    Affected devices: ${escapeHtml(c.devPaths.join(', '))}
+                </div>
+            </div>
+        `;
+    }).join('');
+    return `
+        <div class="cam-conflict">
+            <div class="cam-conflict-title">
+                <ion-icon name="warning-outline" aria-hidden="true"></ion-icon>
+                Some cameras cannot be told apart
+            </div>
+            ${blocks}
+        </div>
+    `;
+}
+
 function renderPicker() {
     if (!pickerOpen) return '';
     if (available === null) {
@@ -110,6 +167,7 @@ function renderPicker() {
     if (!available.length) {
         return `
             <div class="cam-picker" id="cam-picker">
+                ${renderConflictNotice()}
                 <div class="cam-picker-status">
                     No new cameras detected. Plug a USB camera into Headwaters and tap “Rescan”.
                 </div>
@@ -132,6 +190,7 @@ function renderPicker() {
     `).join('');
     return `
         <div class="cam-picker" id="cam-picker">
+            ${renderConflictNotice()}
             <div class="cam-picker-title">Select a camera to add</div>
             <div class="cam-picker-list">${rows}</div>
             <div class="cam-picker-actions">
@@ -208,9 +267,11 @@ async function refreshAvailable() {
     try {
         const data = await API.getAvailableCameras();
         available = Array.isArray(data.cameras) ? data.cameras : [];
+        conflicts = Array.isArray(data.conflicts) ? data.conflicts : [];
     } catch (err) {
         console.error('[Cameras] enumerate failed:', err);
         available = [];
+        conflicts = [];
         showMessage('Failed to scan for cameras.', 'error');
     }
     paint();

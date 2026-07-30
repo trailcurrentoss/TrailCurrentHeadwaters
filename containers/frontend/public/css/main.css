@@ -10337,6 +10337,90 @@ input[type="range"] {
     padding: 6px 2px;
 }
 
+/* Collision notice: two cameras of one model reporting the same serial.
+   Not operator-resolvable, so it reads as informational-warning rather
+   than an error the user is expected to clear. */
+.cam-conflict {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 10px 12px;
+    border: 1px solid var(--warning);
+    border-radius: 8px;
+    background: var(--tc-warning-bg-subtle);
+}
+
+.cam-conflict-title {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-weight: 600;
+    font-size: 0.9rem;
+    color: var(--warning);
+}
+
+.cam-conflict-title ion-icon {
+    font-size: 1.05rem;
+    flex: 0 0 auto;
+}
+
+.cam-conflict-item {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+}
+
+.cam-conflict-head {
+    font-size: 0.88rem;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.cam-conflict-ids {
+    font-weight: 400;
+    color: var(--text-muted);
+}
+
+.cam-conflict-body {
+    font-size: 0.85rem;
+    line-height: 1.45;
+    color: var(--text-secondary);
+}
+
+.cam-conflict-detail {
+    font-size: 0.78rem;
+    color: var(--text-muted);
+}
+
+/* Per-row notice on a configured camera whose saved identity no longer
+   matches the hardware. This one IS actionable, so it sits inline with
+   the row's instructions to remove and re-add. */
+.cam-row-notice {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    margin-top: 6px;
+    padding: 7px 9px;
+    border: 1px solid var(--warning);
+    border-radius: 7px;
+    background: var(--tc-warning-bg-subtle);
+    font-size: 0.82rem;
+    line-height: 1.45;
+    color: var(--text-secondary);
+}
+
+.cam-row-notice ion-icon {
+    flex: 0 0 auto;
+    margin-top: 1px;
+    font-size: 1rem;
+    color: var(--warning);
+}
+
+/* The row is dimmed while disconnected; keep its notice legible. */
+.cam-row.is-disconnected .cam-row-notice {
+    opacity: 1;
+}
+
 .cam-picker-list {
     display: flex;
     flex-direction: column;
