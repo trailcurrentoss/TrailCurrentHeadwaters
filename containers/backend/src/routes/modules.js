@@ -23,6 +23,12 @@ const MCU_MODULES = [
     { id: 'bearing', name: 'Bearing' },
     { id: 'therma', name: 'Therma' },
     { id: 'switchback', name: 'Switchback' },
+    // Capstan is the rotary touchscreen controller. `wireless: true` because it
+    // joins over Wi-Fi and is onboarded through the mDNS + confirm handshake
+    // rather than being addressed on the CAN bus — same path as Fireside.
+    // Without this entry the backend rejects the device and it never reaches
+    // Overlook's discoverable list, however correctly it advertises itself.
+    { id: 'capstan', name: 'Capstan', wireless: true },
     { id: 'playbill', name: 'Playbill', wireless: true, linux: true }
 ];
 
