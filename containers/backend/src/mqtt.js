@@ -86,6 +86,10 @@ const TOPICS = {
     WIRELESS_DISCOVERY_TRIGGER: 'local/discovery/trigger',
     WIRELESS_OTA_TRIGGER: 'local/ota/trigger',
     CONFIG_REQUEST: 'local/config/request',
+    // Rig mode — camping / driving / storage. Retained, because a panel that
+    // boots before anyone touches the PWA still has to know which mode it is
+    // interpreting its alarms against.
+    RIG_MODE: `${MQTT_ROOT}/mode/current`,
     // Match every Playbill device + feature status (e.g. radio, livetv,
     // transport, system). The handler unpacks deviceId and feature from the
     // topic segments — we don't need separate constants per feature, which
@@ -1294,12 +1298,16 @@ class MqttService {
     // Handle config request from local service (e.g. voice assistant startup)
     // Re-publishes current PDM and relay channel configs as retained messages
     async handleConfigRequest() {
-        console.log('[Config Request] Re-publishing PDM and relay channel configs');
+        console.log('[Config Request] Re-publishing PDM, relay, Capstan and mode configs');
         try {
             const { syncPdmChannelsToLights } = require('./services/pdm-channel-sync');
             const { syncSwitchbackChannelsToLights } = require('./services/switchback-channel-sync');
+            const { syncCapstanConfig } = require('./services/capstan-config-sync');
             await syncPdmChannelsToLights(this.db, this);
             await syncSwitchbackChannelsToLights(this.db, this);
+            await syncCapstanConfig(this.db, this);
+            const cfg = await this.db.collection('system_config').findOne({ _id: 'main' });
+            this.publishRigMode(cfg?.mode || 'camping');
             await this.refreshLightNameCache();
         } catch (err) {
             console.error('[Config Request] Failed to re-publish config:', err.message);
@@ -1331,6 +1339,64 @@ class MqttService {
         const payload = { channels };
         console.log(`Publishing relay channel config to ${topic} (${channels.length} channels)`);
         this.client.publish(topic, JSON.stringify(payload), { qos: 1, retain: true });
+        return true;
+    }
+
+    // Publish one Capstan's resolved device-control list.
+    //
+    // Retained and per device, because two dials in the same rig carry
+    // different control sets. The display stores what arrives here in NVS, so
+    // an empty list is a meaningful payload — it is how a deleted or disabled
+    // Capstan is told to forget its controls — and the publish must happen
+    // even when `controls` is empty.
+    publishCapstanControlConfig(hostname, controls) {
+        if (!this.connected) {
+            console.warn('MQTT not connected, cannot publish Capstan control config');
+            return false;
+        }
+        if (!hostname) return false;
+
+        const topic = `${MQTT_ROOT}/config/capstan/${hostname}/controls`;
+        const payload = { controls };
+        console.log(`Publishing Capstan control config to ${topic} (${controls.length} controls)`);
+        this.client.publish(topic, JSON.stringify(payload), { qos: 1, retain: true });
+        return true;
+    }
+
+    // Publish one panel's resolved alarm list.
+    //
+    // Keyed on `panel`, not `capstan`: Milepost and Fireside are the same kind
+    // of consumer and should adopt this contract rather than each growing its
+    // own. Empty is a meaningful payload for the same reason as the controls —
+    // a panel with no alarms has to be told so, or it keeps evaluating the set
+    // it was last given.
+    publishPanelAlarmConfig(hostname, alarms) {
+        if (!this.connected) {
+            console.warn('MQTT not connected, cannot publish panel alarm config');
+            return false;
+        }
+        if (!hostname) return false;
+
+        const topic = `${MQTT_ROOT}/config/panel/${hostname}/alarms`;
+        const payload = { alarms };
+        console.log(`Publishing panel alarm config to ${topic} (${alarms.length} alarms)`);
+        this.client.publish(topic, JSON.stringify(payload), { qos: 1, retain: true });
+        return true;
+    }
+
+    // Publish the rig mode, retained.
+    //
+    // Named `current` to match os/timezone/current, which is the platform's
+    // other retained "this is the state of the world" topic. Every panel
+    // subscribes; nothing replies.
+    publishRigMode(mode) {
+        if (!this.connected) {
+            console.warn('MQTT not connected, cannot publish rig mode');
+            return false;
+        }
+        const topic = TOPICS.RIG_MODE;
+        console.log(`Publishing rig mode to ${topic} (${mode})`);
+        this.client.publish(topic, JSON.stringify({ mode }), { qos: 1, retain: true });
         return true;
     }
 

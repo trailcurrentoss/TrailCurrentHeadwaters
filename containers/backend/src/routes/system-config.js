@@ -4,6 +4,11 @@ const { encrypt, decrypt } = require('../utils/crypto.js');
 const cloudBridge = require('../services/cloud-bridge');
 const { syncPdmChannelsToLights } = require('../services/pdm-channel-sync.js');
 const { syncSwitchbackChannelsToLights } = require('../services/switchback-channel-sync.js');
+// Rig modes, mirroring MODES in the PWA's shell/mode-controller.js and
+// capstan_mode_t in the firmware.
+const VALID_MODES = ['camping', 'driving', 'storage'];
+
+const { syncCapstanConfig, MAX_CONTROLS: CAPSTAN_MAX_CONTROLS, MAX_ALARMS: CAPSTAN_MAX_ALARMS, ALARM_VERDICTS: CAPSTAN_ALARM_VERDICTS, SENSORS_PER_BOARD: CAPSTAN_SENSORS_PER_BOARD } = require('../services/capstan-config-sync.js');
 const { buildConfigSnapshot } = require('../services/config-snapshot.js');
 
 module.exports = (db) => {
@@ -32,6 +37,7 @@ module.exports = (db) => {
                     sms_max_messages: 3,
                     sms_throttle_window_minutes: 60,
                     mcu_modules: [],
+                    mode: 'camping',
                     wifi_ssid: '',
                     wifi_password: '',
                     updated_at: new Date()
@@ -133,6 +139,49 @@ module.exports = (db) => {
         } catch (error) {
             console.error('Error fetching system config:', error);
             res.status(500).json({ error: 'Failed to fetch system config' });
+        }
+    });
+
+    // PUT /api/system-config/mode
+    //
+    // Rig mode — camping / driving / storage. This used to live only in the
+    // PWA's localStorage, which made it a per-browser view preference. It is
+    // rig state now, because panels act on it: a Capstan's alarm profile says
+    // what a given sensor means in each mode, and a dial on a nightstand
+    // cannot read a browser's localStorage.
+    //
+    // Defined before PUT '/' so Express matches the more specific path first.
+    router.put('/mode', async (req, res) => {
+        try {
+            const { mode } = req.body;
+            if (!VALID_MODES.includes(mode)) {
+                return res.status(400).json({ error: `mode must be one of: ${VALID_MODES.join(', ')}` });
+            }
+
+            await systemConfig.updateOne(
+                { _id: 'main' },
+                { $set: { mode, updated_at: new Date() } },
+                { upsert: true }
+            );
+
+            const mqttService = require('../mqtt');
+            try {
+                // Retained: a panel that boots or reconnects gets the current
+                // mode immediately rather than interpreting every sensor
+                // against a default until someone changes it.
+                mqttService.publishRigMode(mode);
+            } catch (error) {
+                console.error('[System Config] Error publishing rig mode:', error);
+            }
+
+            // Other open browsers follow without a reload.
+            const broadcast = req.app.get('broadcast');
+            if (broadcast) broadcast('mode_changed', { mode });
+
+            res.json({ mode });
+        } catch (error) {
+            console.error('Error updating rig mode:', error);
+            res.status(500).json({ error: 'Failed to update rig mode' });
         }
     });
 
@@ -328,6 +377,67 @@ module.exports = (db) => {
                     if (typeof mod.type !== 'string' || typeof mod.name !== 'string' || typeof mod.hostname !== 'string') {
                         return res.status(400).json({ error: 'Module type, name, and hostname must be strings' });
                     }
+                    // Capstan device controls are references, not resolved
+                    // entries — { source, hostname, channel }. Validated here
+                    // so a malformed list is rejected loudly instead of being
+                    // silently dropped when capstan-config-sync resolves it.
+                    if (mod.type === 'capstan' && mod.config && mod.config.controls !== undefined) {
+                        const controls = mod.config.controls;
+                        if (!Array.isArray(controls)) {
+                            return res.status(400).json({ error: 'Capstan config.controls must be an array' });
+                        }
+                        if (controls.length > CAPSTAN_MAX_CONTROLS) {
+                            return res.status(400).json({ error: `A Capstan supports at most ${CAPSTAN_MAX_CONTROLS} device controls` });
+                        }
+                        for (const c of controls) {
+                            if (!c || (c.source !== 'torrent' && c.source !== 'switchback')) {
+                                return res.status(400).json({ error: "Each Capstan control needs source 'torrent' or 'switchback'" });
+                            }
+                            if (typeof c.hostname !== 'string' || !c.hostname) {
+                                return res.status(400).json({ error: 'Each Capstan control needs the hostname of the module it drives' });
+                            }
+                            if (!Number.isInteger(c.channel) || c.channel < 1 || c.channel > 8) {
+                                return res.status(400).json({ error: 'Each Capstan control needs a channel between 1 and 8' });
+                            }
+                        }
+                    }
+                    // Capstan alarms. Same reference shape as the controls,
+                    // plus the three things no rig-wide config carries for a
+                    // sensor: a polarity, an icon and a per-dial label.
+                    if (mod.type === 'capstan' && mod.config && mod.config.alarms !== undefined) {
+                        const alarms = mod.config.alarms;
+                        if (!Array.isArray(alarms)) {
+                            return res.status(400).json({ error: 'Capstan config.alarms must be an array' });
+                        }
+                        if (alarms.length > CAPSTAN_MAX_ALARMS) {
+                            return res.status(400).json({ error: `A Capstan supports at most ${CAPSTAN_MAX_ALARMS} alarms` });
+                        }
+                        for (const a of alarms) {
+                            const limit = a && CAPSTAN_SENSORS_PER_BOARD[a.source];
+                            if (!limit) {
+                                return res.status(400).json({ error: "Each Capstan alarm needs source 'picket' or 'switchback'" });
+                            }
+                            if (typeof a.hostname !== 'string' || !a.hostname) {
+                                return res.status(400).json({ error: 'Each Capstan alarm needs the hostname of the board it watches' });
+                            }
+                            if (!Number.isInteger(a.sensor) || a.sensor < 1 || a.sensor > limit) {
+                                return res.status(400).json({ error: `Each ${a.source} alarm needs a sensor between 1 and ${limit}` });
+                            }
+                            if (a.modes !== undefined) {
+                                if (typeof a.modes !== 'object' || a.modes === null) {
+                                    return res.status(400).json({ error: 'Capstan alarm modes must be an object keyed by rig mode' });
+                                }
+                                for (const [m, verdict] of Object.entries(a.modes)) {
+                                    if (!VALID_MODES.includes(m)) {
+                                        return res.status(400).json({ error: `Unknown rig mode '${m}' in Capstan alarm` });
+                                    }
+                                    if (!CAPSTAN_ALARM_VERDICTS.includes(verdict)) {
+                                        return res.status(400).json({ error: `Capstan alarm mode '${m}' must be one of: ${CAPSTAN_ALARM_VERDICTS.join(', ')}` });
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
                 const existing = await systemConfig.findOne({ _id: 'main' });
                 const stored = (existing && existing.mcu_modules) || [];
@@ -482,6 +592,10 @@ module.exports = (db) => {
                 try {
                     await syncPdmChannelsToLights(db, mqttService);
                     await syncSwitchbackChannelsToLights(db, mqttService);
+                    // After the two channel syncs, never before — Capstan
+                    // control labels are read back out of the lights
+                    // collection those write.
+                    await syncCapstanConfig(db, mqttService);
                     await mqttService.refreshLightNameCache();
                     // Broadcast updated light names to all WebSocket clients immediately
                     const broadcast = req.app.get('broadcast');

@@ -7,6 +7,7 @@ const { decrypt } = require('../utils/crypto.js');
 const mqttService = require('../mqtt');
 const { syncPdmChannelsToLights } = require('../services/pdm-channel-sync.js');
 const { syncSwitchbackChannelsToLights } = require('../services/switchback-channel-sync.js');
+const { syncCapstanConfig } = require('../services/capstan-config-sync.js');
 const { MCU_MODULES, VALID_MODULE_IDS } = require('./modules');
 
 const WIRELESS_MODULE_IDS = new Set(MCU_MODULES.filter(m => m.wireless).map(m => m.id));
@@ -356,6 +357,14 @@ module.exports = (db) => {
                 }
                 if (syncedAny) {
                     await mqttService.refreshLightNameCache();
+                }
+                // A new Torrent or Switchback shifts the light ids every
+                // module after it in hostname order, so every Capstan's
+                // resolved control list has to be recomputed. Confirming a
+                // Capstan itself also lands here, with no controls yet, which
+                // publishes the empty retained payload the display expects.
+                if (syncedAny || found.type === 'capstan') {
+                    await syncCapstanConfig(db, mqttService);
                 }
             } catch (syncErr) {
                 console.error('[Discovery] Channel sync error:', syncErr.message);

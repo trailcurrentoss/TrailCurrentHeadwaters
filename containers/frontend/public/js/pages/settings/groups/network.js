@@ -31,6 +31,93 @@ let cancelBtnListener = null;
 let backdropListener = null;
 let typeChangeListener = null;
 
+// Matches MAX_CONTROLS in containers/backend/src/services/capstan-control-sync.js
+// and CAPSTAN_MAX_CONTROLS in the firmware. The ceiling is the display's MQTT
+// message buffer, not the screen — an oversized payload is dropped whole, so
+// all three move together or not at all.
+const MAX_CAPSTAN_CONTROLS = 8;
+
+// Every card that owns an icon — PDM/relay channel rows and Capstan alarm
+// rows — exposes its button under one of these, so the icon picker can be
+// pointed at any of them without knowing which kind it is.
+const ICON_BTN_SELECTOR = '.pdm-channel-icon-btn, .capstan-alarm-icon-btn';
+
+function isSwitchbackType(type) {
+    return type === 'switchback' || type === 'switchback_relay';
+}
+
+// Enabled modules a Capstan control can point at, in the same hostname order
+// the backend uses to assign light ids.
+function controlSourceModules(source) {
+    return modules
+        .filter(m => m.enabled && (source === 'switchback' ? isSwitchbackType(m.type) : m.type === 'torrent'))
+        .sort((a, b) => (a.hostname || '').localeCompare(b.hostname || ''));
+}
+
+// The channel list as the user configured it on the source module, falling
+// back the same way the backend does.
+//
+// The two fallbacks genuinely differ: pdm-channel-sync takes the saved array
+// whole or not at all, switchback-channel-sync fills per index. Mirrored
+// rather than unified, because this list has to name the same channel the
+// backend will resolve — not the one that would be tidier.
+function controlSourceChannels(mod) {
+    if (!mod) return [];
+    const saved = mod.config?.channels || [];
+
+    if (isSwitchbackType(mod.type)) {
+        const defaults = Array.from({ length: 8 }, (_, i) =>
+            ({ channel: i + 1, name: `Relay ${i + 1}`, icon: 'power-outlet' }));
+        return defaults.map((def, i) => saved[i] || def);
+    }
+
+    if (saved.length) return saved;
+    return ['Living Room', 'Kitchen', 'Bedroom', 'Bathroom', 'Exterior', 'Awning', 'Porch', 'Storage']
+        .map((name, i) => ({ channel: i + 1, name, icon: 'lightbulb' }));
+}
+
+// Matches MAX_ALARMS in the backend and CAPSTAN_MAX_ALARMS in the firmware.
+// Six rather than eight: each alarm carries a verdict per rig mode, and eight
+// of those overflows the display's MQTT message buffer. See the note on
+// MAX_ALARMS in containers/backend/src/services/capstan-config-sync.js.
+const MAX_CAPSTAN_ALARMS = 6;
+
+// Rig modes, in the order they are shown on an alarm row. Mirrors MODES in
+// shell/mode-controller.js.
+const RIG_MODES = [
+    { id: 'camping', label: 'Camping' },
+    { id: 'driving', label: 'Driving' },
+    { id: 'storage', label: 'Storage' }
+];
+
+// Digital inputs per board, matching SENSORS_PER in alarms-service.js and the
+// Alarms settings group.
+const ALARM_SENSORS_PER = { picket: 12, switchback: 8 };
+
+// Boards whose digital inputs a Capstan alarm can watch. Picket reeds arrive
+// on local/picket/<addr>/inputs, Switchback DIs on local/spoor/<addr>/inputs.
+function alarmSourceModules(source) {
+    return modules
+        .filter(m => m.enabled && (source === 'switchback' ? isSwitchbackType(m.type) : m.type === 'picket'))
+        .sort((a, b) => (a.addr ?? 0) - (b.addr ?? 0));
+}
+
+// Same identifier system_config.alarms.sensors uses, so a sensor named in
+// Settings > Alarms is the same sensor here.
+function alarmKey(source, addr, sensor) { return `${source}:${addr}:${sensor}`; }
+
+function defaultAlarmLabel(source, addr, sensor) {
+    return `${source === 'switchback' ? 'SB' : 'PK'}${addr}-S${sensor}`;
+}
+
+// The name this sensor already goes by rig-wide, if the user named it under
+// Settings > Alarms. Used to seed the Capstan entry's label, never to
+// override one the user has since typed here.
+function rigAlarmLabel(source, addr, sensor) {
+    const entry = systemConfig?.alarms?.sensors?.[alarmKey(source, addr, sensor)];
+    return (entry && entry.label) || '';
+}
+
 function getModuleDisplayName(typeId) {
     const found = moduleTypes.find(m => m.id === typeId);
     return found ? found.name : typeId;
@@ -147,6 +234,47 @@ export const networkGroup = {
                                        placeholder="0.0" min="-100" max="100" step="0.1" value="0">
                                 <p class="form-hint">Offset applied to the SHT31 reading before conversion and transmission. Positive values increase the reported temperature. Send 0 to clear.</p>
                             </div>
+                        </div>
+
+                        <div class="capstan-config" id="capstan-config" style="display: none;">
+                            <label class="form-label">Device Controls</label>
+                            <p class="form-hint" style="margin-bottom: 12px;">
+                                Choose which Torrent or Switchback channels this dial can switch.
+                                The name and icon come from that channel's own configuration, so
+                                renaming it there updates the dial. Saved settings are sent to the
+                                display and stored on it, so its controls survive a reboot.
+                            </p>
+                            <div class="capstan-control-list" id="capstan-control-list">
+                                <!-- Control rows rendered dynamically -->
+                            </div>
+                            <button type="button" class="add-module-btn" id="capstan-add-control-btn">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                                    <path d="M12 5v14M5 12h14"></path>
+                                </svg>
+                                Add Control
+                            </button>
+                            <p class="form-hint" id="capstan-control-hint"></p>
+
+                            <label class="form-label" style="margin-top: 20px;">Alarms</label>
+                            <p class="form-hint" style="margin-bottom: 12px;">
+                                Pick the Picket or Switchback inputs this dial should watch. Nothing
+                                on the bus is an alarm by itself — an input is just a status, and
+                                what it means depends on the rig's mode and on where this panel is,
+                                so each alarm gets a verdict per mode. A fridge sense line might be
+                                <em>Alarm when ON</em> in Storage, <em>Alarm when OFF</em> in
+                                Driving, and <em>Ignore</em> in Camping. A dial by the bed can leave
+                                every mode on Ignore for alarms the kitchen panel should handle.
+                            </p>
+                            <div class="capstan-alarm-list" id="capstan-alarm-list">
+                                <!-- Alarm rows rendered dynamically -->
+                            </div>
+                            <button type="button" class="add-module-btn" id="capstan-add-alarm-btn">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+                                    <path d="M12 5v14M5 12h14"></path>
+                                </svg>
+                                Add Alarm
+                            </button>
+                            <p class="form-hint" id="capstan-alarm-hint"></p>
                         </div>
 
                         <div id="form-message" class="form-message hidden"></div>
@@ -741,6 +869,10 @@ export const networkGroup = {
         } else if (module.type === 'borealis') {
             this.togglePdmChannelsUI('borealis');
             this.populateBorealisFields(module.config || {});
+        } else if (module.type === 'capstan') {
+            this.togglePdmChannelsUI('capstan');
+            this.renderCapstanControls(module.config?.controls || []);
+            this.renderCapstanAlarms(module.config?.alarms || []);
         } else {
             this.togglePdmChannelsUI(module.type);
             document.getElementById('module-config').value = JSON.stringify(module.config || {}, null, 2);
@@ -791,6 +923,10 @@ export const networkGroup = {
             document.getElementById('module-hostname').disabled = false;
             document.getElementById('module-hostname').value = '';
         }
+        const capstanList = document.getElementById('capstan-control-list');
+        if (capstanList) capstanList.innerHTML = '';
+        const capstanAlarms = document.getElementById('capstan-alarm-list');
+        if (capstanAlarms) capstanAlarms.innerHTML = '';
         this.clearErrors();
     },
 
@@ -837,6 +973,12 @@ export const networkGroup = {
         } else if (type === 'borealis') {
             config = this.collectBorealisData();
             if (!config) return; // validation failed
+        } else if (type === 'capstan') {
+            config = {
+                ...(editingModule?.config || {}),
+                controls: this.collectCapstanControls(),
+                alarms: this.collectCapstanAlarms()
+            };
         } else if (configText) {
             try {
                 config = JSON.parse(configText);
@@ -1076,13 +1218,25 @@ export const networkGroup = {
                 this.renderChannelRows(defaults, moduleType);
             }
         } else {
-            jsonGroup.style.display = (moduleType === 'borealis') ? 'none' : 'block';
+            const hasOwnUI = moduleType === 'borealis' || moduleType === 'capstan';
+            jsonGroup.style.display = hasOwnUI ? 'none' : 'block';
             channelsConfig.style.display = 'none';
         }
 
         // Borealis config
         document.getElementById('borealis-config').style.display =
             moduleType === 'borealis' ? 'block' : 'none';
+
+        // Capstan device controls
+        const capstanConfig = document.getElementById('capstan-config');
+        if (capstanConfig) {
+            capstanConfig.style.display = moduleType === 'capstan' ? 'block' : 'none';
+            if (moduleType === 'capstan' && !capstanConfig._bound) {
+                this.bindCapstanControlListeners();
+                this.bindCapstanAlarmListeners();
+                capstanConfig._bound = true;
+            }
+        }
     },
 
     getDefaultChannels() {
@@ -1186,7 +1340,7 @@ export const networkGroup = {
         if (!body) return;
 
         const q = (query || '').trim().toLowerCase();
-        const currentKey = this._iconPickerTarget?.querySelector('.pdm-channel-icon-btn')?.dataset.icon;
+        const currentKey = this._iconPickerTarget?.querySelector(ICON_BTN_SELECTOR)?.dataset.icon;
 
         const filtered = q
             ? FIRESIDE_ICONS.filter(ic =>
@@ -1240,10 +1394,10 @@ export const networkGroup = {
     selectIcon(iconKey) {
         const card = this._iconPickerTarget;
         if (!card) { this.closeIconPicker(); return; }
-        const btn = card.querySelector('.pdm-channel-icon-btn');
+        const btn = card.querySelector(ICON_BTN_SELECTOR);
         if (btn) {
             btn.dataset.icon = iconKey;
-            btn.innerHTML = renderIconHtml(iconKey, 'pdm-channel-icon-glyph');
+            btn.innerHTML = renderIconHtml(iconKey, btn.dataset.glyphClass || 'pdm-channel-icon-glyph');
         }
         this.closeIconPicker();
     },
@@ -1254,6 +1408,417 @@ export const networkGroup = {
         if (modal) modal.style.display = 'none';
         if (backdrop) backdrop.style.display = 'none';
         this._iconPickerTarget = null;
+    },
+
+    // --- Capstan device controls -------------------------------------
+    //
+    // A control is stored as a reference — { source, hostname, channel } —
+    // and never as a resolved id, name or icon. The backend derives those
+    // when it publishes to the display, so renaming a PDM channel or adding
+    // a second Switchback stays correct without the user revisiting this
+    // dialog.
+
+    renderCapstanControls(controls) {
+        const list = document.getElementById('capstan-control-list');
+        if (!list) return;
+
+        list.innerHTML = '';
+        (controls || []).slice(0, MAX_CAPSTAN_CONTROLS).forEach(c => this.addCapstanControlRow(c));
+        this.updateCapstanControlHint();
+    },
+
+    addCapstanControlRow(control) {
+        const list = document.getElementById('capstan-control-list');
+        if (!list || list.children.length >= MAX_CAPSTAN_CONTROLS) return;
+
+        const source = control?.source === 'switchback' ? 'switchback' : 'torrent';
+        const card = document.createElement('div');
+        card.className = 'capstan-control-card';
+        card.innerHTML = `
+            <span class="capstan-control-preview">
+                <span class="capstan-control-icon"></span>
+                <span class="capstan-control-label"></span>
+            </span>
+            <select class="form-input capstan-control-source" aria-label="Control source">
+                <option value="torrent"${source === 'torrent' ? ' selected' : ''}>Torrent</option>
+                <option value="switchback"${source === 'switchback' ? ' selected' : ''}>Switchback</option>
+            </select>
+            <select class="form-input capstan-control-module" aria-label="Source module"></select>
+            <select class="form-input capstan-control-channel" aria-label="Channel"></select>
+            <button type="button" class="module-action-btn capstan-control-remove"
+                    title="Remove control" aria-label="Remove control">×</button>
+        `;
+        list.appendChild(card);
+
+        this.populateCapstanModuleSelect(card, control?.hostname);
+        this.populateCapstanChannelSelect(card, control?.channel);
+        this.updateCapstanControlHint();
+    },
+
+    populateCapstanModuleSelect(card, selectedHostname) {
+        const source = card.querySelector('.capstan-control-source').value;
+        const select = card.querySelector('.capstan-control-module');
+        const available = controlSourceModules(source);
+
+        if (available.length === 0) {
+            select.innerHTML = `<option value="">No ${source === 'switchback' ? 'Switchback' : 'Torrent'} modules</option>`;
+            return;
+        }
+
+        // `addr` is what distinguishes two of the same module on the bus, so
+        // it is shown even though the hostname is the stored key — a rig with
+        // two Torrents gives them the same friendly name often enough.
+        select.innerHTML = available.map(m => {
+            const addr = m.addr !== undefined && m.addr !== null ? ` &middot; addr ${m.addr}` : '';
+            return `<option value="${escapeHtml(m.hostname)}">${escapeHtml(m.name)}${addr}</option>`;
+        }).join('');
+
+        if (selectedHostname && available.some(m => m.hostname === selectedHostname)) {
+            select.value = selectedHostname;
+        }
+    },
+
+    populateCapstanChannelSelect(card, selectedChannel) {
+        const hostname = card.querySelector('.capstan-control-module').value;
+        const select = card.querySelector('.capstan-control-channel');
+        const mod = modules.find(m => m.hostname === hostname);
+        const channels = controlSourceChannels(mod);
+
+        if (channels.length === 0) {
+            select.innerHTML = '<option value="">—</option>';
+            this.updateCapstanPreview(card);
+            return;
+        }
+
+        select.innerHTML = channels.map(ch =>
+            `<option value="${ch.channel}">#${ch.channel} &middot; ${escapeHtml(ch.name)}</option>`
+        ).join('');
+
+        if (selectedChannel && channels.some(ch => ch.channel === Number(selectedChannel))) {
+            select.value = String(selectedChannel);
+        }
+        this.updateCapstanPreview(card);
+    },
+
+    // The preview is read-only on purpose. The whole point of picking a
+    // channel rather than typing a name is that the dial stays in step with
+    // the channel's own label and icon; an editable copy here would drift.
+    updateCapstanPreview(card) {
+        const hostname = card.querySelector('.capstan-control-module').value;
+        const channel = Number(card.querySelector('.capstan-control-channel').value);
+        const mod = modules.find(m => m.hostname === hostname);
+        const ch = controlSourceChannels(mod).find(c => c.channel === channel);
+
+        const iconEl = card.querySelector('.capstan-control-icon');
+        const labelEl = card.querySelector('.capstan-control-label');
+
+        if (!ch) {
+            iconEl.innerHTML = '';
+            labelEl.textContent = 'Not configured';
+            labelEl.classList.add('capstan-control-label-empty');
+            return;
+        }
+
+        const iconKey = resolveIcon(ch.icon || (isSwitchbackType(mod.type) ? 'power-outlet' : 'lightbulb')).key;
+        iconEl.innerHTML = renderIconHtml(iconKey, 'capstan-control-icon-glyph');
+        labelEl.textContent = ch.name;
+        labelEl.classList.remove('capstan-control-label-empty');
+    },
+
+    updateCapstanControlHint() {
+        const list = document.getElementById('capstan-control-list');
+        const addBtn = document.getElementById('capstan-add-control-btn');
+        const hint = document.getElementById('capstan-control-hint');
+        if (!list || !addBtn || !hint) return;
+
+        const count = list.children.length;
+        const haveSources = controlSourceModules('torrent').length + controlSourceModules('switchback').length;
+
+        addBtn.disabled = count >= MAX_CAPSTAN_CONTROLS || haveSources === 0;
+
+        if (haveSources === 0) {
+            hint.textContent = 'Add and enable a Torrent or Switchback module before configuring controls.';
+        } else if (count >= MAX_CAPSTAN_CONTROLS) {
+            hint.textContent = `A Capstan holds ${MAX_CAPSTAN_CONTROLS} controls. Remove one to add another.`;
+        } else {
+            hint.textContent = `${count} of ${MAX_CAPSTAN_CONTROLS} controls used.`;
+        }
+    },
+
+    // Delegated, and bound once for the life of the page — the rows are
+    // rebuilt on every edit and per-row listeners would leak.
+    bindCapstanControlListeners() {
+        const list = document.getElementById('capstan-control-list');
+        const addBtn = document.getElementById('capstan-add-control-btn');
+
+        if (list) {
+            list.addEventListener('change', (e) => {
+                const card = e.target.closest('.capstan-control-card');
+                if (!card) return;
+                if (e.target.classList.contains('capstan-control-source')) {
+                    this.populateCapstanModuleSelect(card);
+                    this.populateCapstanChannelSelect(card);
+                } else if (e.target.classList.contains('capstan-control-module')) {
+                    this.populateCapstanChannelSelect(card);
+                } else if (e.target.classList.contains('capstan-control-channel')) {
+                    this.updateCapstanPreview(card);
+                }
+            });
+
+            list.addEventListener('click', (e) => {
+                const removeBtn = e.target.closest('.capstan-control-remove');
+                if (!removeBtn) return;
+                removeBtn.closest('.capstan-control-card')?.remove();
+                this.updateCapstanControlHint();
+            });
+        }
+
+        if (addBtn) {
+            addBtn.addEventListener('click', () => this.addCapstanControlRow());
+        }
+    },
+
+    collectCapstanControls() {
+        const cards = document.querySelectorAll('#capstan-control-list .capstan-control-card');
+        return Array.from(cards).map(card => {
+            const hostname = card.querySelector('.capstan-control-module').value;
+            const channel = parseInt(card.querySelector('.capstan-control-channel').value, 10);
+            if (!hostname || !Number.isInteger(channel)) return null;
+            return {
+                source: card.querySelector('.capstan-control-source').value,
+                hostname,
+                channel
+            };
+        }).filter(Boolean);
+    },
+
+    // --- Capstan alarms ------------------------------------------------
+    //
+    // Same reference-not-copy rule as the controls: the row stores which
+    // board and sensor, never a resolved address. What it does store outright
+    // is the icon, the label and the polarity, because no rig-wide config
+    // carries any of the three for a sensor — Settings > Alarms holds only an
+    // armed flag and a name.
+
+    renderCapstanAlarms(alarms) {
+        const list = document.getElementById('capstan-alarm-list');
+        if (!list) return;
+
+        list.innerHTML = '';
+        (alarms || []).slice(0, MAX_CAPSTAN_ALARMS).forEach(a => this.addCapstanAlarmRow(a));
+        this.updateCapstanAlarmHint();
+    },
+
+    addCapstanAlarmRow(alarm) {
+        const list = document.getElementById('capstan-alarm-list');
+        if (!list || list.children.length >= MAX_CAPSTAN_ALARMS) return;
+
+        const source = alarm?.source === 'switchback' ? 'switchback' : 'picket';
+        const iconKey = resolveIcon(alarm?.icon || 'bell').key;
+
+        // Default every mode to Ignore. An alarm the user has added but not
+        // yet given a meaning to should stay quiet, not fire everywhere.
+        const verdicts = {};
+        for (const m of RIG_MODES) {
+            const v = alarm?.modes?.[m.id];
+            verdicts[m.id] = (v === 'high' || v === 'low') ? v : 'none';
+        }
+
+        const card = document.createElement('div');
+        card.className = 'capstan-alarm-card';
+        card.innerHTML = `
+            <button type="button" class="pdm-channel-icon-btn capstan-alarm-icon-btn"
+                    data-icon="${escapeHtml(iconKey)}"
+                    data-glyph-class="pdm-channel-icon-glyph"
+                    aria-label="Change alarm icon">
+                ${renderIconHtml(iconKey, 'pdm-channel-icon-glyph')}
+            </button>
+            <input type="text" class="form-input capstan-alarm-label"
+                   value="${escapeHtml(alarm?.label || '')}"
+                   placeholder="Alarm name" maxlength="24" aria-label="Alarm name">
+            <button type="button" class="module-action-btn capstan-alarm-remove"
+                    title="Remove alarm" aria-label="Remove alarm">×</button>
+            <select class="form-input capstan-alarm-source" aria-label="Alarm source">
+                <option value="picket"${source === 'picket' ? ' selected' : ''}>Picket</option>
+                <option value="switchback"${source === 'switchback' ? ' selected' : ''}>Switchback</option>
+            </select>
+            <select class="form-input capstan-alarm-module" aria-label="Board"></select>
+            <select class="form-input capstan-alarm-sensor" aria-label="Sensor"></select>
+            <div class="capstan-alarm-modes">
+                ${RIG_MODES.map(m => `
+                    <label class="capstan-alarm-mode">
+                        <span class="capstan-alarm-mode-name">${m.label}</span>
+                        <select class="form-input capstan-alarm-verdict" data-mode="${m.id}"
+                                aria-label="${m.label} verdict">
+                            <option value="none"${verdicts[m.id] === 'none' ? ' selected' : ''}>Ignore</option>
+                            <option value="high"${verdicts[m.id] === 'high' ? ' selected' : ''}>Alarm when ON</option>
+                            <option value="low"${verdicts[m.id] === 'low' ? ' selected' : ''}>Alarm when OFF</option>
+                        </select>
+                    </label>
+                `).join('')}
+            </div>
+        `;
+        list.appendChild(card);
+
+        this.populateCapstanAlarmModuleSelect(card, alarm?.hostname);
+        this.populateCapstanAlarmSensorSelect(card, alarm?.sensor);
+        this.updateCapstanAlarmHint();
+    },
+
+    populateCapstanAlarmModuleSelect(card, selectedHostname) {
+        const source = card.querySelector('.capstan-alarm-source').value;
+        const select = card.querySelector('.capstan-alarm-module');
+        const available = alarmSourceModules(source);
+
+        if (available.length === 0) {
+            select.innerHTML = `<option value="">No ${source === 'switchback' ? 'Switchback' : 'Picket'} boards</option>`;
+            return;
+        }
+
+        // Ordered and labelled by addr, because addr is what the input topic
+        // is keyed on and what the sensor's rig-wide name is built from.
+        select.innerHTML = available.map(m => {
+            const addr = m.addr !== undefined && m.addr !== null ? ` &middot; addr ${m.addr}` : '';
+            return `<option value="${escapeHtml(m.hostname)}">${escapeHtml(m.name)}${addr}</option>`;
+        }).join('');
+
+        if (selectedHostname && available.some(m => m.hostname === selectedHostname)) {
+            select.value = selectedHostname;
+        }
+    },
+
+    populateCapstanAlarmSensorSelect(card, selectedSensor) {
+        const source = card.querySelector('.capstan-alarm-source').value;
+        const hostname = card.querySelector('.capstan-alarm-module').value;
+        const select = card.querySelector('.capstan-alarm-sensor');
+        const mod = modules.find(m => m.hostname === hostname);
+
+        if (!mod) {
+            select.innerHTML = '<option value="">—</option>';
+            return;
+        }
+
+        const addr = Number.isInteger(mod.addr) ? mod.addr : 0;
+        const count = ALARM_SENSORS_PER[source] || 0;
+
+        // Show the rig-wide name next to the number where there is one, so a
+        // sensor already named under Settings > Alarms is recognisable here.
+        select.innerHTML = Array.from({ length: count }, (_, i) => {
+            const sensor = i + 1;
+            const named = rigAlarmLabel(source, addr, sensor);
+            const text = named
+                ? `#${sensor} &middot; ${escapeHtml(named)}`
+                : `#${sensor} &middot; ${escapeHtml(defaultAlarmLabel(source, addr, sensor))}`;
+            return `<option value="${sensor}">${text}</option>`;
+        }).join('');
+
+        if (selectedSensor && Number(selectedSensor) >= 1 && Number(selectedSensor) <= count) {
+            select.value = String(selectedSensor);
+        }
+        this.seedCapstanAlarmLabel(card);
+    },
+
+    // Seed the label from the sensor's rig-wide name, but never clobber one
+    // the user typed. The last auto-filled value is remembered on the input,
+    // so re-pointing a row that still carries its suggestion re-seeds, while
+    // an edited one is left alone.
+    seedCapstanAlarmLabel(card) {
+        const input = card.querySelector('.capstan-alarm-label');
+        const source = card.querySelector('.capstan-alarm-source').value;
+        const hostname = card.querySelector('.capstan-alarm-module').value;
+        const sensor = Number(card.querySelector('.capstan-alarm-sensor').value);
+        const mod = modules.find(m => m.hostname === hostname);
+        if (!input || !mod || !sensor) return;
+
+        const addr = Number.isInteger(mod.addr) ? mod.addr : 0;
+        const suggestion = rigAlarmLabel(source, addr, sensor)
+                        || defaultAlarmLabel(source, addr, sensor);
+
+        const current = input.value.trim();
+        if (current === '' || current === input.dataset.autoLabel) {
+            input.value = suggestion;
+        }
+        input.dataset.autoLabel = suggestion;
+    },
+
+    updateCapstanAlarmHint() {
+        const list = document.getElementById('capstan-alarm-list');
+        const addBtn = document.getElementById('capstan-add-alarm-btn');
+        const hint = document.getElementById('capstan-alarm-hint');
+        if (!list || !addBtn || !hint) return;
+
+        const count = list.children.length;
+        const haveBoards = alarmSourceModules('picket').length + alarmSourceModules('switchback').length;
+
+        addBtn.disabled = count >= MAX_CAPSTAN_ALARMS || haveBoards === 0;
+
+        if (haveBoards === 0) {
+            hint.textContent = 'Add and enable a Picket or Switchback module before configuring alarms.';
+        } else if (count >= MAX_CAPSTAN_ALARMS) {
+            hint.textContent = `A Capstan holds ${MAX_CAPSTAN_ALARMS} alarms. Remove one to add another.`;
+        } else {
+            hint.textContent = `${count} of ${MAX_CAPSTAN_ALARMS} alarms used.`;
+        }
+    },
+
+    bindCapstanAlarmListeners() {
+        const list = document.getElementById('capstan-alarm-list');
+        const addBtn = document.getElementById('capstan-add-alarm-btn');
+
+        if (list) {
+            list.addEventListener('change', (e) => {
+                const card = e.target.closest('.capstan-alarm-card');
+                if (!card) return;
+                if (e.target.classList.contains('capstan-alarm-source')) {
+                    this.populateCapstanAlarmModuleSelect(card);
+                    this.populateCapstanAlarmSensorSelect(card);
+                } else if (e.target.classList.contains('capstan-alarm-module')) {
+                    this.populateCapstanAlarmSensorSelect(card);
+                } else if (e.target.classList.contains('capstan-alarm-sensor')) {
+                    // The option list is unchanged — only the suggested name
+                    // moves with the selection.
+                    this.seedCapstanAlarmLabel(card);
+                }
+            });
+
+            list.addEventListener('click', (e) => {
+                if (e.target.closest('.capstan-alarm-icon-btn')) {
+                    this.openIconPicker(e.target.closest('.capstan-alarm-card'));
+                    return;
+                }
+                if (e.target.closest('.capstan-alarm-remove')) {
+                    e.target.closest('.capstan-alarm-card')?.remove();
+                    this.updateCapstanAlarmHint();
+                }
+            });
+        }
+
+        if (addBtn) {
+            addBtn.addEventListener('click', () => this.addCapstanAlarmRow());
+        }
+    },
+
+    collectCapstanAlarms() {
+        const cards = document.querySelectorAll('#capstan-alarm-list .capstan-alarm-card');
+        return Array.from(cards).map(card => {
+            const hostname = card.querySelector('.capstan-alarm-module').value;
+            const sensor = parseInt(card.querySelector('.capstan-alarm-sensor').value, 10);
+            if (!hostname || !Number.isInteger(sensor)) return null;
+            const source = card.querySelector('.capstan-alarm-source').value;
+            const label = card.querySelector('.capstan-alarm-label').value.trim();
+            const modes = {};
+            card.querySelectorAll('.capstan-alarm-verdict').forEach(sel => {
+                modes[sel.dataset.mode] = sel.value;
+            });
+            return {
+                source,
+                hostname,
+                sensor,
+                icon: card.querySelector('.capstan-alarm-icon-btn').dataset.icon,
+                label,
+                modes
+            };
+        }).filter(Boolean);
     },
 
     populateBorealisFields(config) {

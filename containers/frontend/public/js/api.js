@@ -243,6 +243,16 @@ class API {
         });
     }
 
+    // Rig mode — camping / driving / storage. Its own endpoint rather than a
+    // field on updateSystemConfig, because that PUT expects the whole config
+    // object and the mode switch fires from a segmented control.
+    static async updateRigMode(mode) {
+        return this.request('/system-config/mode', {
+            method: 'PUT',
+            body: JSON.stringify({ mode })
+        });
+    }
+
     static async resetConfiguration() {
         return this.request('/system-config/reset', {
             method: 'POST'

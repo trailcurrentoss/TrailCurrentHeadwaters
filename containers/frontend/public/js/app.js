@@ -186,6 +186,16 @@ class App {
         wsClient.connect();
         this.setupConnectionStatus();
 
+        // Rig mode is server state. localStorage painted the first frame;
+        // reconcile against the rig now, and follow any change made from
+        // another browser. Failure is non-fatal — the cached mode stands.
+        API.getSystemConfig()
+            .then(cfg => { if (cfg?.mode) modeController.applyRemoteMode(cfg.mode); })
+            .catch(err => console.error('[Mode] Could not load rig mode:', err));
+        wsClient.on('mode_changed', (data) => {
+            if (data?.mode) modeController.applyRemoteMode(data.mode);
+        });
+
         // Alarm notifier lives at the app level so notifications fire
         // regardless of which page is showing. Wake-lock keeps the WS
         // alive when the display would otherwise sleep — this is what

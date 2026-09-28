@@ -5038,6 +5038,201 @@ body {
     }
 }
 
+/* Capstan device controls — one card per control the dial can switch.
+ * Same 500px modal constraint as .pdm-channel-card, so the three selects
+ * stack under a full-width preview row rather than fighting for a line. */
+.capstan-control-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 12px;
+}
+
+.capstan-control-card {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr auto;
+    align-items: center;
+    gap: 8px;
+    padding: 10px;
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    background: var(--bg-card);
+}
+
+/* The resolved name and icon, spanning the full first row. Read-only: it
+ * mirrors the source channel's own configuration and is not editable here. */
+.capstan-control-preview {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.capstan-control-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    flex: 0 0 auto;
+    color: var(--primary);
+}
+
+.capstan-control-icon-glyph {
+    font-size: 22px;
+    line-height: 1;
+}
+
+.capstan-control-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.capstan-control-label-empty {
+    color: var(--text-secondary);
+    font-weight: 400;
+    font-style: italic;
+}
+
+.capstan-control-card select {
+    padding: 6px 8px;
+    font-size: 0.85rem;
+    min-width: 0;
+}
+
+.capstan-control-remove {
+    font-size: 1.1rem;
+    line-height: 1;
+    padding: 6px 10px;
+}
+
+#capstan-add-control-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* Phones: three selects across is unreadable in a 500px modal minus
+ * padding, so give each its own row. */
+@media (max-width: 480px) {
+    .capstan-control-card {
+        grid-template-columns: 1fr auto;
+    }
+    .capstan-control-card .capstan-control-source,
+    .capstan-control-card .capstan-control-module,
+    .capstan-control-card .capstan-control-channel {
+        grid-column: 1;
+    }
+    .capstan-control-remove {
+        grid-column: 2;
+        grid-row: 2 / span 3;
+        align-self: center;
+    }
+}
+
+/* Capstan alarms. Two rows inside one card: icon + name + remove across the
+ * top, then the four selects that say which input and which polarity. Same
+ * 500px modal constraint as everything else in this dialog. */
+.capstan-alarm-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 12px;
+}
+
+.capstan-alarm-card {
+    display: grid;
+    grid-template-columns: 48px 1fr auto;
+    align-items: center;
+    gap: 8px;
+    padding: 10px;
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    background: var(--bg-card);
+}
+
+.capstan-alarm-label {
+    min-width: 0;
+    padding: 6px 8px;
+    font-size: 0.9rem;
+}
+
+/* Source / board / sensor each take a full line below the name row. Not
+ * packed two-across: board names plus "· addr N" already crowd a half-width
+ * select inside a 500px modal. */
+.capstan-alarm-card .capstan-alarm-source,
+.capstan-alarm-card .capstan-alarm-module,
+.capstan-alarm-card .capstan-alarm-sensor {
+    grid-column: 1 / -1;
+    padding: 6px 8px;
+    font-size: 0.85rem;
+    min-width: 0;
+}
+
+/* One verdict per rig mode, side by side so the row reads as a sentence:
+ * this input means nothing in Camping, a fault in Driving, an intrusion in
+ * Storage. Stacked they read as three unrelated settings. */
+.capstan-alarm-modes {
+    grid-column: 1 / -1;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 6px;
+    margin-top: 2px;
+}
+
+.capstan-alarm-mode {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    min-width: 0;
+}
+
+.capstan-alarm-mode-name {
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text-secondary);
+}
+
+.capstan-alarm-verdict {
+    padding: 6px 4px;
+    font-size: 0.8rem;
+    min-width: 0;
+}
+
+/* Phones: three selects across a ~300px card truncates every option to
+ * "Alarm whe…", which loses the only word that differs. Stack them and keep
+ * the mode name as the label. */
+@media (max-width: 480px) {
+    .capstan-alarm-modes {
+        grid-template-columns: 1fr;
+    }
+    .capstan-alarm-mode {
+        flex-direction: row;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+    }
+    .capstan-alarm-verdict {
+        flex: 0 1 60%;
+    }
+}
+
+.capstan-alarm-remove {
+    font-size: 1.1rem;
+    line-height: 1;
+    padding: 6px 10px;
+}
+
+#capstan-add-alarm-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
 /* Icon picker modal — grid of tiles, grouped by category, searchable.
  * Sized independently of the parent module modal so it can present a
  * comfortable browsing surface on phones and desktops alike. */

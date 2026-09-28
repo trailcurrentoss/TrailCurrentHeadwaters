@@ -174,13 +174,24 @@ async function startServer() {
 
         // Sync PDM channel configs to lights collection (fire-and-forget)
         const { syncPdmChannelsToLights } = require('./services/pdm-channel-sync');
-        syncPdmChannelsToLights(db, mqttService).catch(err =>
+        const pdmSync = syncPdmChannelsToLights(db, mqttService).catch(err =>
             console.error('[Startup] PDM channel sync failed:', err.message));
 
         // Sync Switchback relay configs to lights collection, then cache names for MQTT hot path,
         // then publish config snapshot to cloud if enabled
         const { syncSwitchbackChannelsToLights } = require('./services/switchback-channel-sync');
+        const { syncCapstanConfig } = require('./services/capstan-config-sync');
         syncSwitchbackChannelsToLights(db, mqttService)
+            // Waits on the PDM sync as well: Capstan control labels are read
+            // out of the lights collection, and resolving them while the PDM
+            // rows are still being written publishes a short list.
+            .then(() => pdmSync)
+            .then(() => syncCapstanConfig(db, mqttService))
+            // Re-assert the retained rig mode. Mosquitto's retained set does
+            // not survive a broker container rebuild, and a panel that came
+            // up in between would otherwise sit on its stored last-known mode
+            // with nothing to correct it.
+            .then(() => mqttService.publishRigMode(sysConfig?.mode || 'camping'))
             .then(() => mqttService.refreshLightNameCache())
             .then(async () => {
                 if (sysConfig && sysConfig.cloud_enabled) {
