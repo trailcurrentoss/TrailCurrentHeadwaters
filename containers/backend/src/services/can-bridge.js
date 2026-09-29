@@ -221,7 +221,16 @@ const parsers = {
         const isNegative = decoded[0] === 0xFF;
         const wattage = (decoded[1] << 8) | decoded[2];
         const ttg = (decoded[3] << 8) | decoded[4];
-        const fields = { consumption_watts: isNegative ? wattage : 0 };
+        // SmartShunt `P`, relayed by Solstice as sign byte + magnitude.
+        // Victron convention: positive = battery CHARGING, negative =
+        // DISCHARGING. consumption_watts keeps its old meaning (the draw
+        // while discharging, 0 otherwise) for existing consumers;
+        // battery_watts carries the sign, which the Capstan energy screen
+        // needs to show charge vs draw and to derive loads (solar - net).
+        const fields = {
+            consumption_watts: isNegative ? wattage : 0,
+            battery_watts: isNegative ? -wattage : wattage,
+        };
         if (ttg > 0 && ttg < 0xFFFF) {
             fields.time_remaining_minutes = ttg;
         }

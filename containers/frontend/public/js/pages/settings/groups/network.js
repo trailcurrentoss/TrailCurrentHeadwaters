@@ -1616,12 +1616,18 @@ export const networkGroup = {
         const source = alarm?.source === 'switchback' ? 'switchback' : 'picket';
         const iconKey = resolveIcon(alarm?.icon || 'bell').key;
 
-        // Default every mode to Ignore. An alarm the user has added but not
-        // yet given a meaning to should stay quiet, not fire everywhere.
+        // A NEW alarm starts as "Alarm when ON" in every mode, which is what
+        // arming a sensor means everywhere else on the rig (Settings > Alarms,
+        // Milepost). Defaulting to Ignore made adding an alarm a no-op: the
+        // dial received it, evaluated it, and stayed quiet with the door open,
+        // while Headwaters and Milepost both showed the alarm. Narrow it per
+        // mode from here. A saved alarm keeps exactly the verdicts it has.
+        const isNew = !alarm?.modes;
         const verdicts = {};
         for (const m of RIG_MODES) {
             const v = alarm?.modes?.[m.id];
-            verdicts[m.id] = (v === 'high' || v === 'low') ? v : 'none';
+            verdicts[m.id] = (v === 'high' || v === 'low' || v === 'none') ? v
+                           : (isNew ? 'high' : 'none');
         }
 
         const card = document.createElement('div');

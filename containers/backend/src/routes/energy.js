@@ -12,6 +12,7 @@ module.exports = () => {
             charge_type: null,
             time_remaining_minutes: null,
             consumption_watts: null,
+            battery_watts: null,   // signed: + charging, - discharging
         });
     });
 
