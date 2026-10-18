@@ -1364,20 +1364,20 @@ class MqttService {
         return true;
     }
 
-    // Publish one Tiercel's services block: Peregrine's URL and CA, so the
-    // dial can reach it directly. Retained, and `{}` is meaningful — a block
-    // left out clears that service on the dial. Only which blocks are present
-    // is logged; the CA would swamp the log.
-    publishTiercelServicesConfig(hostname, services) {
+    // Publish one device's services block (Tiercel, Fireside): Peregrine's URL
+    // and CA, so the device can reach it directly. Retained, and `{}` is
+    // meaningful — a block left out clears that service on the device. Only
+    // which blocks are present is logged; the CA would swamp the log.
+    publishDeviceServicesConfig(type, hostname, services) {
         if (!this.connected) {
-            console.warn('MQTT not connected, cannot publish Tiercel services config');
+            console.warn(`MQTT not connected, cannot publish ${type} services config`);
             return false;
         }
-        if (!hostname) return false;
+        if (!type || !hostname) return false;
 
-        const topic = `${MQTT_ROOT}/config/tiercel/${hostname}/services`;
+        const topic = `${MQTT_ROOT}/config/${type}/${hostname}/services`;
         const blocks = Object.keys(services || {});
-        console.log(`Publishing Tiercel services config to ${topic} (${blocks.length ? blocks.join(', ') : 'none'})`);
+        console.log(`Publishing ${type} services config to ${topic} (${blocks.length ? blocks.join(', ') : 'none'})`);
         this.client.publish(topic, JSON.stringify(services || {}), { qos: 1, retain: true });
         return true;
     }

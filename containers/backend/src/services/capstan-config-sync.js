@@ -70,16 +70,16 @@
  * TIERCEL is the touch-first successor to Capstan and takes the same two
  * payloads, from the same config.controls / config.alarms on its module
  * record, on local/config/tiercel/<hostname>/controls and the shared panel
- * alarms topic. It also takes a third:
+ * alarms topic. Tiercel and FIRESIDE also take a services payload:
  *
- *     local/config/tiercel/<hostname>/services
+ *     local/config/<tiercel|fireside>/<hostname>/services
  *     { "peregrine": { "url": "https://peregrine.local", "ca": "-----BEGIN…" } }
  *
  * built from the same Peregrine URL and CA this backend uses for Overlook's
- * chat (see peregrine-voice.js). The dial then talks to Peregrine directly;
+ * chat (see peregrine-voice.js). The device then talks to Peregrine directly;
  * Headwaters only brokers the configuration. It is republished on every
  * sync, not just at discovery, so changing Peregrine's address or CA in
- * Settings reaches every dial the next time module config is saved — and
+ * Settings reaches every device the next time module config is saved — and
  * immediately, because saving the Peregrine settings runs a sync too. The `playbill` block
  * is omitted, which the dial reads as "follow the first Playbill online".
  * See docs/mqtt.md in TrailCurrentTiercel.
@@ -125,11 +125,18 @@ const SENSORS_PER_BOARD = { picket: 12, switchback: 8 };
 // above (TIERCEL_MAX_CONTROLS / TIERCEL_MAX_ALARMS match Capstan's).
 const PANEL_TYPES = ['capstan', 'tiercel'];
 
+// Module types that talk to Peregrine directly and take a services payload on
+// local/config/<type>/<hostname>/services. Separate from PANEL_TYPES: Fireside
+// takes services but not the controls/alarms payloads above.
+const SERVICE_TYPES = ['tiercel', 'fireside'];
+
 // Hostname -> module type, for every device we have published a retained
 // payload for. A panel that is deleted has to have its retained topics
 // cleared, or the display keeps loading a control list nobody can see in the
 // PWA any more — and the type says which topics those were.
 const publishedHostnames = new Map();
+// Same bookkeeping for the services topic.
+const publishedServiceHostnames = new Map();
 
 function isSwitchback(type) {
     return type === 'switchback' || type === 'switchback_relay';
@@ -239,8 +246,8 @@ function resolveAlarm(modules, alarm, sensorLabels) {
 
 /**
  * Publish each Capstan's and Tiercel's resolved configuration, retained: its
- * device controls on one topic, its alarms on a sibling and, for a Tiercel,
- * its services on a third.
+ * device controls on one topic and its alarms on a sibling. Then publish the
+ * services payload (Peregrine's URL and CA) to every Tiercel and Fireside.
  *
  * Call this after syncPdmChannelsToLights and syncSwitchbackChannelsToLights,
  * never before: control labels and icons are read back out of the lights
@@ -250,6 +257,8 @@ async function syncCapstanConfig(db, mqttService) {
     const systemConfig = await db.collection('system_config').findOne({ _id: 'main' });
     const modules = systemConfig?.mcu_modules || [];
     const panels = modules.filter(m => PANEL_TYPES.includes(m.type));
+
+    syncServices(systemConfig, modules, mqttService);
 
     if (panels.length === 0 && publishedHostnames.size === 0) return;
 
@@ -264,9 +273,6 @@ async function syncCapstanConfig(db, mqttService) {
             sensorLabels.set(k, entry.label);
         }
     }
-
-    // Same for every Tiercel in the rig: there is one Peregrine.
-    const peregrine = panels.some(m => m.type === 'tiercel') ? voiceServiceOf(systemConfig) : null;
 
     const seen = new Set();
 
@@ -304,17 +310,9 @@ async function syncCapstanConfig(db, mqttService) {
             if (resolved) alarms.push(resolved);
         }
 
-        // An empty object clears every service on the dial, which is what a
-        // disabled Tiercel or a rig without Peregrine set up should see.
-        const services = {};
-        if (panel.type === 'tiercel' && enabled && peregrine) services.peregrine = peregrine;
-
         if (mqttService) {
             mqttService.publishPanelControlConfig(panel.type, panel.hostname, controls);
             mqttService.publishPanelAlarmConfig(panel.hostname, alarms);
-            if (panel.type === 'tiercel') {
-                mqttService.publishTiercelServicesConfig(panel.hostname, services);
-            }
         }
         publishedHostnames.set(panel.hostname, panel.type);
 
@@ -323,9 +321,6 @@ async function syncCapstanConfig(db, mqttService) {
         const dropped = droppedControls + droppedAlarms;
         console.log(`[Panel Sync] ${panel.type} ${panel.hostname}: ${controls.length} control(s), ` +
                     `${alarms.length} alarm(s)` +
-                    (panel.type === 'tiercel'
-                        ? `, peregrine ${services.peregrine ? services.peregrine.url + (services.peregrine.ca ? ' (CA)' : ' (no CA)') : 'not set up'}`
-                        : '') +
                     (dropped > 0 ? `, ${dropped} unresolved reference(s) dropped` : ''));
     }
 
@@ -343,12 +338,57 @@ function clearPanel(mqttService, hostname, type) {
     if (!mqttService) return;
     mqttService.publishPanelControlConfig(type, hostname, []);
     mqttService.publishPanelAlarmConfig(hostname, []);
-    if (type === 'tiercel') mqttService.publishTiercelServicesConfig(hostname, {});
+}
+
+/**
+ * Publish the services payload to every Tiercel and Fireside, retained:
+ *
+ *     local/config/<type>/<hostname>/services
+ *     { "peregrine": { "url": "https://peregrine.local", "ca": "-----BEGIN…" } }
+ *
+ * The same Peregrine URL and CA this backend uses for Overlook's chat, so
+ * each device talks to Peregrine directly. `{}` — Peregrine disabled, or the
+ * device disabled — clears it on the device. Runs on every sync, so a changed
+ * URL or CA reaches every device without touching it.
+ */
+function syncServices(systemConfig, modules, mqttService) {
+    const devices = modules.filter(m => SERVICE_TYPES.includes(m.type) && m.hostname);
+    if (devices.length === 0 && publishedServiceHostnames.size === 0) return;
+
+    // One Peregrine per rig, so one block for every device.
+    const peregrine = devices.length ? voiceServiceOf(systemConfig) : null;
+    const seen = new Set();
+
+    for (const dev of devices) {
+        seen.add(dev.hostname);
+        const prevType = publishedServiceHostnames.get(dev.hostname);
+        if (prevType && prevType !== dev.type && mqttService) {
+            mqttService.publishDeviceServicesConfig(prevType, dev.hostname, {});
+        }
+
+        const services = {};
+        if (dev.enabled && peregrine) services.peregrine = peregrine;
+        if (mqttService) mqttService.publishDeviceServicesConfig(dev.type, dev.hostname, services);
+        publishedServiceHostnames.set(dev.hostname, dev.type);
+
+        console.log(`[Services Sync] ${dev.type} ${dev.hostname}: peregrine ` +
+                    (services.peregrine
+                        ? services.peregrine.url + (services.peregrine.ca ? ' (CA)' : ' (no CA)')
+                        : 'not set up'));
+    }
+
+    for (const [hostname, type] of [...publishedServiceHostnames]) {
+        if (seen.has(hostname)) continue;
+        if (mqttService) mqttService.publishDeviceServicesConfig(type, hostname, {});
+        publishedServiceHostnames.delete(hostname);
+        console.log(`[Services Sync] ${type} ${hostname}: removed, cleared retained services`);
+    }
 }
 
 module.exports = {
     syncCapstanConfig,
     PANEL_TYPES,
+    SERVICE_TYPES,
     resolveControlId,
     resolveAlarm,
     MAX_CONTROLS,

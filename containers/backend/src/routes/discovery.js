@@ -363,9 +363,10 @@ module.exports = (db) => {
                 // Tiercel's resolved control list has to be recomputed.
                 // Confirming a Capstan or Tiercel itself also lands here, with
                 // no controls yet, which publishes the empty retained payloads
-                // the display expects — and, for a Tiercel, Peregrine's URL
-                // and CA, so voice works without setup on the device.
-                if (syncedAny || found.type === 'capstan' || found.type === 'tiercel') {
+                // the display expects — and, for a Tiercel or Fireside,
+                // Peregrine's URL and CA, so voice works without setup on
+                // the device.
+                if (syncedAny || ['capstan', 'tiercel', 'fireside'].includes(found.type)) {
                     await syncCapstanConfig(db, mqttService);
                 }
             } catch (syncErr) {
