@@ -95,10 +95,6 @@ module.exports = (db) => {
             // Remove encrypted fields from response
             delete data.wifi_password_encrypted;
             delete data.wifi_password_iv;
-            // Peregrine's voice token is write-only; /api/peregrine/config
-            // reports whether one is set.
-            delete data.peregrine_voice_token_encrypted;
-            delete data.peregrine_voice_token_iv;
             delete data.cloud_mqtt_password_encrypted;
             delete data.cloud_mqtt_password_iv;
             delete data.cloud_api_key_encrypted;

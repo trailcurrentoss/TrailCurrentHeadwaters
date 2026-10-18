@@ -23,7 +23,6 @@ export const voiceGroup = {
     },
     searchIndex: [
         { label: 'Peregrine Connection', kw: 'peregrine voice assistant url lan chat board',                anchor: 'settings-peregrine-url' },
-        { label: 'Peregrine Voice Token', kw: 'peregrine voice token tiercel terminal bearer',                anchor: 'settings-peregrine-voice-token' },
         { label: 'CA Certificate',       kw: 'certificate ca ssl trust mqtt https pem mosquitto home assistant', anchor: 'ca-cert-content' },
     ],
 
@@ -33,7 +32,7 @@ export const voiceGroup = {
             <div class="card settings-item-vertical">
                 <div class="settings-item-header">
                     <span class="settings-label">Peregrine</span>
-                    <p class="settings-description">Connect to a Peregrine board on the LAN for on-device voice / chat assistance. The backend proxies chat requests, so the Peregrine CA only needs to be installed here — phones and browsers don't need to trust it themselves.</p>
+                    <p class="settings-description">Connect to a Peregrine board on the LAN for on-device voice / chat assistance. The backend proxies chat requests, so the Peregrine CA only needs to be installed here — phones and browsers don't need to trust it themselves. Devices that talk to Peregrine directly, such as Tiercel, are sent this URL and CA automatically whenever module or Peregrine settings are saved.</p>
                 </div>
                 <div class="cloud-config-container">
                     <div class="cloud-config-field">
@@ -58,22 +57,6 @@ export const voiceGroup = {
                                 Remove
                             </button>
                         </div>
-                    </div>
-                    <div class="cloud-config-field">
-                        <label class="password-label" for="settings-peregrine-voice-token">Voice Token</label>
-                        <p class="settings-description" style="margin-top: 0;">Peregrine's <code>PEREGRINE_VOICE_TOKEN</code>. Voice terminals such as Tiercel are sent this token and Peregrine's voice address automatically when they are discovered, and again whenever module or Peregrine settings are saved, so nothing is entered on the device.</p>
-                        <input type="password" id="settings-peregrine-voice-token" class="password-input"
-                               autocomplete="off" spellcheck="false" placeholder="Not set">
-                        <div id="peregrine-voice-status" class="peregrine-ca-detail"></div>
-                        <button class="settings-action-btn settings-action-btn-danger"
-                                id="peregrine-clear-voice-token-btn" type="button" style="display: none;">
-                            Clear Token
-                        </button>
-                    </div>
-                    <div class="cloud-config-field">
-                        <label class="password-label" for="settings-peregrine-voice-port">Voice Port</label>
-                        <input type="number" id="settings-peregrine-voice-port" class="password-input"
-                               min="1" max="65535" placeholder="8081" value="">
                     </div>
                     <div id="peregrine-config-message" class="password-message hidden"></div>
                     <button class="password-submit-btn" id="save-peregrine-config-btn">
@@ -133,31 +116,7 @@ function initPeregrineCard() {
     } else if (urlInput) {
         urlInput.value = 'https://peregrine.local';
     }
-    const portInput = document.getElementById('settings-peregrine-voice-port');
-    if (portInput) portInput.value = (peregrineConfig && peregrineConfig.voice_port) || 8081;
-    renderPeregrineVoiceStatus();
     renderPeregrineCaStatus();
-}
-
-function renderPeregrineVoiceStatus() {
-    const tokenInput = document.getElementById('settings-peregrine-voice-token');
-    const statusEl = document.getElementById('peregrine-voice-status');
-    const clearBtn = document.getElementById('peregrine-clear-voice-token-btn');
-    const set = !!(peregrineConfig && peregrineConfig.voice_token_set);
-    // The token is write-only: the backend never returns it, so the field
-    // stays empty and only says whether one is stored.
-    if (tokenInput) {
-        tokenInput.value = '';
-        tokenInput.placeholder = set ? 'Saved — type to replace' : 'Not set';
-    }
-    if (clearBtn) clearBtn.style.display = set ? '' : 'none';
-    if (!statusEl) return;
-    const voiceUrl = peregrineConfig && peregrineConfig.voice_url;
-    if (set && voiceUrl) {
-        statusEl.innerHTML = `Tiercels use <code>${escapeHtmlSettings(voiceUrl)}</code>`;
-    } else {
-        statusEl.textContent = 'Without a token, Tiercels show "Peregrine is not set up".';
-    }
 }
 
 function renderPeregrineCaStatus() {
@@ -195,29 +154,12 @@ function showPeregrineMsg(text, type) {
 async function handleSavePeregrineConfig() {
     const urlInput = document.getElementById('settings-peregrine-url');
     const url = (urlInput?.value || '').trim();
-    const body = { peregrine_url: url };
-    const token = (document.getElementById('settings-peregrine-voice-token')?.value || '').trim();
-    if (token) body.voice_token = token;
-    const port = (document.getElementById('settings-peregrine-voice-port')?.value || '').trim();
-    if (port) body.voice_port = Number(port);
     try {
-        peregrineConfig = await API.setPeregrineConfig(body);
-        showPeregrineMsg('Saved. Tiercels have been sent the update.', 'success');
-        renderPeregrineVoiceStatus();
+        peregrineConfig = await API.setPeregrineConfig({ peregrine_url: url });
+        showPeregrineMsg('Saved.', 'success');
         renderPeregrineCaStatus();
     } catch (err) {
         showPeregrineMsg(err.message || 'Save failed', 'error');
-    }
-}
-
-async function handleClearPeregrineVoiceToken() {
-    if (!confirm('Clear the Peregrine voice token? Tiercels will stop being able to use voice.')) return;
-    try {
-        peregrineConfig = await API.setPeregrineConfig({ voice_token: '' });
-        renderPeregrineVoiceStatus();
-        showPeregrineMsg('Voice token cleared.', 'success');
-    } catch (err) {
-        showPeregrineMsg(err.message || 'Clear failed', 'error');
     }
 }
 
@@ -260,9 +202,6 @@ function wireListeners() {
             peregrineFileInput.value = '';
         });
     }
-    const clearTokenBtn = document.getElementById('peregrine-clear-voice-token-btn');
-    if (clearTokenBtn) clearTokenBtn.addEventListener('click', handleClearPeregrineVoiceToken);
-
     const peregrineRemoveBtn = document.getElementById('peregrine-remove-ca-btn');
     if (peregrineRemoveBtn) peregrineRemoveBtn.addEventListener('click', handleRemovePeregrineCa);
 

@@ -73,13 +73,14 @@
  * alarms topic. It also takes a third:
  *
  *     local/config/tiercel/<hostname>/services
- *     { "peregrine": { "url": "http://peregrine.local:8081", "token": "…" } }
+ *     { "peregrine": { "url": "https://peregrine.local", "ca": "-----BEGIN…" } }
  *
- * built from the rig-wide Peregrine settings (see peregrine-voice.js), so a
- * dial is never configured by hand. It is republished on every sync, not
- * just at discovery, so changing Peregrine's address or token in Settings
- * reaches every dial the next time module config is saved — and immediately,
- * because saving the Peregrine settings runs a sync too. The `playbill` block
+ * built from the same Peregrine URL and CA this backend uses for Overlook's
+ * chat (see peregrine-voice.js). The dial then talks to Peregrine directly;
+ * Headwaters only brokers the configuration. It is republished on every
+ * sync, not just at discovery, so changing Peregrine's address or CA in
+ * Settings reaches every dial the next time module config is saved — and
+ * immediately, because saving the Peregrine settings runs a sync too. The `playbill` block
  * is omitted, which the dial reads as "follow the first Playbill online".
  * See docs/mqtt.md in TrailCurrentTiercel.
  */
@@ -322,7 +323,9 @@ async function syncCapstanConfig(db, mqttService) {
         const dropped = droppedControls + droppedAlarms;
         console.log(`[Panel Sync] ${panel.type} ${panel.hostname}: ${controls.length} control(s), ` +
                     `${alarms.length} alarm(s)` +
-                    (panel.type === 'tiercel' ? `, peregrine ${services.peregrine ? 'set' : 'not set up'}` : '') +
+                    (panel.type === 'tiercel'
+                        ? `, peregrine ${services.peregrine ? services.peregrine.url + (services.peregrine.ca ? ' (CA)' : ' (no CA)') : 'not set up'}`
+                        : '') +
                     (dropped > 0 ? `, ${dropped} unresolved reference(s) dropped` : ''));
     }
 

@@ -14,11 +14,21 @@ const { URL } = require('url');
 
 const peregrineCa = require('../services/peregrine-ca');
 const mdns = require('../services/mdns-resolver');
-const peregrineVoice = require('../services/peregrine-voice');
+const { DEFAULT_URL } = require('../services/peregrine-voice');
 const { syncCapstanConfig } = require('../services/capstan-config-sync');
-const { encrypt } = require('../utils/crypto.js');
 
-const DEFAULT_URL = peregrineVoice.DEFAULT_URL;
+// Devices such as Tiercel talk to Peregrine directly, using the same URL and
+// CA this backend uses (see services/peregrine-voice.js). Every change here
+// is pushed to them straight away. Best-effort: the setting is already
+// saved, and the next module-config save, config request or restart
+// republishes it anyway.
+async function pushToDevices(db) {
+    try {
+        await syncCapstanConfig(db, require('../mqtt'));
+    } catch (err) {
+        console.error('[peregrine] Device config push failed:', err.message);
+    }
+}
 
 function getConfigDefaults() {
     return {
@@ -35,23 +45,7 @@ function publicConfig(doc) {
         peregrine_enabled: enabled,
         peregrine_url:     url,
         ca_status:         peregrineCa.getStatus(),
-        // What voice terminals (Tiercel) are handed. The token itself is
-        // write-only from the PWA's point of view: we say whether one is set.
-        voice_url:         peregrineVoice.voiceUrlOf(doc),
-        voice_port:        peregrineVoice.voicePortOf(doc),
-        voice_token_set:   peregrineVoice.hasVoiceToken(doc),
     };
-}
-
-// Push the current Peregrine details to every Tiercel. Best-effort: the
-// settings are already saved, and the next module-config save, config
-// request or restart republishes them anyway.
-async function pushToVoiceTerminals(db) {
-    try {
-        await syncCapstanConfig(db, require('../mqtt'));
-    } catch (err) {
-        console.error('[peregrine] Tiercel config push failed:', err.message);
-    }
 }
 
 function isValidUrl(s) {
@@ -81,12 +75,7 @@ module.exports = (db) => {
     });
 
     // PUT /api/peregrine/config
-    //   body: { peregrine_url?, peregrine_enabled?, voice_token?, voice_port? }
-    //
-    // voice_token is Peregrine's PEREGRINE_VOICE_TOKEN. Omit it to keep the
-    // stored one; send '' to clear it. It is stored encrypted and handed to
-    // Tiercels on their services topic, so it is entered here once rather
-    // than on each device.
+    //   body: { peregrine_url?, peregrine_enabled? }
     router.put('/config', async (req, res) => {
         try {
             const updates = {};
@@ -103,44 +92,12 @@ module.exports = (db) => {
                 }
                 updates.peregrine_enabled = req.body.peregrine_enabled;
             }
-            const unset = {};
-            if (req.body.voice_token !== undefined) {
-                if (typeof req.body.voice_token !== 'string') {
-                    return res.status(400).json({ error: 'voice_token must be a string' });
-                }
-                const token = req.body.voice_token.trim();
-                // Tiercel holds it in a 129-byte NVS field, and Peregrine's
-                // documented token is 64 hex characters.
-                if (token.length > 128) {
-                    return res.status(400).json({ error: 'voice_token must be at most 128 characters' });
-                }
-                if (/[\s"\\]/.test(token)) {
-                    return res.status(400).json({ error: 'voice_token must not contain spaces, quotes or backslashes' });
-                }
-                if (token) {
-                    const { encrypted, iv } = encrypt(token);
-                    updates.peregrine_voice_token_encrypted = encrypted;
-                    updates.peregrine_voice_token_iv = iv;
-                } else {
-                    unset.peregrine_voice_token_encrypted = '';
-                    unset.peregrine_voice_token_iv = '';
-                }
-            }
-            if (req.body.voice_port !== undefined) {
-                const port = Number(req.body.voice_port);
-                if (!Number.isInteger(port) || port < 1 || port > 65535) {
-                    return res.status(400).json({ error: 'voice_port must be a port number between 1 and 65535' });
-                }
-                updates.peregrine_voice_port = port;
-            }
-            if (Object.keys(updates).length === 0 && Object.keys(unset).length === 0) {
+            if (Object.keys(updates).length === 0) {
                 return res.status(400).json({ error: 'No valid fields to update' });
             }
             updates.updated_at = new Date();
-            const op = { $set: updates };
-            if (Object.keys(unset).length) op.$unset = unset;
-            await systemConfig.updateOne({ _id: 'main' }, op, { upsert: true });
-            await pushToVoiceTerminals(db);
+            await systemConfig.updateOne({ _id: 'main' }, { $set: updates }, { upsert: true });
+            await pushToDevices(db);
             res.json(publicConfig(await getDoc()));
         } catch (err) {
             console.error('[peregrine] config PUT error:', err);
@@ -165,6 +122,7 @@ module.exports = (db) => {
                 { $set: { peregrine_ca_pem: pem.replace(/\r\n/g, '\n').trim() + '\n', updated_at: new Date() } },
                 { upsert: true }
             );
+            await pushToDevices(db);
             res.json({ ok: true, ca_status: { installed: true, ...info } });
         } catch (err) {
             console.error('[peregrine] CA install error:', err);
@@ -181,6 +139,7 @@ module.exports = (db) => {
                 { $set: { peregrine_ca_pem: '', updated_at: new Date() } },
                 { upsert: true }
             );
+            await pushToDevices(db);
             res.json({ ok: true, ca_status: peregrineCa.getStatus() });
         } catch (err) {
             console.error('[peregrine] CA uninstall error:', err);

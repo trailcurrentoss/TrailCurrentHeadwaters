@@ -1364,10 +1364,10 @@ class MqttService {
         return true;
     }
 
-    // Publish one Tiercel's services block: where Peregrine's voice endpoint
-    // is and the token it checks. Retained, and `{}` is meaningful — a block
-    // left out clears that service on the dial. The payload carries a secret,
-    // so only which blocks are present is logged, never the payload itself.
+    // Publish one Tiercel's services block: Peregrine's URL and CA, so the
+    // dial can reach it directly. Retained, and `{}` is meaningful — a block
+    // left out clears that service on the dial. Only which blocks are present
+    // is logged; the CA would swamp the log.
     publishTiercelServicesConfig(hostname, services) {
         if (!this.connected) {
             console.warn('MQTT not connected, cannot publish Tiercel services config');
