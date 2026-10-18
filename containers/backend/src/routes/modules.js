@@ -29,6 +29,9 @@ const MCU_MODULES = [
     // Without this entry the backend rejects the device and it never reaches
     // Overlook's discoverable list, however correctly it advertises itself.
     { id: 'capstan', name: 'Capstan', wireless: true },
+    // Tiercel is the touch-first successor to Capstan. Same onboarding path:
+    // Wi-Fi, mDNS advertise, then the /discovery/confirm handshake.
+    { id: 'tiercel', name: 'Tiercel', wireless: true },
     { id: 'playbill', name: 'Playbill', wireless: true, linux: true }
 ];
 

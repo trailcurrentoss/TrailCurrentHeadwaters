@@ -37,6 +37,11 @@ let typeChangeListener = null;
 // all three move together or not at all.
 const MAX_CAPSTAN_CONTROLS = 8;
 
+// Module types that get the device-control and alarm editor. Tiercel takes
+// the same payloads as Capstan, with the same limits (TIERCEL_MAX_CONTROLS /
+// TIERCEL_MAX_ALARMS), and matches PANEL_TYPES in capstan-config-sync.js.
+const PANEL_TYPES = ['capstan', 'tiercel'];
+
 // Every card that owns an icon — PDM/relay channel rows and Capstan alarm
 // rows — exposes its button under one of these, so the icon picker can be
 // pointed at any of them without knowing which kind it is.
@@ -869,8 +874,8 @@ export const networkGroup = {
         } else if (module.type === 'borealis') {
             this.togglePdmChannelsUI('borealis');
             this.populateBorealisFields(module.config || {});
-        } else if (module.type === 'capstan') {
-            this.togglePdmChannelsUI('capstan');
+        } else if (PANEL_TYPES.includes(module.type)) {
+            this.togglePdmChannelsUI(module.type);
             this.renderCapstanControls(module.config?.controls || []);
             this.renderCapstanAlarms(module.config?.alarms || []);
         } else {
@@ -973,7 +978,7 @@ export const networkGroup = {
         } else if (type === 'borealis') {
             config = this.collectBorealisData();
             if (!config) return; // validation failed
-        } else if (type === 'capstan') {
+        } else if (PANEL_TYPES.includes(type)) {
             config = {
                 ...(editingModule?.config || {}),
                 controls: this.collectCapstanControls(),
@@ -1218,7 +1223,7 @@ export const networkGroup = {
                 this.renderChannelRows(defaults, moduleType);
             }
         } else {
-            const hasOwnUI = moduleType === 'borealis' || moduleType === 'capstan';
+            const hasOwnUI = moduleType === 'borealis' || PANEL_TYPES.includes(moduleType);
             jsonGroup.style.display = hasOwnUI ? 'none' : 'block';
             channelsConfig.style.display = 'none';
         }
@@ -1227,11 +1232,12 @@ export const networkGroup = {
         document.getElementById('borealis-config').style.display =
             moduleType === 'borealis' ? 'block' : 'none';
 
-        // Capstan device controls
+        // Capstan / Tiercel device controls and alarms
         const capstanConfig = document.getElementById('capstan-config');
         if (capstanConfig) {
-            capstanConfig.style.display = moduleType === 'capstan' ? 'block' : 'none';
-            if (moduleType === 'capstan' && !capstanConfig._bound) {
+            const isPanel = PANEL_TYPES.includes(moduleType);
+            capstanConfig.style.display = isPanel ? 'block' : 'none';
+            if (isPanel && !capstanConfig._bound) {
                 this.bindCapstanControlListeners();
                 this.bindCapstanAlarmListeners();
                 capstanConfig._bound = true;
@@ -1539,7 +1545,7 @@ export const networkGroup = {
         if (haveSources === 0) {
             hint.textContent = 'Add and enable a Torrent or Switchback module before configuring controls.';
         } else if (count >= MAX_CAPSTAN_CONTROLS) {
-            hint.textContent = `A Capstan holds ${MAX_CAPSTAN_CONTROLS} controls. Remove one to add another.`;
+            hint.textContent = `This dial holds ${MAX_CAPSTAN_CONTROLS} controls. Remove one to add another.`;
         } else {
             hint.textContent = `${count} of ${MAX_CAPSTAN_CONTROLS} controls used.`;
         }
@@ -1761,7 +1767,7 @@ export const networkGroup = {
         if (haveBoards === 0) {
             hint.textContent = 'Add and enable a Picket or Switchback module before configuring alarms.';
         } else if (count >= MAX_CAPSTAN_ALARMS) {
-            hint.textContent = `A Capstan holds ${MAX_CAPSTAN_ALARMS} alarms. Remove one to add another.`;
+            hint.textContent = `This dial holds ${MAX_CAPSTAN_ALARMS} alarms. Remove one to add another.`;
         } else {
             hint.textContent = `${count} of ${MAX_CAPSTAN_ALARMS} alarms used.`;
         }

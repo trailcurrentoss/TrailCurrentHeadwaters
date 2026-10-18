@@ -8,7 +8,7 @@ const { syncSwitchbackChannelsToLights } = require('../services/switchback-chann
 // capstan_mode_t in the firmware.
 const VALID_MODES = ['camping', 'driving', 'storage'];
 
-const { syncCapstanConfig, MAX_CONTROLS: CAPSTAN_MAX_CONTROLS, MAX_ALARMS: CAPSTAN_MAX_ALARMS, ALARM_VERDICTS: CAPSTAN_ALARM_VERDICTS, SENSORS_PER_BOARD: CAPSTAN_SENSORS_PER_BOARD } = require('../services/capstan-config-sync.js');
+const { syncCapstanConfig, MAX_CONTROLS: CAPSTAN_MAX_CONTROLS, MAX_ALARMS: CAPSTAN_MAX_ALARMS, ALARM_VERDICTS: CAPSTAN_ALARM_VERDICTS, SENSORS_PER_BOARD: CAPSTAN_SENSORS_PER_BOARD, PANEL_TYPES: CAPSTAN_PANEL_TYPES } = require('../services/capstan-config-sync.js');
 const { buildConfigSnapshot } = require('../services/config-snapshot.js');
 
 module.exports = (db) => {
@@ -95,6 +95,10 @@ module.exports = (db) => {
             // Remove encrypted fields from response
             delete data.wifi_password_encrypted;
             delete data.wifi_password_iv;
+            // Peregrine's voice token is write-only; /api/peregrine/config
+            // reports whether one is set.
+            delete data.peregrine_voice_token_encrypted;
+            delete data.peregrine_voice_token_iv;
             delete data.cloud_mqtt_password_encrypted;
             delete data.cloud_mqtt_password_iv;
             delete data.cloud_api_key_encrypted;
@@ -377,62 +381,65 @@ module.exports = (db) => {
                     if (typeof mod.type !== 'string' || typeof mod.name !== 'string' || typeof mod.hostname !== 'string') {
                         return res.status(400).json({ error: 'Module type, name, and hostname must be strings' });
                     }
-                    // Capstan device controls are references, not resolved
-                    // entries — { source, hostname, channel }. Validated here
-                    // so a malformed list is rejected loudly instead of being
-                    // silently dropped when capstan-config-sync resolves it.
-                    if (mod.type === 'capstan' && mod.config && mod.config.controls !== undefined) {
+                    // Capstan and Tiercel device controls are references, not
+                    // resolved entries — { source, hostname, channel }.
+                    // Validated here so a malformed list is rejected loudly
+                    // instead of being silently dropped when
+                    // capstan-config-sync resolves it.
+                    const isPanel = CAPSTAN_PANEL_TYPES.includes(mod.type);
+                    const panelName = mod.type === 'tiercel' ? 'Tiercel' : 'Capstan';
+                    if (isPanel && mod.config && mod.config.controls !== undefined) {
                         const controls = mod.config.controls;
                         if (!Array.isArray(controls)) {
-                            return res.status(400).json({ error: 'Capstan config.controls must be an array' });
+                            return res.status(400).json({ error: `${panelName} config.controls must be an array` });
                         }
                         if (controls.length > CAPSTAN_MAX_CONTROLS) {
-                            return res.status(400).json({ error: `A Capstan supports at most ${CAPSTAN_MAX_CONTROLS} device controls` });
+                            return res.status(400).json({ error: `A ${panelName} supports at most ${CAPSTAN_MAX_CONTROLS} device controls` });
                         }
                         for (const c of controls) {
                             if (!c || (c.source !== 'torrent' && c.source !== 'switchback')) {
-                                return res.status(400).json({ error: "Each Capstan control needs source 'torrent' or 'switchback'" });
+                                return res.status(400).json({ error: `Each ${panelName} control needs source 'torrent' or 'switchback'` });
                             }
                             if (typeof c.hostname !== 'string' || !c.hostname) {
-                                return res.status(400).json({ error: 'Each Capstan control needs the hostname of the module it drives' });
+                                return res.status(400).json({ error: `Each ${panelName} control needs the hostname of the module it drives` });
                             }
                             if (!Number.isInteger(c.channel) || c.channel < 1 || c.channel > 8) {
-                                return res.status(400).json({ error: 'Each Capstan control needs a channel between 1 and 8' });
+                                return res.status(400).json({ error: `Each ${panelName} control needs a channel between 1 and 8` });
                             }
                         }
                     }
                     // Capstan alarms. Same reference shape as the controls,
                     // plus the three things no rig-wide config carries for a
                     // sensor: a polarity, an icon and a per-dial label.
-                    if (mod.type === 'capstan' && mod.config && mod.config.alarms !== undefined) {
+                    if (isPanel && mod.config && mod.config.alarms !== undefined) {
                         const alarms = mod.config.alarms;
                         if (!Array.isArray(alarms)) {
-                            return res.status(400).json({ error: 'Capstan config.alarms must be an array' });
+                            return res.status(400).json({ error: `${panelName} config.alarms must be an array` });
                         }
                         if (alarms.length > CAPSTAN_MAX_ALARMS) {
-                            return res.status(400).json({ error: `A Capstan supports at most ${CAPSTAN_MAX_ALARMS} alarms` });
+                            return res.status(400).json({ error: `A ${panelName} supports at most ${CAPSTAN_MAX_ALARMS} alarms` });
                         }
                         for (const a of alarms) {
                             const limit = a && CAPSTAN_SENSORS_PER_BOARD[a.source];
                             if (!limit) {
-                                return res.status(400).json({ error: "Each Capstan alarm needs source 'picket' or 'switchback'" });
+                                return res.status(400).json({ error: `Each ${panelName} alarm needs source 'picket' or 'switchback'` });
                             }
                             if (typeof a.hostname !== 'string' || !a.hostname) {
-                                return res.status(400).json({ error: 'Each Capstan alarm needs the hostname of the board it watches' });
+                                return res.status(400).json({ error: `Each ${panelName} alarm needs the hostname of the board it watches` });
                             }
                             if (!Number.isInteger(a.sensor) || a.sensor < 1 || a.sensor > limit) {
                                 return res.status(400).json({ error: `Each ${a.source} alarm needs a sensor between 1 and ${limit}` });
                             }
                             if (a.modes !== undefined) {
                                 if (typeof a.modes !== 'object' || a.modes === null) {
-                                    return res.status(400).json({ error: 'Capstan alarm modes must be an object keyed by rig mode' });
+                                    return res.status(400).json({ error: `${panelName} alarm modes must be an object keyed by rig mode` });
                                 }
                                 for (const [m, verdict] of Object.entries(a.modes)) {
                                     if (!VALID_MODES.includes(m)) {
-                                        return res.status(400).json({ error: `Unknown rig mode '${m}' in Capstan alarm` });
+                                        return res.status(400).json({ error: `Unknown rig mode '${m}' in ${panelName} alarm` });
                                     }
                                     if (!CAPSTAN_ALARM_VERDICTS.includes(verdict)) {
-                                        return res.status(400).json({ error: `Capstan alarm mode '${m}' must be one of: ${CAPSTAN_ALARM_VERDICTS.join(', ')}` });
+                                        return res.status(400).json({ error: `${panelName} alarm mode '${m}' must be one of: ${CAPSTAN_ALARM_VERDICTS.join(', ')}` });
                                     }
                                 }
                             }

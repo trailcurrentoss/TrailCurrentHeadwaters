@@ -1298,7 +1298,7 @@ class MqttService {
     // Handle config request from local service (e.g. voice assistant startup)
     // Re-publishes current PDM and relay channel configs as retained messages
     async handleConfigRequest() {
-        console.log('[Config Request] Re-publishing PDM, relay, Capstan and mode configs');
+        console.log('[Config Request] Re-publishing PDM, relay, Capstan/Tiercel and mode configs');
         try {
             const { syncPdmChannelsToLights } = require('./services/pdm-channel-sync');
             const { syncSwitchbackChannelsToLights } = require('./services/switchback-channel-sync');
@@ -1342,24 +1342,43 @@ class MqttService {
         return true;
     }
 
-    // Publish one Capstan's resolved device-control list.
+    // Publish one panel's resolved device-control list, under its module type
+    // (local/config/capstan/... or local/config/tiercel/...).
     //
     // Retained and per device, because two dials in the same rig carry
     // different control sets. The display stores what arrives here in NVS, so
     // an empty list is a meaningful payload — it is how a deleted or disabled
-    // Capstan is told to forget its controls — and the publish must happen
+    // panel is told to forget its controls — and the publish must happen
     // even when `controls` is empty.
-    publishCapstanControlConfig(hostname, controls) {
+    publishPanelControlConfig(type, hostname, controls) {
         if (!this.connected) {
-            console.warn('MQTT not connected, cannot publish Capstan control config');
+            console.warn(`MQTT not connected, cannot publish ${type} control config`);
+            return false;
+        }
+        if (!type || !hostname) return false;
+
+        const topic = `${MQTT_ROOT}/config/${type}/${hostname}/controls`;
+        const payload = { controls };
+        console.log(`Publishing ${type} control config to ${topic} (${controls.length} controls)`);
+        this.client.publish(topic, JSON.stringify(payload), { qos: 1, retain: true });
+        return true;
+    }
+
+    // Publish one Tiercel's services block: where Peregrine's voice endpoint
+    // is and the token it checks. Retained, and `{}` is meaningful — a block
+    // left out clears that service on the dial. The payload carries a secret,
+    // so only which blocks are present is logged, never the payload itself.
+    publishTiercelServicesConfig(hostname, services) {
+        if (!this.connected) {
+            console.warn('MQTT not connected, cannot publish Tiercel services config');
             return false;
         }
         if (!hostname) return false;
 
-        const topic = `${MQTT_ROOT}/config/capstan/${hostname}/controls`;
-        const payload = { controls };
-        console.log(`Publishing Capstan control config to ${topic} (${controls.length} controls)`);
-        this.client.publish(topic, JSON.stringify(payload), { qos: 1, retain: true });
+        const topic = `${MQTT_ROOT}/config/tiercel/${hostname}/services`;
+        const blocks = Object.keys(services || {});
+        console.log(`Publishing Tiercel services config to ${topic} (${blocks.length ? blocks.join(', ') : 'none'})`);
+        this.client.publish(topic, JSON.stringify(services || {}), { qos: 1, retain: true });
         return true;
     }
 

@@ -65,8 +65,26 @@
  * PER PANEL, NOT PER CAPSTAN. The alarms topic is keyed on `panel` rather
  * than `capstan` because Milepost and Fireside are the same kind of consumer
  * and should adopt this contract rather than growing their own. The controls
- * topic is still capstan-scoped and should migrate when Milepost does.
+ * topic is still keyed by device type and should migrate when Milepost does.
+ *
+ * TIERCEL is the touch-first successor to Capstan and takes the same two
+ * payloads, from the same config.controls / config.alarms on its module
+ * record, on local/config/tiercel/<hostname>/controls and the shared panel
+ * alarms topic. It also takes a third:
+ *
+ *     local/config/tiercel/<hostname>/services
+ *     { "peregrine": { "url": "http://peregrine.local:8081", "token": "…" } }
+ *
+ * built from the rig-wide Peregrine settings (see peregrine-voice.js), so a
+ * dial is never configured by hand. It is republished on every sync, not
+ * just at discovery, so changing Peregrine's address or token in Settings
+ * reaches every dial the next time module config is saved — and immediately,
+ * because saving the Peregrine settings runs a sync too. The `playbill` block
+ * is omitted, which the dial reads as "follow the first Playbill online".
+ * See docs/mqtt.md in TrailCurrentTiercel.
  */
+
+const { voiceServiceOf } = require('./peregrine-voice');
 
 const CHANNELS_PER_MODULE = 8;
 const SWITCHBACK_ID_BASE = 100;
@@ -102,10 +120,15 @@ const RIG_MODES = ['camping', 'driving', 'storage'];
 // the bit index.
 const SENSORS_PER_BOARD = { picket: 12, switchback: 8 };
 
-// Hostnames we have published a retained payload for. A Capstan that is
-// deleted or disabled has to have its retained topic cleared, or the display
-// keeps loading a control list nobody can see in the PWA any more.
-const publishedHostnames = new Set();
+// Module types that take these payloads. Both firmwares share the limits
+// above (TIERCEL_MAX_CONTROLS / TIERCEL_MAX_ALARMS match Capstan's).
+const PANEL_TYPES = ['capstan', 'tiercel'];
+
+// Hostname -> module type, for every device we have published a retained
+// payload for. A panel that is deleted has to have its retained topics
+// cleared, or the display keeps loading a control list nobody can see in the
+// PWA any more — and the type says which topics those were.
+const publishedHostnames = new Map();
 
 function isSwitchback(type) {
     return type === 'switchback' || type === 'switchback_relay';
@@ -214,8 +237,9 @@ function resolveAlarm(modules, alarm, sensorLabels) {
 }
 
 /**
- * Publish each enabled Capstan's resolved configuration, retained: its
- * device controls on one topic, its alarms on a sibling.
+ * Publish each Capstan's and Tiercel's resolved configuration, retained: its
+ * device controls on one topic, its alarms on a sibling and, for a Tiercel,
+ * its services on a third.
  *
  * Call this after syncPdmChannelsToLights and syncSwitchbackChannelsToLights,
  * never before: control labels and icons are read back out of the lights
@@ -224,15 +248,15 @@ function resolveAlarm(modules, alarm, sensorLabels) {
 async function syncCapstanConfig(db, mqttService) {
     const systemConfig = await db.collection('system_config').findOne({ _id: 'main' });
     const modules = systemConfig?.mcu_modules || [];
-    const capstans = modules.filter(m => m.type === 'capstan');
+    const panels = modules.filter(m => PANEL_TYPES.includes(m.type));
 
-    if (capstans.length === 0 && publishedHostnames.size === 0) return;
+    if (panels.length === 0 && publishedHostnames.size === 0) return;
 
     const lights = await db.collection('lights').find().toArray();
     const lightsById = new Map(lights.map(l => [l._id, l]));
 
     // Rig-wide sensor labels, used only as a fallback: the PWA seeds the
-    // Capstan entry's own label from these, and once seeded the entry owns it.
+    // panel entry's own label from these, and once seeded the entry owns it.
     const sensorLabels = new Map();
     for (const [k, entry] of Object.entries(systemConfig?.alarms?.sensors || {})) {
         if (entry && typeof entry.label === 'string' && entry.label.length > 0) {
@@ -240,17 +264,25 @@ async function syncCapstanConfig(db, mqttService) {
         }
     }
 
+    // Same for every Tiercel in the rig: there is one Peregrine.
+    const peregrine = panels.some(m => m.type === 'tiercel') ? voiceServiceOf(systemConfig) : null;
+
     const seen = new Set();
 
-    for (const capstan of capstans) {
-        if (!capstan.hostname) continue;
-        seen.add(capstan.hostname);
+    for (const panel of panels) {
+        if (!panel.hostname) continue;
+        seen.add(panel.hostname);
 
-        // A disabled Capstan is sent empty lists rather than skipped — that is
+        // A panel whose hostname moved to another type has stale retained
+        // topics under the old one.
+        const prevType = publishedHostnames.get(panel.hostname);
+        if (prevType && prevType !== panel.type) clearPanel(mqttService, panel.hostname, prevType);
+
+        // A disabled panel is sent empty lists rather than skipped — that is
         // how a dial is told to forget what it was showing.
-        const enabled = capstan.enabled;
+        const enabled = panel.enabled;
 
-        const controlRefs = enabled ? (capstan.config?.controls || []) : [];
+        const controlRefs = enabled ? (panel.config?.controls || []) : [];
         const controls = [];
         for (const ref of controlRefs.slice(0, MAX_CONTROLS)) {
             const id = resolveControlId(modules, ref);
@@ -264,42 +296,56 @@ async function syncCapstanConfig(db, mqttService) {
             });
         }
 
-        const alarmRefs = enabled ? (capstan.config?.alarms || []) : [];
+        const alarmRefs = enabled ? (panel.config?.alarms || []) : [];
         const alarms = [];
         for (const ref of alarmRefs.slice(0, MAX_ALARMS)) {
             const resolved = resolveAlarm(modules, ref, sensorLabels);
             if (resolved) alarms.push(resolved);
         }
 
+        // An empty object clears every service on the dial, which is what a
+        // disabled Tiercel or a rig without Peregrine set up should see.
+        const services = {};
+        if (panel.type === 'tiercel' && enabled && peregrine) services.peregrine = peregrine;
+
         if (mqttService) {
-            mqttService.publishCapstanControlConfig(capstan.hostname, controls);
-            mqttService.publishPanelAlarmConfig(capstan.hostname, alarms);
+            mqttService.publishPanelControlConfig(panel.type, panel.hostname, controls);
+            mqttService.publishPanelAlarmConfig(panel.hostname, alarms);
+            if (panel.type === 'tiercel') {
+                mqttService.publishTiercelServicesConfig(panel.hostname, services);
+            }
         }
-        publishedHostnames.add(capstan.hostname);
+        publishedHostnames.set(panel.hostname, panel.type);
 
         const droppedControls = Math.min(controlRefs.length, MAX_CONTROLS) - controls.length;
         const droppedAlarms = Math.min(alarmRefs.length, MAX_ALARMS) - alarms.length;
         const dropped = droppedControls + droppedAlarms;
-        console.log(`[Capstan Sync] ${capstan.hostname}: ${controls.length} control(s), ` +
+        console.log(`[Panel Sync] ${panel.type} ${panel.hostname}: ${controls.length} control(s), ` +
                     `${alarms.length} alarm(s)` +
+                    (panel.type === 'tiercel' ? `, peregrine ${services.peregrine ? 'set' : 'not set up'}` : '') +
                     (dropped > 0 ? `, ${dropped} unresolved reference(s) dropped` : ''));
     }
 
-    // Clear both retained payloads for any Capstan we published for previously
+    // Clear the retained payloads for any panel we published for previously
     // and that is no longer in the module list at all.
-    for (const hostname of [...publishedHostnames]) {
+    for (const [hostname, type] of [...publishedHostnames]) {
         if (seen.has(hostname)) continue;
-        if (mqttService) {
-            mqttService.publishCapstanControlConfig(hostname, []);
-            mqttService.publishPanelAlarmConfig(hostname, []);
-        }
+        clearPanel(mqttService, hostname, type);
         publishedHostnames.delete(hostname);
-        console.log(`[Capstan Sync] ${hostname}: removed, cleared retained config`);
+        console.log(`[Panel Sync] ${type} ${hostname}: removed, cleared retained config`);
     }
+}
+
+function clearPanel(mqttService, hostname, type) {
+    if (!mqttService) return;
+    mqttService.publishPanelControlConfig(type, hostname, []);
+    mqttService.publishPanelAlarmConfig(hostname, []);
+    if (type === 'tiercel') mqttService.publishTiercelServicesConfig(hostname, {});
 }
 
 module.exports = {
     syncCapstanConfig,
+    PANEL_TYPES,
     resolveControlId,
     resolveAlarm,
     MAX_CONTROLS,

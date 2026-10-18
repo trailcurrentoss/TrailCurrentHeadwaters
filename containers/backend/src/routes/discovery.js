@@ -359,11 +359,14 @@ module.exports = (db) => {
                     await mqttService.refreshLightNameCache();
                 }
                 // A new Torrent or Switchback shifts the light ids every
-                // module after it in hostname order, so every Capstan's
-                // resolved control list has to be recomputed. Confirming a
-                // Capstan itself also lands here, with no controls yet, which
-                // publishes the empty retained payload the display expects.
-                if (syncedAny || found.type === 'capstan') {
+                // module after it in hostname order, so every Capstan's and
+                // Tiercel's resolved control list has to be recomputed.
+                // Confirming a Capstan or Tiercel itself also lands here, with
+                // no controls yet, which publishes the empty retained payloads
+                // the display expects — and, for a Tiercel, the Peregrine
+                // voice URL and token, so voice works without setup on the
+                // device.
+                if (syncedAny || found.type === 'capstan' || found.type === 'tiercel') {
                     await syncCapstanConfig(db, mqttService);
                 }
             } catch (syncErr) {
